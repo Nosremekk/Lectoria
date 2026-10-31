@@ -1,0 +1,34 @@
+# Python e ambientes virtuais
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Testes e Cache
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Editores e Sistema
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# PDFs da biblioteca (permanecem apenas no sistema de arquivos local)
+books/*
+!books/.gitkeep
+
+# Segredos e variáveis de ambiente
+.env
+.env.*
+
+# IMPORTANTE: Preservar e versionar dados persistentes da aplicação
+!data/
+!data/**

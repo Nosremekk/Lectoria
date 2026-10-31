@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lectoria — Biblioteca Pessoal</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <a href="/" class="brand">
+      <svg class="brand-icon" viewBox="0 0 24 24">
+        <path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/>
+      </svg>
+      <span>Lectoria</span>
+    </a>
+
+    <div class="header-controls">
+      <div class="search-box">
+        <input type="text" id="search-input" class="search-input" placeholder="Pesquisar por título ou autor..." autocomplete="off">
+      </div>
+
+      <button id="btn-theme-toggle" class="btn btn-icon" title="Alternar Tema Claro / Escuro">
+        <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0s-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0s-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41s-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41s-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
+        </svg>
+      </button>
+
+      <button id="btn-scan" class="btn" title="Escanear diretório de livros por novos arquivos">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+        </svg>
+        <span id="scan-text">Escanear</span>
+      </button>
+
+      <div class="view-toggles">
+        <button id="btn-view-grid" class="btn btn-icon btn-active" title="Visualização em Grade">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M4 11h5V5H4v6zm0 7h5v-6H4v6zm6 0h5v-6h-5v6zm6 0h5v-6h-5v6zm-6-7h5V5h-5v6zm6-6v6h5V5h-5z"/>
+          </svg>
+        </button>
+        <button id="btn-view-list" class="btn btn-icon" title="Visualização em Lista">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M4 14h4v-4H4v4zm0 5h4v-4H4v4zM4 9h4V5H4v4zm5 5h12v-4H9v4zm0 5h12v-4H9v4zM9 5v4h12V5H9z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-container">
+    <!-- Abas de Filtros de Leitura e Seletor de Coleções -->
+    <div class="library-filter-tabs">
+      <div class="status-tabs">
+        <button class="tab-btn active" data-status="all">Todos os livros</button>
+        <button class="tab-btn" data-status="in_progress">Em andamento</button>
+        <button class="tab-btn" data-status="unread">Não iniciados</button>
+        <button class="tab-btn" data-status="completed">Concluídos</button>
+      </div>
+
+      <div class="filter-actions">
+        <select id="collection-select" class="collection-select" title="Filtrar por Coleção">
+          <option value="">Todas as coleções</option>
+          <!-- Populado via JavaScript -->
+        </select>
+
+        <button id="btn-manage-collections" class="btn" title="Criar ou editar coleções">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+          </svg>
+          <span>Coleções</span>
+        </button>
+
+        <select id="sort-select" class="sort-select" title="Critério de ordenação">
+          <option value="title_asc">Título (A-Z)</option>
+          <option value="title_desc">Título (Z-A)</option>
+          <option value="author_asc">Autor (A-Z)</option>
+          <option value="author_desc">Autor (Z-A)</option>
+          <option value="last_read_desc">Última leitura</option>
+          <option value="recent_desc">Recém-adicionados</option>
+          <option value="progress_desc">Mais lidos</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="library-meta-bar">
+      <div id="books-count">Carregando acervo...</div>
+    </div>
+
+    <div id="books-container" class="books-grid">
+      <!-- Livros renderizados dinamicamente pelo app.js -->
+    </div>
+  </main>
+
+  <!-- Modal: Gerenciador de Coleções -->
+  <div id="modal-collections" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Gerenciar Coleções</h3>
+        <button id="btn-close-modal-col" class="btn btn-icon" title="Fechar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="new-col-name">Nova Coleção</label>
+          <div style="display: flex; gap: 0.5rem;">
+            <input type="text" id="new-col-name" class="form-input" placeholder="Ex: Ficção Científica, Filosofia..." style="flex: 1;">
+            <button id="btn-create-col" class="btn btn-primary">Adicionar</button>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-top: 0.5rem;">
+          <label class="form-label">Coleções Existentes</label>
+          <div id="collections-list" class="collection-manager-list">
+            <!-- Lista dinâmica de coleções com opções de editar/excluir -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-modal-col-done" class="btn btn-primary">Concluir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Atribuir Coleções ao Livro -->
+  <div id="modal-book-collections" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Coleções do Documento</h3>
+        <button id="btn-close-book-col-modal" class="btn btn-icon" title="Fechar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="book-col-modal-subtitle" style="font-size: 0.88rem; color: var(--text-muted);"></p>
+        <div id="book-col-checkboxes" class="collection-manager-list" style="margin-top: 0.75rem;">
+          <!-- Checkboxes de coleções para o livro selecionado -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-book-col" class="btn">Cancelar</button>
+        <button id="btn-save-book-col" class="btn btn-primary">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

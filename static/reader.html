@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lectoria — Leitor</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="reader-body">
+  <header class="reader-header">
+    <div class="reader-left">
+      <a href="/" class="btn btn-icon" title="Voltar à Biblioteca">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+        </svg>
+      </a>
+      <span id="reader-book-title" class="reader-title">Carregando livro...</span>
+    </div>
+
+    <div class="reader-center">
+      <div class="page-controls">
+        <button id="btn-prev-page" class="btn btn-icon" title="Página Anterior (Seta Esquerda / PageUp)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
+          </svg>
+        </button>
+
+        <span>Pág.</span>
+        <input type="number" id="page-num-input" class="page-input" min="1" value="1" title="Ir para a página">
+        <span>/ <span id="page-count-display">--</span></span>
+
+        <button id="btn-next-page" class="btn btn-icon" title="Próxima Página (Seta Direita / PageDown / Espaço)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+          </svg>
+        </button>
+      </div>
+
+      <span id="save-indicator" class="save-indicator">Progresso salvo</span>
+    </div>
+
+    <div class="reader-right">
+      <!-- Alternador de Modo de Visualização -->
+      <div class="view-mode-toggles" title="Modo de visualização">
+        <button id="btn-mode-single" class="view-mode-btn active" title="Página Única">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/></svg>
+          <span class="view-mode-label">Página</span>
+        </button>
+        <button id="btn-mode-continuous" class="view-mode-btn" title="Rolagem Contínua">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h18v2H3zm0 6h18v2H3zm0 6h18v2H3z"/></svg>
+          <span class="view-mode-label">Rolagem</span>
+        </button>
+      </div>
+
+      <!-- Controles de Zoom -->
+      <div class="zoom-controls" style="display: flex; gap: 0.35rem; align-items: center;">
+        <button id="btn-zoom-out" class="btn btn-icon" title="Diminuir Zoom (-)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13H5v-2h14v2z"/></svg>
+        </button>
+
+        <button id="btn-fit-width" class="btn btn-icon" title="Ajustar à Largura (w)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M4 11h16v2H4zm-2 2L6 9v3h12V9l4 4-4 4v-3H6v3z"/></svg>
+        </button>
+
+        <button id="btn-fit-page" class="btn btn-icon" title="Ajustar à Página Inteira (p)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16v16H4zm2 2v12h12V6z"/></svg>
+        </button>
+
+        <button id="btn-zoom-in" class="btn btn-icon" title="Aumentar Zoom (+)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+        </button>
+      </div>
+
+      <!-- Alternador de Tema -->
+      <button id="btn-reader-theme" class="btn btn-icon" title="Alternar Tema Claro / Escuro">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0s-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0s-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41s-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41s-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="reader-viewport" class="reader-viewport">
+    <!-- Container Página Única -->
+    <div id="single-page-wrapper" class="canvas-wrapper">
+      <canvas id="pdf-canvas"></canvas>
+    </div>
+
+    <!-- Container Rolagem Contínua -->
+    <div id="continuous-wrapper" class="continuous-container" style="display: none;">
+      <!-- Slots de página renderizados dinamicamente sob demanda -->
+    </div>
+  </main>
+
+  <script src="/static/vendor/pdfjs/pdf.min.js"></script>
+  <script src="/static/js/reader.js"></script>
+</body>
+</html>
