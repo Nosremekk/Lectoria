@@ -36,6 +36,20 @@ from collections_service import (
     remove_book_from_collection,
     set_book_collections,
 )
+from annotations_service import (
+    AnnotationNotFoundError,
+    create_highlight,
+    get_highlights,
+    delete_highlight,
+    create_note,
+    get_notes,
+    update_note,
+    delete_note,
+    get_page_drawing,
+    save_page_drawing,
+    delete_page_drawing,
+    get_book_annotations_summary,
+)
 
 
 @asynccontextmanager
@@ -76,6 +90,30 @@ class CollectionBookPayload(BaseModel):
 
 class BookCollectionsPayload(BaseModel):
     collection_ids: list[int] = Field(description="Lista de IDs de coleções")
+
+
+class HighlightCreatePayload(BaseModel):
+    page: int = Field(ge=1, description="Número da página")
+    color: str = Field(default="#fef08a", description="Cor de destaque em hexadecimal")
+    rects: list[dict] = Field(description="Retângulos normalizados de seleção")
+    selected_text: str = Field(min_length=1, description="Texto selecionado")
+    text_context: Optional[str] = Field(default=None, description="Contexto do texto")
+
+
+class NoteCreatePayload(BaseModel):
+    page: int = Field(ge=1, description="Número da página")
+    content: str = Field(min_length=1, description="Conteúdo da anotação")
+    color: Optional[str] = Field(default="#fef08a", description="Cor temática")
+    highlight_id: Optional[str] = Field(default=None, description="ID do destaque vinculado se houver")
+
+
+class NoteUpdatePayload(BaseModel):
+    content: str = Field(min_length=1, description="Conteúdo da anotação")
+    color: Optional[str] = Field(default=None, description="Cor temática")
+
+
+class DrawingSavePayload(BaseModel):
+    strokes: list[dict] = Field(description="Array de traços vetoriais com pontos normalizados")
 
 
 # --- Rotas da Interface do Usuário ---
@@ -215,6 +253,131 @@ async def update_book_collections_endpoint(book_id: str, payload: BookCollection
         return {"status": "success", "collections": cols}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+# --- Endpoints de Anotações, Marca-Texto e Desenhos Livres ---
+
+@app.get("/api/books/{book_id}/annotations")
+async def get_all_book_annotations(book_id: str):
+    """Retorna todas as anotações, destaques e páginas de desenho do livro."""
+    try:
+        get_book(book_id)
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    summary = get_book_annotations_summary(book_id)
+    return summary
+
+
+@app.get("/api/books/{book_id}/pages/{page}/annotations")
+async def get_page_annotations(book_id: str, page: int):
+    """Retorna os destaques, notas e desenhos de uma página específica."""
+    try:
+        get_book(book_id)
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    highlights = get_highlights(book_id, page=page)
+    notes = get_notes(book_id, page=page)
+    drawing = get_page_drawing(book_id, page)
+
+    return {
+        "page": page,
+        "highlights": highlights,
+        "notes": notes,
+        "drawing": drawing,
+    }
+
+
+@app.post("/api/books/{book_id}/highlights", status_code=status.HTTP_201_CREATED)
+async def create_new_highlight(book_id: str, payload: HighlightCreatePayload):
+    """Cria uma nova marcação de texto colorida."""
+    try:
+        created = create_highlight(
+            book_id=book_id,
+            page=payload.page,
+            color=payload.color,
+            rects=payload.rects,
+            selected_text=payload.selected_text,
+            text_context=payload.text_context,
+        )
+        return {"status": "success", "highlight": created}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.delete("/api/books/{book_id}/highlights/{highlight_id}")
+async def remove_highlight(book_id: str, highlight_id: str):
+    """Remove uma marcação de texto existente."""
+    deleted = delete_highlight(highlight_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Marcação não encontrada.")
+    return {"status": "success", "message": "Marcação excluída com sucesso."}
+
+
+@app.post("/api/books/{book_id}/notes", status_code=status.HTTP_201_CREATED)
+async def create_new_note(book_id: str, payload: NoteCreatePayload):
+    """Cria uma nova anotação textual associada à página ou a um destaque."""
+    try:
+        created = create_note(
+            book_id=book_id,
+            page=payload.page,
+            content=payload.content,
+            color=payload.color,
+            highlight_id=payload.highlight_id,
+        )
+        return {"status": "success", "note": created}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.put("/api/books/{book_id}/notes/{note_id}")
+async def edit_note(book_id: str, note_id: str, payload: NoteUpdatePayload):
+    """Atualiza o conteúdo de uma anotação textual existente."""
+    try:
+        updated = update_note(note_id=note_id, content=payload.content, color=payload.color)
+        return {"status": "success", "note": updated}
+    except AnnotationNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.delete("/api/books/{book_id}/notes/{note_id}")
+async def remove_note(book_id: str, note_id: str):
+    """Remove uma anotação textual."""
+    deleted = delete_note(note_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Anotação não encontrada.")
+    return {"status": "success", "message": "Anotação excluída com sucesso."}
+
+
+@app.get("/api/books/{book_id}/pages/{page}/drawing")
+async def retrieve_page_drawing(book_id: str, page: int):
+    """Retorna os traços vetoriais salvos para a página."""
+    try:
+        get_book(book_id)
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    return get_page_drawing(book_id, page)
+
+
+@app.put("/api/books/{book_id}/pages/{page}/drawing")
+async def update_page_drawing(book_id: str, page: int, payload: DrawingSavePayload):
+    """Salva ou atualiza a coleção de traços vetoriais da página."""
+    try:
+        result = save_page_drawing(book_id=book_id, page=page, strokes=payload.strokes)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.delete("/api/books/{book_id}/pages/{page}/drawing")
+async def clear_page_drawing(book_id: str, page: int):
+    """Remove todos os traços de desenho da página."""
+    delete_page_drawing(book_id, page)
+    return {"status": "success", "message": "Desenhos da página limpos com sucesso."}
 
 
 @app.get("/api/books/{book_id}")

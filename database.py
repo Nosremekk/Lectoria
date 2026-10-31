@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from typing import Generator
 import config
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def get_connection() -> sqlite3.Connection:
@@ -65,6 +65,10 @@ def init_db() -> None:
         if current_version < 2:
             _apply_migration_v2(cursor)
             cursor.execute("INSERT INTO schema_migrations (version) VALUES (2);")
+
+        if current_version < 3:
+            _apply_migration_v3(cursor)
+            cursor.execute("INSERT INTO schema_migrations (version) VALUES (3);")
 
 
 def _apply_migration_v1(cursor: sqlite3.Cursor) -> None:
@@ -181,4 +185,69 @@ def _apply_migration_v2(cursor: sqlite3.Cursor) -> None:
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_col_books_book ON collection_books(book_id);"
     )
+
+
+def _apply_migration_v3(cursor: sqlite3.Cursor) -> None:
+    """
+    Schema V3:
+    - highlights: marcações de texto coloridas com retângulos normalizados
+    - notes: anotações e comentários vinculados a destaques ou a páginas
+    - page_drawings: traços vetoriais de desenho livre por página
+    """
+    # Destaques / Marca-texto
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS highlights (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL,
+            page INTEGER NOT NULL,
+            color TEXT NOT NULL DEFAULT '#fef08a',
+            rects_json TEXT NOT NULL,
+            selected_text TEXT NOT NULL,
+            text_context TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_highlights_book ON highlights(book_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_highlights_page ON highlights(book_id, page);")
+
+    # Anotações textuais
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notes (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL,
+            page INTEGER NOT NULL,
+            highlight_id TEXT,
+            content TEXT NOT NULL,
+            color TEXT DEFAULT '#fef08a',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
+            FOREIGN KEY (highlight_id) REFERENCES highlights(id) ON DELETE SET NULL
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_book ON notes(book_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_page ON notes(book_id, page);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_highlight ON notes(highlight_id);")
+
+    # Desenho livre vetorial por página
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS page_drawings (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL,
+            page INTEGER NOT NULL,
+            strokes_json TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
+            UNIQUE(book_id, page)
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_drawings_book_page ON page_drawings(book_id, page);")
+
 

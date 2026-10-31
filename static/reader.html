@@ -20,7 +20,7 @@
     <div class="reader-center">
       <div class="page-controls">
         <button id="btn-prev-page" class="btn btn-icon" title="Página Anterior (Seta Esquerda / PageUp)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
             <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
           </svg>
         </button>
@@ -30,7 +30,7 @@
         <span>/ <span id="page-count-display">--</span></span>
 
         <button id="btn-next-page" class="btn btn-icon" title="Próxima Página (Seta Direita / PageDown / Espaço)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
             <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
           </svg>
         </button>
@@ -40,57 +40,167 @@
     </div>
 
     <div class="reader-right">
-      <!-- Alternador de Modo de Visualização -->
-      <div class="view-mode-toggles" title="Modo de visualização">
-        <button id="btn-mode-single" class="view-mode-btn active" title="Página Única">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/></svg>
-          <span class="view-mode-label">Página</span>
+      <!-- Grupo de Modos de Interação (Leitura, Marca-texto, Desenho) -->
+      <div class="tool-mode-group" title="Modo de interação">
+        <button id="btn-tool-read" class="tool-mode-btn active" title="Modo Leitura (Navegação padrão)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5-2.24 5-5-2.24 5-5-5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+          <span>Ler</span>
         </button>
-        <button id="btn-mode-continuous" class="view-mode-btn" title="Rolagem Contínua">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h18v2H3zm0 6h18v2H3zm0 6h18v2H3z"/></svg>
-          <span class="view-mode-label">Rolagem</span>
+        <button id="btn-tool-highlight" class="tool-mode-btn" title="Modo Marca-texto (Destaque rápido de seleções)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="m15.24 3.37 5.39 5.39-8.49 8.49H6.75v-5.39l8.49-8.49zm2.55-2.55c-.78-.78-2.05-.78-2.83 0l-1.42 1.41 5.39 5.39 1.41-1.42c.78-.78.78-2.05 0-2.83l-2.55-2.55zM2 22h20v2H2v-2z"/></svg>
+          <span>Destacar</span>
+        </button>
+        <button id="btn-tool-draw" class="tool-mode-btn" title="Modo Desenho Livre">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+          <span>Desenhar</span>
         </button>
       </div>
 
-      <!-- Controles de Zoom -->
-      <div class="zoom-controls" style="display: flex; gap: 0.35rem; align-items: center;">
+      <!-- Botão Painel de Anotações -->
+      <button id="btn-toggle-drawer" class="btn btn-icon" title="Abrir Painel de Anotações">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+        </svg>
+      </button>
+
+      <!-- Alternador de Modo de Visualização (Página / Rolagem) -->
+      <div class="view-mode-toggles" title="Modo de exibição">
+        <button id="btn-mode-single" class="view-mode-btn active" title="Página Única">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/></svg>
+        </button>
+        <button id="btn-mode-continuous" class="view-mode-btn" title="Rolagem Contínua">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h18v2H3zm0 6h18v2H3zm0 6h18v2H3z"/></svg>
+        </button>
+      </div>
+
+      <!-- Zoom -->
+      <div class="zoom-controls" style="display: flex; gap: 0.3rem; align-items: center;">
         <button id="btn-zoom-out" class="btn btn-icon" title="Diminuir Zoom (-)">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13H5v-2h14v2z"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13H5v-2h14v2z"/></svg>
         </button>
-
         <button id="btn-fit-width" class="btn btn-icon" title="Ajustar à Largura (w)">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M4 11h16v2H4zm-2 2L6 9v3h12V9l4 4-4 4v-3H6v3z"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M4 11h16v2H4zm-2 2L6 9v3h12V9l4 4-4 4v-3H6v3z"/></svg>
         </button>
-
         <button id="btn-fit-page" class="btn btn-icon" title="Ajustar à Página Inteira (p)">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16v16H4zm2 2v12h12V6z"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16v16H4zm2 2v12h12V6z"/></svg>
         </button>
-
         <button id="btn-zoom-in" class="btn btn-icon" title="Aumentar Zoom (+)">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
         </button>
       </div>
 
       <!-- Alternador de Tema -->
       <button id="btn-reader-theme" class="btn btn-icon" title="Alternar Tema Claro / Escuro">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0s-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0s-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41s-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41s-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
         </svg>
       </button>
     </div>
   </header>
 
+  <!-- Viewport Principal -->
   <main id="reader-viewport" class="reader-viewport">
-    <!-- Container Página Única -->
-    <div id="single-page-wrapper" class="canvas-wrapper">
+    <!-- Modo Página Única -->
+    <div id="single-page-wrapper" class="page-container">
       <canvas id="pdf-canvas"></canvas>
+      <div id="single-text-layer" class="textLayer"></div>
+      <div id="single-highlights-layer" class="highlights-layer"></div>
+      <svg id="single-drawing-layer" class="drawing-layer"></svg>
     </div>
 
-    <!-- Container Rolagem Contínua -->
+    <!-- Modo Rolagem Contínua -->
     <div id="continuous-wrapper" class="continuous-container" style="display: none;">
-      <!-- Slots de página renderizados dinamicamente sob demanda -->
+      <!-- Slots de página renderizados sob demanda -->
     </div>
   </main>
+
+  <!-- Barra Flutuante de Seleção de Texto (Popover) -->
+  <div id="selection-toolbar" class="selection-toolbar">
+    <button class="highlight-color-btn" data-color="#fef08a" style="background-color: #fef08a;" title="Amarelo"></button>
+    <button class="highlight-color-btn" data-color="#a7f3d0" style="background-color: #a7f3d0;" title="Verde"></button>
+    <button class="highlight-color-btn" data-color="#bae6fd" style="background-color: #bae6fd;" title="Azul"></button>
+    <button class="highlight-color-btn" data-color="#fbcfe8" style="background-color: #fbcfe8;" title="Rosa"></button>
+    <button class="highlight-color-btn" data-color="#fed7aa" style="background-color: #fed7aa;" title="Laranja"></button>
+    <div style="width: 1px; height: 18px; background-color: var(--border-color); margin: 0 0.15rem;"></div>
+    <button id="btn-add-note-from-selection" class="btn" style="padding: 0.25rem 0.5rem; font-size: 0.78rem;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+      <span>Nota</span>
+    </button>
+  </div>
+
+  <!-- Barra Flutuante de Ferramentas de Desenho Livre -->
+  <div id="drawing-toolbar" class="drawing-toolbar">
+    <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 500;">Caneta:</span>
+    <button class="color-dot active" data-color="#3d7cf4" style="background-color: #3d7cf4;" title="Azul"></button>
+    <button class="color-dot" data-color="#f87171" style="background-color: #f87171;" title="Vermelho"></button>
+    <button class="color-dot" data-color="#34d399" style="background-color: #34d399;" title="Verde"></button>
+    <button class="color-dot" data-color="#fbbf24" style="background-color: #fbbf24;" title="Amarelo"></button>
+    <button class="color-dot" data-color="#1e293b" style="background-color: #1e293b;" title="Grafite"></button>
+
+    <div style="width: 1px; height: 18px; background-color: var(--border-color); margin: 0 0.15rem;"></div>
+
+    <select id="draw-stroke-width" class="stroke-width-select" title="Espessura do traço">
+      <option value="2">Fino (2px)</option>
+      <option value="4" selected>Médio (4px)</option>
+      <option value="8">Grosso (8px)</option>
+    </select>
+
+    <button id="btn-draw-eraser" class="btn" style="padding: 0.25rem 0.5rem; font-size: 0.78rem;" title="Borracha (clique sobre um traço para apagar)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M15.14 3c-.4 0-.8.15-1.11.45l-9.58 9.58c-.62.62-.62 1.61 0 2.23l5.29 5.29c.62.62 1.61.62 2.23 0l9.58-9.58c.62-.62.62-1.61 0-2.23l-5.29-5.29c-.31-.3-.72-.45-1.12-.45zm-3.17 11.02L8.5 10.55l5.52-5.52 3.47 3.47-5.52 5.52zM2 22h20v2H2v-2z"/></svg>
+      <span>Borracha</span>
+    </button>
+
+    <button id="btn-draw-clear" class="btn btn-danger" style="padding: 0.25rem 0.5rem; font-size: 0.78rem;" title="Limpar todos os desenhos da página atual">
+      Limpar Página
+    </button>
+  </div>
+
+  <!-- Painel Lateral de Anotações (Drawer) -->
+  <aside id="annotations-drawer" class="annotations-drawer">
+    <div class="drawer-header">
+      <h3 class="drawer-title">Anotações e Destaques</h3>
+      <button id="btn-close-drawer" class="btn btn-icon" title="Fechar painel">&times;</button>
+    </div>
+
+    <div class="drawer-tabs">
+      <button class="drawer-tab active" data-drawer-filter="all">Todas (<span id="count-all-annotations">0</span>)</button>
+      <button class="drawer-tab" data-drawer-filter="highlights">Destaques (<span id="count-highlights">0</span>)</button>
+      <button class="drawer-tab" data-drawer-filter="notes">Notas (<span id="count-notes">0</span>)</button>
+    </div>
+
+    <div style="padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--border-color); background-color: var(--bg-secondary);">
+      <button id="btn-new-page-note" class="btn btn-primary" style="width: 100%; justify-content: center; font-size: 0.82rem;">
+        + Adicionar Nota na Pág. Atual
+      </button>
+    </div>
+
+    <div id="drawer-items-list" class="drawer-content">
+      <!-- Itens de destaques e anotações carregados dinamicamente -->
+    </div>
+  </aside>
+
+  <!-- Modal: Criar / Editar Anotação Textual -->
+  <div id="modal-note-editor" class="modal-overlay">
+    <div class="modal-content" style="max-width: 440px;">
+      <div class="modal-header">
+        <h3 id="modal-note-title" class="modal-title">Nova Anotação</h3>
+        <button id="btn-close-modal-note" class="btn btn-icon">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="modal-note-quote-box" style="display: none; margin-bottom: 0.5rem;">
+          <div id="modal-note-quote-text" class="annotation-quote"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="note-content-input">Sua anotação:</label>
+          <textarea id="note-content-input" class="form-input" rows="4" placeholder="Digite seus comentários, reflexões ou ideias sobre o trecho..." style="resize: vertical;"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-note" class="btn">Cancelar</button>
+        <button id="btn-save-note" class="btn btn-primary">Salvar Anotação</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/vendor/pdfjs/pdf.min.js"></script>
   <script src="/static/js/reader.js"></script>

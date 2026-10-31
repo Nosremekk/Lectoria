@@ -1,5 +1,6 @@
 /* Lectoria — Servidor Pessoal de Livros Digitais
-   Folha de Estilos Enxuta, Moderna e Elegante com suporte a Tema Claro e Escuro */
+   Folha de Estilos Enxuta, Moderna e Elegante com suporte a Tema Claro e Escuro
+   Inclui: Camada de Texto PDF.js, Destaques, Desenho Livre e Painel de Estudo */
 
 :root {
   /* Paleta Base — Tema Escuro (Padrão) */
@@ -20,6 +21,7 @@
   --success-subtle: rgba(52, 211, 153, 0.15);
   --danger: #f87171;
   --danger-subtle: rgba(248, 113, 113, 0.15);
+  --warning: #fbbf24;
   --shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
   --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.25);
   --radius-sm: 4px;
@@ -29,6 +31,7 @@
   --font-serif: "Georgia", "Cambria", "Times New Roman", serif;
   --reader-bg: #0e0f13;
   --canvas-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+  --drawer-bg: #16181f;
 }
 
 [data-theme="light"] {
@@ -50,10 +53,12 @@
   --success-subtle: rgba(16, 185, 129, 0.12);
   --danger: #ef4444;
   --danger-subtle: rgba(239, 68, 68, 0.1);
+  --warning: #f59e0b;
   --shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
   --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.05);
   --reader-bg: #e5e7eb;
   --canvas-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  --drawer-bg: #ffffff;
 }
 
 * {
@@ -571,7 +576,7 @@ body {
   gap: 0.4rem;
 }
 
-/* Modais (Gerenciador de Coleções) */
+/* Modais */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -719,7 +724,7 @@ body {
 .reader-header {
   background-color: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
-  padding: 0.45rem 1rem;
+  padding: 0.4rem 1rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -739,7 +744,7 @@ body {
 .reader-title {
   font-size: 0.9rem;
   font-weight: 600;
-  max-width: 260px;
+  max-width: 200px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -780,6 +785,33 @@ body {
   opacity: 1;
 }
 
+/* Barra de Modos de Uso (Leitura, Marca-texto, Desenho) */
+.tool-mode-group {
+  display: flex;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.tool-mode-btn {
+  background: var(--bg-tertiary);
+  border: none;
+  color: var(--text-muted);
+  padding: 0.35rem 0.65rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: all 0.15s ease;
+  font-weight: 500;
+}
+
+.tool-mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
 .view-mode-toggles {
   display: flex;
   border: 1px solid var(--border-color);
@@ -805,6 +837,7 @@ body {
   color: #fff;
 }
 
+/* Área de Leitura Principal */
 .reader-viewport {
   flex: 1;
   overflow: auto;
@@ -817,21 +850,21 @@ body {
   scroll-behavior: smooth;
 }
 
-/* Modo Página Única */
-.canvas-wrapper {
-  box-shadow: var(--canvas-shadow);
+/* Camada da Página (Container Base) */
+.page-container {
+  position: relative;
   background-color: #fff;
+  box-shadow: var(--canvas-shadow);
   display: inline-block;
   line-height: 0;
+  user-select: text;
 }
 
-#pdf-canvas {
-  display: block;
-  max-width: 100%;
-  height: auto;
+#single-page-wrapper {
+  margin: 0 auto;
 }
 
-/* Modo Rolagem Contínua */
+/* Rolagem Contínua */
 .continuous-container {
   display: flex;
   flex-direction: column;
@@ -842,20 +875,18 @@ body {
 }
 
 .page-slot {
+  position: relative;
   background-color: #ffffff;
   box-shadow: var(--canvas-shadow);
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   line-height: 0;
-  transition: min-height 0.1s ease;
+  user-select: text;
 }
 
 .page-slot canvas {
   display: block;
-  width: 100%;
-  height: 100%;
 }
 
 .page-slot-placeholder {
@@ -867,6 +898,336 @@ body {
   height: 100%;
   width: 100%;
   background-color: #fafafa;
+}
+
+/* =========================================
+   CAMADA DE TEXTO DO PDF.JS (TEXT LAYER)
+   ========================================= */
+.textLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  opacity: 0.25;
+  line-height: 1.0;
+  user-select: text;
+  pointer-events: auto;
+}
+
+.textLayer span {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.textLayer ::selection {
+  background: rgba(61, 124, 244, 0.45);
+}
+
+/* =========================================
+   CAMADA DE MARCA-TEXTO (HIGHLIGHTS LAYER)
+   ========================================= */
+.highlights-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+  mix-blend-mode: multiply;
+}
+
+.highlight-box {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 2px;
+  opacity: 0.45;
+  transition: opacity 0.15s ease;
+}
+
+.highlight-box:hover {
+  opacity: 0.7;
+}
+
+/* =========================================
+   CAMADA DE DESENHO VETORIAL (DRAWING LAYER)
+   ========================================= */
+.drawing-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.drawing-layer.active {
+  pointer-events: auto;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.drawing-layer.eraser-active {
+  pointer-events: auto;
+  touch-action: none;
+  cursor: cell;
+}
+
+.drawing-stroke {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: opacity 0.1s ease;
+}
+
+.drawing-layer.eraser-active .drawing-stroke:hover {
+  opacity: 0.3;
+}
+
+/* =========================================
+   BARRA FLUTUANTE DE DESENHO (DRAWING TOOLBAR)
+   ========================================= */
+.drawing-toolbar {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 0.4rem 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  z-index: 200;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.drawing-toolbar.active {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+.color-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.color-dot:hover {
+  transform: scale(1.15);
+}
+
+.color-dot.active {
+  border-color: var(--text-main);
+  transform: scale(1.15);
+}
+
+.stroke-width-select {
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 0.25rem 0.4rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  outline: none;
+}
+
+/* =========================================
+   BARRA FLUTUANTE DE SELEÇÃO DE TEXTO (POPOVER)
+   ========================================= */
+.selection-toolbar {
+  position: fixed;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.35rem 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  z-index: 300;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.selection-toolbar.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.highlight-color-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.highlight-color-btn:hover {
+  transform: scale(1.2);
+}
+
+/* =========================================
+   PAINEL LATERAL DE ANOTAÇÕES (DRAWER)
+   ========================================= */
+.annotations-drawer {
+  position: fixed;
+  top: 52px;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  background-color: var(--drawer-bg);
+  border-left: 1px solid var(--border-color);
+  z-index: 90;
+  transform: translateX(100%);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow);
+}
+
+.annotations-drawer.active {
+  transform: translateX(0);
+}
+
+.drawer-header {
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.drawer-title {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.drawer-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
+}
+
+.drawer-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 0.55rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: center;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+}
+
+.drawer-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.drawer-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.annotation-item {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.annotation-item:hover {
+  border-color: var(--accent);
+}
+
+.annotation-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.annotation-page-badge {
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--radius-sm);
+}
+
+.annotation-quote {
+  font-family: var(--font-serif);
+  font-size: 0.85rem;
+  font-style: italic;
+  padding-left: 0.5rem;
+  border-left: 3px solid var(--warning);
+  color: var(--text-main);
+  line-height: 1.35;
+}
+
+.annotation-note-text {
+  font-size: 0.88rem;
+  line-height: 1.4;
+  color: var(--text-main);
+  white-space: pre-wrap;
+}
+
+.annotation-item-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  margin-top: 0.2rem;
+}
+
+.btn-item-action {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0.2rem 0.35rem;
+  border-radius: var(--radius-sm);
+}
+
+.btn-item-action:hover {
+  color: var(--text-main);
+  background-color: var(--bg-hover);
+}
+
+.btn-item-action.danger:hover {
+  color: var(--danger);
+  background-color: var(--danger-subtle);
 }
 
 /* Responsividade Mobile */
@@ -899,15 +1260,24 @@ body {
     padding: 0.35rem 0.5rem;
     height: auto;
     flex-wrap: wrap;
+    gap: 0.3rem;
   }
   .reader-title {
-    max-width: 150px;
-    font-size: 0.82rem;
+    max-width: 120px;
+    font-size: 0.8rem;
   }
   .zoom-controls {
     display: none;
   }
   .reader-viewport {
-    padding: 0.75rem 0.25rem;
+    padding: 0.5rem 0.2rem;
+  }
+  .annotations-drawer {
+    width: 100%;
+  }
+  .drawing-toolbar {
+    bottom: 0.75rem;
+    padding: 0.3rem 0.6rem;
+    max-width: 95%;
   }
 }
