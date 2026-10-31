@@ -784,6 +784,76 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // --- Camada de Desenho Livre Vetorial (SVG) ---
+  let isErasing = false;
+
+  function distanceToSegment(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) {
+      const ex = px - x1;
+      const ey = py - y1;
+      return Math.sqrt(ex * ex + ey * ey);
+    }
+    let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    const projX = x1 + t * dx;
+    const projY = y1 + t * dy;
+    const rx = px - projX;
+    const ry = py - projY;
+    return Math.sqrt(rx * rx + ry * ry);
+  }
+
+  function checkStrokeCollision(stroke, clientX, clientY, svgRect, eraserRadiusPx = 18) {
+    if (!stroke.points || stroke.points.length === 0) return false;
+    const px = clientX - svgRect.left;
+    const py = clientY - svgRect.top;
+    const w = svgRect.width;
+    const h = svgRect.height;
+    const threshold = eraserRadiusPx + ((stroke.width || 4) / 2);
+
+    if (stroke.points.length === 1) {
+      const sx = stroke.points[0].x * w;
+      const sy = stroke.points[0].y * h;
+      return Math.hypot(px - sx, py - sy) <= threshold;
+    }
+
+    for (let i = 0; i < stroke.points.length - 1; i++) {
+      const x1 = stroke.points[i].x * w;
+      const y1 = stroke.points[i].y * h;
+      const x2 = stroke.points[i + 1].x * w;
+      const y2 = stroke.points[i + 1].y * h;
+      if (distanceToSegment(px, py, x1, y1, x2, y2) <= threshold) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function eraseStrokesAtPoint(clientX, clientY, pageNum, svgElement) {
+    const strokes = pageStrokesMap.get(pageNum);
+    if (!strokes || strokes.length === 0) return false;
+
+    const svgRect = svgElement.getBoundingClientRect();
+    if (svgRect.width <= 0 || svgRect.height <= 0) return false;
+
+    let modified = false;
+    for (let i = strokes.length - 1; i >= 0; i--) {
+      if (checkStrokeCollision(strokes[i], clientX, clientY, svgRect, 18)) {
+        strokes.splice(i, 1);
+        modified = true;
+      }
+    }
+
+    if (modified) {
+      pageStrokesMap.set(pageNum, strokes);
+      renderSvgStrokes(svgElement, strokes);
+      queueSaveDrawing(pageNum);
+      return true;
+    }
+    return false;
+  }
+
   async function loadStrokesForPage(pageNum) {
     if (pageStrokesMap.has(pageNum)) return pageStrokesMap.get(pageNum);
     try {
@@ -808,7 +878,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const strokes = await loadStrokesForPage(pageNum);
     renderSvgStrokes(svgElement, strokes);
 
-    // Eventos de desenho
+    // Eventos de desenho e borracha
     svgElement.onpointerdown = (e) => handleDrawPointerDown(e, pageNum, svgElement);
     svgElement.onpointermove = (e) => handleDrawPointerMove(e, pageNum, svgElement);
     svgElement.onpointerup = (e) => handleDrawPointerUp(e, pageNum, svgElement);
@@ -835,25 +905,26 @@ document.addEventListener("DOMContentLoaded", async () => {
         d += ` L ${s.points[i].x * w} ${s.points[i].y * h}`;
       }
       path.setAttribute("d", d);
-
-      // Se clicar com a borracha, apaga o traço
-      path.addEventListener("pointerdown", (e) => {
-        if (isEraserActive && currentTool === "draw") {
-          e.stopPropagation();
-          strokes.splice(idx, 1);
-          renderSvgStrokes(svgElement, strokes);
-          queueSaveDrawing(parseInt(svgElement.getAttribute("data-page-num"), 10));
-        }
-      });
-
       svgElement.appendChild(path);
     });
   }
 
   function handleDrawPointerDown(e, pageNum, svgElement) {
-    if (currentTool !== "draw" || isEraserActive) return;
+    if (currentTool !== "draw") return;
     e.preventDefault();
-    svgElement.setPointerCapture(e.pointerId);
+
+    if (isEraserActive) {
+      isErasing = true;
+      try {
+        svgElement.setPointerCapture(e.pointerId);
+      } catch (_) {}
+      eraseStrokesAtPoint(e.clientX, e.clientY, pageNum, svgElement);
+      return;
+    }
+
+    try {
+      svgElement.setPointerCapture(e.pointerId);
+    } catch (_) {}
 
     const rect = svgElement.getBoundingClientRect();
     const nx = (e.clientX - rect.left) / rect.width;
@@ -875,8 +946,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function handleDrawPointerMove(e, pageNum, svgElement) {
-    if (!isDrawing || !currentStroke || currentTool !== "draw") return;
+    if (currentTool !== "draw") return;
     e.preventDefault();
+
+    if (isEraserActive) {
+      if (isErasing || e.buttons > 0) {
+        eraseStrokesAtPoint(e.clientX, e.clientY, pageNum, svgElement);
+      }
+      return;
+    }
+
+    if (!isDrawing || !currentStroke) return;
 
     const rect = svgElement.getBoundingClientRect();
     const nx = (e.clientX - rect.left) / rect.width;
@@ -895,7 +975,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function handleDrawPointerUp(e, pageNum, svgElement) {
-    if (!isDrawing || currentTool !== "draw") return;
+    if (currentTool !== "draw") return;
+
+    if (isEraserActive) {
+      isErasing = false;
+      try {
+        if (svgElement.hasPointerCapture(e.pointerId)) {
+          svgElement.releasePointerCapture(e.pointerId);
+        }
+      } catch (_) {}
+      return;
+    }
+
+    if (!isDrawing) return;
     isDrawing = false;
 
     if (currentStroke && currentStroke.points.length >= 2) {
@@ -964,6 +1056,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   btnDrawEraser.addEventListener("click", () => {
     isEraserActive = !isEraserActive;
     btnDrawEraser.classList.toggle("btn-active", isEraserActive);
+    if (isEraserActive) {
+      document.querySelectorAll(".drawing-toolbar .color-dot").forEach(d => d.classList.remove("active"));
+    } else {
+      const activeDot = document.querySelector(`.drawing-toolbar .color-dot[data-color="${currentDrawColor}"]`);
+      if (activeDot) activeDot.classList.add("active");
+    }
     updateAllDrawingLayersInteractivity();
   });
 
@@ -993,6 +1091,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     drawingToolbar.classList.toggle("active", mode === "draw");
     hideSelectionToolbar();
+
+    if (mode !== "draw") {
+      isEraserActive = false;
+      isErasing = false;
+      isDrawing = false;
+      btnDrawEraser.classList.remove("btn-active");
+      const activeDot = document.querySelector(`.drawing-toolbar .color-dot[data-color="${currentDrawColor}"]`);
+      if (activeDot) activeDot.classList.add("active");
+    }
+
     updateAllDrawingLayersInteractivity();
   }
 

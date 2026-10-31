@@ -311,3 +311,4 @@ def get_book_annotations_summary(book_id: str) -> Dict[str, Any]:
             "drawings": len(drawing_pages),
         },
     }
+

@@ -32,3 +32,4 @@ books/*
 # IMPORTANTE: Preservar e versionar dados persistentes da aplicação
 !data/
 !data/**
+
