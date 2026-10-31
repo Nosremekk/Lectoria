@@ -50,6 +50,19 @@ from annotations_service import (
     delete_page_drawing,
     get_book_annotations_summary,
 )
+from backup_service import (
+    BackupError,
+    create_backup,
+    list_backups,
+    restore_backup,
+)
+from export_service import (
+    ImportError,
+    export_book_annotations_markdown,
+    export_book_annotations_json,
+    preview_import_annotations,
+    apply_import_annotations,
+)
 
 
 @asynccontextmanager
@@ -378,6 +391,94 @@ async def clear_page_drawing(book_id: str, page: int):
     """Remove todos os traços de desenho da página."""
     delete_page_drawing(book_id, page)
     return {"status": "success", "message": "Desenhos da página limpos com sucesso."}
+
+
+# =========================================================================
+# EXPORTAÇÃO E IMPORTAÇÃO DE ANOTAÇÕES (ESTUDO E CONFIABILIDADE)
+# =========================================================================
+
+@app.get("/api/books/{book_id}/export/markdown")
+async def export_annotations_markdown(book_id: str):
+    """Gera e retorna o caderno de estudos em formato Markdown (.md) para download."""
+    try:
+        book = get_book(book_id)
+        content = export_book_annotations_markdown(book_id)
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    safe_title = "".join(c for c in book.get("title", "documento") if c.isalnum() or c in ("-", "_")).strip() or "documento"
+    filename = f"lectoria_{safe_title}_anotacoes.md"
+    return Response(
+        content=content,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/books/{book_id}/export/json")
+async def export_annotations_json(book_id: str):
+    """Gera e retorna o conjunto completo estruturado de anotações em formato JSON."""
+    try:
+        book = get_book(book_id)
+        data = export_book_annotations_json(book_id)
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    safe_title = "".join(c for c in book.get("title", "documento") if c.isalnum() or c in ("-", "_")).strip() or "documento"
+    filename = f"lectoria_{safe_title}_anotacoes.json"
+    import json
+    return Response(
+        content=json.dumps(data, indent=2, ensure_ascii=False),
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/books/{book_id}/import/preview")
+async def preview_annotations_import(book_id: str, request: Request):
+    """Valida o JSON de anotações e retorna um resumo antes da confirmação."""
+    try:
+        payload = await request.json()
+        preview = preview_import_annotations(book_id, payload)
+        return {"status": "success", "preview": preview}
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except (ImportError, ValueError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/api/books/{book_id}/import/confirm")
+async def confirm_annotations_import(book_id: str, request: Request):
+    """Aplica a importação de anotações dentro de uma transação SQLite protegida."""
+    try:
+        payload = await request.json()
+        result = apply_import_annotations(book_id, payload)
+        return {"status": "success", "result": result}
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except (ImportError, ValueError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+# =========================================================================
+# BACKUPS MANUAIS DO BANCO SQLITE
+# =========================================================================
+
+@app.post("/api/backup")
+async def trigger_manual_backup():
+    """Gera uma cópia de segurança pontual do banco SQLite em backups/."""
+    try:
+        backup_info = create_backup()
+        return {"status": "success", "backup": backup_info}
+    except BackupError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@app.get("/api/backups")
+async def get_available_backups():
+    """Lista todos os backups manuais disponíveis no servidor."""
+    backups = list_backups()
+    return {"status": "success", "backups": backups}
 
 
 @app.get("/api/books/{book_id}")

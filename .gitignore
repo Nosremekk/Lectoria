@@ -29,6 +29,9 @@ books/*
 .env
 .env.*
 
+# Backups manuais locais (não versionar backups do banco)
+backups/
+
 # IMPORTANTE: Preservar e versionar dados persistentes da aplicação
 !data/
 !data/**

@@ -19,6 +19,10 @@
 
     <div class="reader-center">
       <div class="page-controls">
+        <button id="btn-back-last-page" class="btn btn-icon btn-subtle" title="Voltar à página anterior (b)" style="display: none;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg>
+        </button>
+
         <button id="btn-prev-page" class="btn btn-icon" title="Página Anterior (Seta Esquerda / PageUp)">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
             <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
@@ -40,6 +44,13 @@
     </div>
 
     <div class="reader-right">
+      <!-- Botão Miniaturas de Páginas -->
+      <button id="btn-toggle-thumbnails" class="btn btn-icon" title="Miniaturas de Páginas (m)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z"/>
+        </svg>
+      </button>
+
       <!-- Grupo de Modos de Interação (Leitura, Marca-texto, Desenho) -->
       <div class="tool-mode-group" title="Modo de interação">
         <button id="btn-tool-read" class="tool-mode-btn active" title="Modo Leitura (Navegação padrão)">
@@ -95,8 +106,20 @@
           <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0s-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0s-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41s-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41s-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
         </svg>
       </button>
+
+      <!-- Botão de Ajuda com Atalhos de Teclado -->
+      <button id="btn-shortcuts-help" class="btn btn-icon" title="Atalhos de Teclado (?)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 16h-2v-2h2v2zm1.07-7.75l-.9.92C12.45 11.9 12 12.5 12 14h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.75z"/>
+        </svg>
+      </button>
     </div>
   </header>
+
+  <!-- Barra de Progresso de Leitura Visual -->
+  <div id="reading-progress-bar" class="reading-progress-bar" title="Progresso da leitura">
+    <div id="reading-progress-fill" class="reading-progress-fill" style="width: 0%;"></div>
+  </div>
 
   <!-- Viewport Principal -->
   <main id="reader-viewport" class="reader-viewport">
@@ -155,27 +178,76 @@
     </button>
   </div>
 
+  <!-- Painel Lateral de Miniaturas de Páginas (Thumbnails Drawer) -->
+  <aside id="thumbnails-drawer" class="thumbnails-drawer">
+    <div class="drawer-header">
+      <h3 class="drawer-title">Miniaturas das Páginas</h3>
+      <button id="btn-close-thumbnails" class="btn btn-icon" title="Fechar miniaturas">&times;</button>
+    </div>
+    <div id="thumbnails-list" class="thumbnails-list">
+      <!-- Miniaturas geradas sob demanda com lazy rendering -->
+    </div>
+  </aside>
+
   <!-- Painel Lateral de Anotações (Drawer) -->
   <aside id="annotations-drawer" class="annotations-drawer">
     <div class="drawer-header">
-      <h3 class="drawer-title">Anotações e Destaques</h3>
+      <h3 class="drawer-title">Caderno de Estudos</h3>
       <button id="btn-close-drawer" class="btn btn-icon" title="Fechar painel">&times;</button>
+    </div>
+
+    <!-- Busca Instantânea Local dentro das Anotações -->
+    <div class="drawer-search-wrapper">
+      <div class="drawer-search-input-box">
+        <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+        </svg>
+        <input type="text" id="drawer-search-input" class="drawer-search-input" placeholder="Pesquisar nas anotações..." autocomplete="off">
+        <button id="btn-clear-drawer-search" class="btn-clear-search" style="display: none;" title="Limpar busca">&times;</button>
+      </div>
     </div>
 
     <div class="drawer-tabs">
       <button class="drawer-tab active" data-drawer-filter="all">Todas (<span id="count-all-annotations">0</span>)</button>
       <button class="drawer-tab" data-drawer-filter="highlights">Destaques (<span id="count-highlights">0</span>)</button>
       <button class="drawer-tab" data-drawer-filter="notes">Notas (<span id="count-notes">0</span>)</button>
+      <button class="drawer-tab" data-drawer-filter="drawings">Desenhos (<span id="count-drawings">0</span>)</button>
     </div>
 
-    <div style="padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--border-color); background-color: var(--bg-secondary);">
-      <button id="btn-new-page-note" class="btn btn-primary" style="width: 100%; justify-content: center; font-size: 0.82rem;">
+    <!-- Ações do Painel (Adicionar nota, Exportar, Importar) -->
+    <div class="drawer-actions-container">
+      <button id="btn-new-page-note" class="btn btn-primary" style="width: 100%; justify-content: center; font-size: 0.8rem; margin-bottom: 0.5rem;">
         + Adicionar Nota na Pág. Atual
       </button>
+
+      <div class="study-tools-bar">
+        <div class="dropdown-wrapper">
+          <button id="btn-toggle-export-menu" class="btn btn-sm btn-outline" title="Exportar caderno de estudos">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            <span>Exportar</span>
+          </button>
+          <div id="export-dropdown-menu" class="study-dropdown-menu" style="display: none;">
+            <a id="btn-export-markdown" href="#" class="dropdown-item">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+              <span>Markdown (.md)</span>
+            </a>
+            <a id="btn-export-json" href="#" class="dropdown-item">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2H5zm4 12H7v-2h2v2zm0-4H7V7h2v4zm8 4h-6v-2h6v2zm0-4h-6V7h6v4z"/></svg>
+              <span>JSON (.json)</span>
+            </a>
+          </div>
+        </div>
+
+        <button id="btn-trigger-import" class="btn btn-sm btn-outline" title="Importar anotações de arquivo JSON">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
+          <span>Importar</span>
+        </button>
+        <input type="file" id="import-file-input" accept=".json,application/json" style="display: none;">
+      </div>
     </div>
 
     <div id="drawer-items-list" class="drawer-content">
-      <!-- Itens de destaques e anotações carregados dinamicamente -->
+      <!-- Itens de destaques, notas e desenhos agrupados por página -->
     </div>
   </aside>
 
@@ -198,6 +270,116 @@
       <div class="modal-footer">
         <button id="btn-cancel-note" class="btn">Cancelar</button>
         <button id="btn-save-note" class="btn btn-primary">Salvar Anotação</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Visualização e Confirmação de Importação de Anotações -->
+  <div id="modal-import-preview" class="modal-overlay">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Importar Anotações</h3>
+        <button id="btn-close-modal-import" class="btn btn-icon">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="import-preview-summary" class="import-summary-box">
+          <!-- Resumo carregado dinamicamente -->
+        </div>
+        <div id="import-preview-list" class="import-preview-samples">
+          <!-- Amostra dos itens a serem inseridos -->
+        </div>
+        <p style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.6rem;">
+          * Anotações já existentes serão preservadas. A operação é protegida por transação no banco de dados.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-import" class="btn">Cancelar</button>
+        <button id="btn-confirm-import" class="btn btn-primary">Confirmar Importação</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Atalhos de Teclado -->
+  <div id="modal-shortcuts-help" class="modal-overlay">
+    <div class="modal-content" style="max-width: 520px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Atalhos de Teclado</h3>
+        <button id="btn-close-modal-shortcuts" class="btn btn-icon">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 0.8rem 1.2rem;">
+        <table class="shortcuts-table">
+          <thead>
+            <tr>
+              <th>Ação</th>
+              <th style="text-align: right;">Atalho</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Próxima página</td>
+              <td style="text-align: right;"><kbd>→</kbd> <kbd>PageDown</kbd> <kbd>Espaço</kbd></td>
+            </tr>
+            <tr>
+              <td>Página anterior</td>
+              <td style="text-align: right;"><kbd>←</kbd> <kbd>PageUp</kbd></td>
+            </tr>
+            <tr>
+              <td>Voltar à última página visitada</td>
+              <td style="text-align: right;"><kbd>b</kbd></td>
+            </tr>
+            <tr>
+              <td>Modo Leitura</td>
+              <td style="text-align: right;"><kbd>r</kbd></td>
+            </tr>
+            <tr>
+              <td>Modo Marca-texto</td>
+              <td style="text-align: right;"><kbd>h</kbd></td>
+            </tr>
+            <tr>
+              <td>Modo Desenho Livre</td>
+              <td style="text-align: right;"><kbd>d</kbd></td>
+            </tr>
+            <tr>
+              <td>Abrir/fechar Caderno de Estudos</td>
+              <td style="text-align: right;"><kbd>a</kbd></td>
+            </tr>
+            <tr>
+              <td>Abrir/fechar Miniaturas</td>
+              <td style="text-align: right;"><kbd>m</kbd></td>
+            </tr>
+            <tr>
+              <td>Aumentar Zoom / Diminuir Zoom</td>
+              <td style="text-align: right;"><kbd>+</kbd> / <kbd>-</kbd></td>
+            </tr>
+            <tr>
+              <td>Ajustar à largura</td>
+              <td style="text-align: right;"><kbd>w</kbd></td>
+            </tr>
+            <tr>
+              <td>Ajustar à página inteira</td>
+              <td style="text-align: right;"><kbd>p</kbd></td>
+            </tr>
+            <tr>
+              <td>Alternar modo Página / Rolagem</td>
+              <td style="text-align: right;"><kbd>s</kbd></td>
+            </tr>
+            <tr>
+              <td>Alternar tema Claro / Escuro</td>
+              <td style="text-align: right;"><kbd>t</kbd></td>
+            </tr>
+            <tr>
+              <td>Esta janela de ajuda</td>
+              <td style="text-align: right;"><kbd>?</kbd></td>
+            </tr>
+            <tr>
+              <td>Fechar janelas / modais</td>
+              <td style="text-align: right;"><kbd>Esc</kbd></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-close-shortcuts-btn" class="btn btn-primary">Entendido</button>
       </div>
     </div>
   </div>

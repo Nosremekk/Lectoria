@@ -26,6 +26,11 @@ DATA_DIR = Path(
 # Caminho do banco SQLite
 DB_PATH = DATA_DIR / "lectoria.db"
 
+# Diretório para backups manuais do banco de dados (ignorado pelo Git)
+BACKUPS_DIR = Path(
+    os.getenv("LECTORIA_BACKUPS_DIR", BASE_DIR / "backups")
+).resolve()
+
 # Rede e escuta HTTP
 HOST = os.getenv("LECTORIA_HOST", "0.0.0.0")
 # Porta padrão 8765 para evitar conflitos com o Jellyfin (que usa 8096)
@@ -34,4 +39,5 @@ PORT = int(os.getenv("LECTORIA_PORT", "8765"))
 # Garante a existência dos diretórios locais essenciais
 LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
 

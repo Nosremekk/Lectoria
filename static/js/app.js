@@ -12,6 +12,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const collectionSelect = document.getElementById("collection-select");
   const btnScan = document.getElementById("btn-scan");
   const scanText = document.getElementById("scan-text");
+  const btnBackup = document.getElementById("btn-backup");
+  const backupText = document.getElementById("backup-text");
   const btnViewGrid = document.getElementById("btn-view-grid");
   const btnViewList = document.getElementById("btn-view-list");
   const btnThemeToggle = document.getElementById("btn-theme-toggle");
@@ -516,6 +518,30 @@ document.addEventListener("DOMContentLoaded", () => {
       }, 2000);
     }
   });
+
+  if (btnBackup) {
+    btnBackup.addEventListener("click", async () => {
+      btnBackup.disabled = true;
+      if (backupText) backupText.textContent = "Gerando...";
+      try {
+        const res = await fetch("/api/backup", { method: "POST" });
+        if (res.ok) {
+          const data = await res.json();
+          if (backupText) backupText.textContent = "Salvo!";
+          alert(`Backup consistente gerado com sucesso em backups/!\nArquivo: ${data.backup.filename}\nTamanho: ${Math.round(data.backup.size_bytes / 1024)} KB\nIntegridade: ${data.backup.integrity}`);
+        } else {
+          alert("Falha ao gerar backup.");
+        }
+      } catch (e) {
+        alert("Erro de conexão ao gerar backup.");
+      } finally {
+        setTimeout(() => {
+          if (backupText) backupText.textContent = "Backup";
+          btnBackup.disabled = false;
+        }, 1500);
+      }
+    });
+  }
 
   // Fecha modais com tecla ESC
   window.addEventListener("keydown", (e) => {

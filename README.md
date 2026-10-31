@@ -4,33 +4,33 @@ Servidor pessoal de leitura focado exclusivamente em documentos PDF, projetado p
 
 ---
 
-## 1. Novidades da Iteração 3
+## 1. Novidades da Iteração 4: Estudos, Navegação e Confiabilidade
 
-- **Marca-Texto Inteligente**:
-  - Seleção de texto na camada de texto nativa do PDF.js.
-  - Barra flutuante de marcação com paleta de 5 cores (Amarelo, Verde, Azul, Rosa e Laranja).
-  - Coordenadas normalizadas percentuais `(0.0 a 1.0)`, garantindo posicionamento exato independente de zoom, dispositivo ou redimensionamento.
-  - Remoção de marcação com um clique.
-- **Anotações Textuais e Notas de Estudo**:
-  - Comentários vinculados diretamente a um trecho destacado ou notas avulsas vinculadas à página.
-  - Edição e exclusão simples pelo leitor e pelo painel de estudos.
-  - Preservação perpétua no SQLite sem tocar no arquivo PDF original.
-- **Desenho Livre Vetorial (SVG)**:
-  - Desenho fluido e responsivo com mouse, toque em celulares/tablets ou caneta digital.
-  - Formato 100% vetorial com coordenadas normalizadas (pesando apenas poucos kilobytes em JSON no banco e sem perda de nitidez com zoom).
-  - Seleção de cores, seletor de espessura de traço (Fino, Médio e Grosso) e ferramenta de borracha para apagar traços individuais.
-  - Botão de limpeza de desenhos da página com confirmação.
-  - Salvamento agrupado por debounce de 1 segundo (não realiza requisições a cada pixel).
-- **Painel Lateral de Anotações (Drawer)**:
-  - Gaveta lateral retrátil no leitor exibindo todos os destaques, citações e notas do documento.
-  - Abas de navegação: *Todas*, *Destaques* e *Notas*.
-  - Ao clicar em qualquer anotação ou destaque, o leitor salta imediatamente para a página correspondente.
-- **Barra de Modos de Uso**:
-  - *Modo Leitura*: navegação e rolagem natural sem interrupções.
-  - *Modo Marca-texto*: destaque rápido ao selecionar textos.
-  - *Modo Desenho*: ativação dos traços SVG e proteção contra rolagem acidental no toque.
-- **Repositório Git Local e Backup de Dados**:
-  - Versionamento completo das fontes e inclusão explícita da pasta `data/` com o banco SQLite.
+- **Caderno de Estudos Aprimorado**:
+  - Agrupamento inteligente das anotações por página (`Página X`).
+  - Diferenciação visual clara entre *Destaques* (com citação e cor), *Notas* (com texto e citações vinculadas) e *Desenhos Livres* (com indicação vetorial).
+  - **Busca Instantânea Local**: pesquisa em tempo real no documento por texto de citações, notas e páginas.
+  - Filtros dinâmicos: *Todas*, *Destaques*, *Notas* e *Desenhos*.
+  - Exibição de carimbos de data/hora (`dd/mm/aaaa hh:mm`) de criação e última edição.
+  - Salto imediato para a página ou trecho ao clicar em qualquer registro.
+- **Exportação de Anotações**:
+  - **Markdown (`.md`)**: relatório editorial formatado com sumário, metadados do documento (título, autor, arquivo), destaques em citação (`>`), notas associadas e anotações avulsas da página.
+  - **JSON (`.json`)**: exportação completa estruturada preservando coordenadas normalizadas, retângulos, cores, notas e traços vetoriais SVG para portabilidade total.
+- **Importação Confiável de Anotações**:
+  - Validação estrita de formato e schema JSON.
+  - **Detecção e Prevenção de Duplicatas**: identifica marcações idênticas já existentes e importa apenas novidades.
+  - **Pré-visualização (Preview Modal)**: apresenta resumo detalhado (novos destaques, notas, desenhos e duplicatas ignoradas) antes de qualquer gravação.
+  - **Transação Atômica no SQLite**: garantia de integridade com *rollback* imediato em caso de qualquer inconsistência.
+- **Navegação Aprimorada no Leitor**:
+  - **Barra de Progresso Visual**: indicador sutil de progresso percentual no topo da janela.
+  - **Voltar à Última Página**: botão e atalho (`b`) para retornar instantaneamente à página visitada anteriormente.
+  - **Miniaturas de Páginas com Lazy Loading**: gaveta lateral com miniaturas geradas sob demanda via `IntersectionObserver` em baixa resolução, com cache em memória (zero re-renderização desnecessária).
+  - **Badges de Anotações**: indicadores visuais nas miniaturas sinalizando quais páginas possuem destaques, notas ou desenhos.
+  - **Janela de Atalhos de Teclado**: modal de consulta rápida (`?` ou botão no cabeçalho).
+- **Sistema de Backup Seguro e Auditoria**:
+  - Módulo nativo `backup_service.py` utilizando a **SQLite Online Backup API**, garantindo cópias consistentes mesmo com o banco aberto e em modo WAL.
+  - Utilitário de linha de comando `scripts/backup.py` para geração, listagem, verificação e restauração segura.
+  - Armazenamento em `backups/` estritamente ignorado pelo Git, mantendo o histórico de código e o banco principal `data/lectoria.db` protegidos.
 
 ---
 
@@ -38,7 +38,7 @@ Servidor pessoal de leitura focado exclusivamente em documentos PDF, projetado p
 
 O Lectoria conta com um repositório Git estritamente **local** para histórico de alterações e preservação do banco de dados da aplicação.
 
-### 2.1 Comandos Básicos
+### 2.1 Comandos Básicos do Git
 
 - **Verificar o histórico de commits**:
   ```bash
@@ -66,9 +66,69 @@ O Lectoria conta com um repositório Git estritamente **local** para histórico 
   git checkout <HASH_DO_COMMIT>
   ```
 
+---
+
+### 2.2 Sistema de Backup e Procedimento de Restauração
+
+O Lectoria dispõe de um utilitário dedicado (`scripts/backup.py`) e de um módulo interno (`backup_service.py`) que utiliza a **SQLite Online Backup API**. Isso possibilita gerar snapshots 100% consistentes do banco de dados mesmo durante execuções ativas ou em modo WAL, armazenando-os em `backups/` (ignorado pelo versionamento Git).
+
+#### Como gerar um backup:
+```bash
+python3 scripts/backup.py --backup
+```
+*Gera uma cópia íntegra em `backups/lectoria_backup_AAAAMMDD_HHMMSS.db` e valida sua consistência (`PRAGMA integrity_check`).*
+
+#### Como listar backups existentes:
+```bash
+python3 scripts/backup.py --list
+```
+
+#### Como verificar a integridade da base atual:
+```bash
+python3 scripts/backup.py --verify
+```
+
+---
+
+### 2.3 Procedimento Oficial de Restauração Passo a Passo
+
+Caso seja necessário restaurar os dados a partir de um backup anterior, siga estritamente o procedimento:
+
+1. **Parar o servidor Lectoria**:
+   Pressione `Ctrl + C` no terminal onde o servidor está em execução, ou encerre o serviço do sistema.
+   *(Isso garante que nenhuma escrita concorrente ocorra durante a restauração).*
+
+2. **Identificar o arquivo de backup desejado**:
+   ```bash
+   python3 scripts/backup.py --list
+   ```
+   Localize o nome do arquivo, por exemplo: `lectoria_backup_20261031_185428.db`.
+
+3. **Restaurar os dados**:
+   Execute o utilitário informando o arquivo escolhido:
+   ```bash
+   python3 scripts/backup.py --restore lectoria_backup_20261031_185428.db
+   ```
+   O script solicitará confirmação explícita (`s/N`) para impedir substituições acidentais. Ele realiza:
+   - Validação prévia de integridade do arquivo de backup;
+   - Cópia segura para `data/lectoria.db`;
+   - Limpeza de arquivos residuais órfãos do WAL (`lectoria.db-wal` e `lectoria.db-shm`).
+
+4. **Verificar a integridade do banco restaurado**:
+   ```bash
+   python3 scripts/backup.py --verify
+   ```
+   Deverá retornar `[OK] Banco de dados íntegro e sem erros de consistência`.
+
+5. **Iniciar novamente o servidor**:
+   ```bash
+   source .venv/bin/activate
+   python3 main.py
+   ```
+
 > [!IMPORTANT]
 > **Aviso de Segurança e Backup**:
-> O repositório Git local protege contra alterações acidentais no código e no banco de dados. No entanto, **o Git local NÃO substitui uma rotina de backup externo** (como cópia da pasta `data/` para um pendrive ou armazenamento em nuvem pessoal) em caso de pane física no disco SSD ou no computador Positivo C1260.
+> O repositório Git local e a pasta `backups/` protegem contra alterações e exclusões acidentais. No entanto, **o Git local NÃO substitui uma rotina de backup externo** (como cópia da pasta `data/` ou `backups/` para um pendrive ou armazenamento em nuvem pessoal) em caso de pane física no disco SSD ou no computador Positivo C1260.
 
 ---
 
@@ -91,33 +151,39 @@ O Lectoria conta com um repositório Git estritamente **local** para histórico 
 
 ```text
 /home/vini/Jellyfin livros/
-├── .gitignore                  # Regras do Git (inclui data/ e ignora books/*.pdf)
+├── .gitignore                  # Regras do Git (inclui data/ e ignora books/*.pdf e backups/)
 ├── .venv/                      # Ambiente virtual Python
 ├── config.py                   # Configurações centralizadas (diretórios, porta, host)
 ├── database.py                 # Conexão SQLite (WAL mode) e migrações V1, V2 e V3
 ├── collections_service.py      # Serviço de coleções (CRUD e associações de livros)
 ├── annotations_service.py      # Serviço de marcações, anotações e desenhos livres
+├── export_service.py           # Serviço de exportação (.md, .json) e importação transacional
+├── backup_service.py           # Serviço de backup pontual com SQLite Online Backup API
 ├── library.py                  # Scanner leve (pypdf), filtros, busca, ordenação e segurança
 ├── progress.py                 # Persistência e restauração do progresso de leitura
 ├── main.py                     # API FastAPI, rotas estáticas e streaming com Range
 ├── pytest.ini                  # Configurações do framework de testes
 ├── requirements.txt            # Dependências Python mínimas fixadas
 ├── README.md                   # Documentação completa do projeto
+├── scripts/
+│   └── backup.py               # Utilitário CLI para backup e restauração manual
+├── backups/                    # Armazenamento de backups manuais do banco (ignorado no Git)
 ├── books/                      # Diretório local para os arquivos PDF (mantido intacto)
 ├── data/                       # Banco de dados persistente versionado (lectoria.db)
 ├── static/                     # Frontend estático
-│   ├── index.html              # Interface da Biblioteca (Tema Claro/Escuro, Coleções, Filtros)
-│   ├── reader.html             # Interface do Leitor (Anotações, Marcações, Desenho e Painel)
+│   ├── index.html              # Interface da Biblioteca (Tema Claro/Escuro, Coleções, Filtros, Backup)
+│   ├── reader.html             # Interface do Leitor (Anotações, Marcações, Desenho, Miniaturas e Modais)
 │   ├── css/
 │   │   └── style.css           # Estilos e temas claro/escuro
 │   ├── js/
 │   │   ├── app.js              # Lógica da biblioteca (busca, coleções, filtros, ordenação)
-│   │   └── reader.js           # Lógica do leitor (PDF.js, texto, marca-texto, SVG draw, drawer)
+│   │   └── reader.js           # Lógica do leitor (PDF.js, texto, marca-texto, SVG draw, drawer, miniaturas)
 │   └── vendor/
 │       └── pdfjs/              # PDF.js e worker embutidos offline
 └── tests/                      # Suíte de testes automatizados
     ├── conftest.py             # Fixtures e isolamento de ambiente
     ├── test_annotations.py     # Testes de destaques, notas e desenhos vetoriais
+    ├── test_iteration4.py      # Testes de exportação MD/JSON, importação transacional e backups
     ├── test_library.py         # Testes de catálogo, metadados e busca
     ├── test_collections.py     # Testes de CRUD e associação de coleções
     ├── test_filters_and_sorting.py # Testes de filtros de status, ordenação e concorrência
@@ -157,13 +223,20 @@ O servidor iniciará escutando em `http://0.0.0.0:8765`.
 | :--- | :--- |
 | `Seta Esquerda` / `PageUp` | Página anterior |
 | `Seta Direita` / `PageDown` / `Espaço` | Próxima página |
+| `b` | Voltar à última página lida / visitada |
 | `+` ou `=` | Aumentar zoom |
 | `-` | Diminuir zoom |
 | `w` | Ajustar à largura da tela (*Fit Width*) |
 | `p` | Ajustar à página inteira (*Fit Page*) |
-| `d` | Alternar Modo Desenho Livre |
-| `h` | Alternar Modo Marca-texto |
-| `Esc` | Fechar modais, painel lateral ou barra de seleção |
+| `r` | Modo Leitura |
+| `h` | Modo Marca-texto |
+| `d` | Modo Desenho Livre |
+| `a` | Abrir / fechar Caderno de Estudos |
+| `m` | Abrir / fechar Miniaturas de Páginas |
+| `s` | Alternar entre Página Única e Rolagem Contínua |
+| `t` | Alternar Tema Claro / Escuro |
+| `?` | Abrir janela de ajuda de atalhos de teclado |
+| `Esc` | Fechar modais, painéis laterais ou menus flutuantes |
 
 ---
 
@@ -191,7 +264,7 @@ source .venv/bin/activate
 pytest -v tests/
 ```
 
-Todos os **22 testes** cobrem os fluxos de leitura, coleções, migrações V1, V2 e V3, destaques, anotações, desenhos livres, integridade e segurança.
+Todos os **33 testes** cobrem os fluxos de leitura, coleções, migrações V1, V2 e V3, destaques, anotações, desenhos livres, exportação Markdown/JSON, importação com prevenção de duplicatas e rollback, backups SQLite, integridade e segurança.
 
 ---
 

@@ -1,0 +1,161 @@
+"""
+Módulo de serviço de backup e integridade do banco de dados SQLite do Lectoria.
+Utiliza a SQLite Online Backup API para gerar cópias pontuais e consistentes
+sem risco de corrupção e sem bloquear leituras/escritas.
+"""
+
+from datetime import datetime
+import os
+from pathlib import Path
+import shutil
+import sqlite3
+from typing import Any, Dict, List, Optional
+
+import config
+
+
+class BackupError(Exception):
+    """Exceção levantada quando ocorre um erro na criação ou restauração de backup."""
+    pass
+
+
+def verify_sqlite_integrity(db_path: Path) -> bool:
+    """
+    Executa verificação de integridade no banco de dados SQLite indicado.
+    Retorna True se estiver 100% íntegro ("ok"), False caso contrário.
+    """
+    if not db_path.exists():
+        return False
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=10.0)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA integrity_check;")
+        result = cursor.fetchone()
+        conn.close()
+        return bool(result and result[0] == "ok")
+    except Exception:
+        return False
+
+
+def create_backup(custom_name: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Gera um backup consistente do banco de dados SQLite da aplicação em backups/.
+    Utiliza sqlite3.Connection.backup para garantir consistência de páginas mesmo em modo WAL.
+    """
+    if not config.DB_PATH.exists():
+        raise BackupError(f"Banco de dados de origem '{config.DB_PATH}' não existe.")
+
+    config.BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if custom_name:
+        clean_name = "".join(c for c in custom_name if c.isalnum() or c in ("-", "_"))
+        backup_filename = f"lectoria_backup_{clean_name}_{timestamp}.db"
+    else:
+        backup_filename = f"lectoria_backup_{timestamp}.db"
+
+    target_path = config.BACKUPS_DIR / backup_filename
+
+    # Executa a cópia de segurança usando a API nativa de backup do SQLite
+    try:
+        source_conn = sqlite3.connect(str(config.DB_PATH), timeout=30.0)
+        target_conn = sqlite3.connect(str(target_path))
+
+        source_conn.backup(target_conn)
+
+        target_conn.close()
+        source_conn.close()
+    except Exception as e:
+        if target_path.exists():
+            target_path.unlink()
+        raise BackupError(f"Falha ao executar backup SQLite: {e}") from e
+
+    # Verifica integridade da cópia gerada
+    if not verify_sqlite_integrity(target_path):
+        if target_path.exists():
+            target_path.unlink()
+        raise BackupError("A cópia de backup gerada falhou na verificação de integridade.")
+
+    stat = target_path.stat()
+    return {
+        "filename": backup_filename,
+        "path": str(target_path),
+        "size_bytes": stat.st_size,
+        "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        "integrity": "ok",
+    }
+
+
+def list_backups() -> List[Dict[str, Any]]:
+    """Lista todos os backups disponíveis no diretório backups/, ordenados do mais recente ao mais antigo."""
+    if not config.BACKUPS_DIR.exists():
+        return []
+
+    backups = []
+    for file in config.BACKUPS_DIR.glob("*.db"):
+        if file.is_file():
+            stat = file.stat()
+            backups.append({
+                "filename": file.name,
+                "size_bytes": stat.st_size,
+                "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "mtime": stat.st_mtime,
+            })
+
+    backups.sort(key=lambda x: x["mtime"], reverse=True)
+    for b in backups:
+        b.pop("mtime", None)
+    return backups
+
+
+def restore_backup(backup_filename: str) -> Dict[str, Any]:
+    """
+    Restaura um backup previamente gerado para data/lectoria.db.
+    Realiza verificação rigorosa de integridade antes da substituição e limpa arquivos residuais WAL.
+    """
+    backup_path = (config.BACKUPS_DIR / backup_filename).resolve()
+
+    # Validação de segurança de caminho
+    if not backup_path.is_relative_to(config.BACKUPS_DIR):
+        raise BackupError("Caminho de backup inválido.")
+
+    if not backup_path.exists() or not backup_path.is_file():
+        raise BackupError(f"Arquivo de backup '{backup_filename}' não encontrado.")
+
+    # 1. Validação prévia de integridade do arquivo de backup
+    if not verify_sqlite_integrity(backup_path):
+        raise BackupError(f"O arquivo de backup '{backup_filename}' está corrompido ou é inválido.")
+
+    # 2. Garante diretório de destino
+    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 3. Substituição segura
+    temp_target = config.DATA_DIR / "lectoria_restoring.db"
+    shutil.copy2(backup_path, temp_target)
+
+    # Verifica integridade da cópia recém-colocada
+    if not verify_sqlite_integrity(temp_target):
+        if temp_target.exists():
+            temp_target.unlink()
+        raise BackupError("Falha na integridade dos dados copiados para o destino.")
+
+    # Substitui atomicamente
+    temp_target.replace(config.DB_PATH)
+
+    # 4. Remove arquivos WAL e SHM órfãos da versão anterior
+    for ext in ("-wal", "-shm"):
+        wal_file = config.DB_PATH.with_name(config.DB_PATH.name + ext)
+        if wal_file.exists():
+            try:
+                wal_file.unlink()
+            except Exception:
+                pass
+
+    stat = config.DB_PATH.stat()
+    return {
+        "status": "success",
+        "restored_from": backup_filename,
+        "target_path": str(config.DB_PATH),
+        "size_bytes": stat.st_size,
+        "verified_integrity": True,
+    }

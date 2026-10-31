@@ -24,6 +24,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const pageCountDisplay = document.getElementById("page-count-display");
   const btnPrevPage = document.getElementById("btn-prev-page");
   const btnNextPage = document.getElementById("btn-next-page");
+  const btnBackLastPage = document.getElementById("btn-back-last-page");
   const btnZoomIn = document.getElementById("btn-zoom-in");
   const btnZoomOut = document.getElementById("btn-zoom-out");
   const btnFitWidth = document.getElementById("btn-fit-width");
@@ -31,13 +32,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   const btnModeSingle = document.getElementById("btn-mode-single");
   const btnModeContinuous = document.getElementById("btn-mode-continuous");
   const btnReaderTheme = document.getElementById("btn-reader-theme");
+  const btnShortcutsHelp = document.getElementById("btn-shortcuts-help");
   const saveIndicator = document.getElementById("save-indicator");
+  const readingProgressFill = document.getElementById("reading-progress-fill");
 
   // Ferramentas de Modo
   const btnToolRead = document.getElementById("btn-tool-read");
   const btnToolHighlight = document.getElementById("btn-tool-highlight");
   const btnToolDraw = document.getElementById("btn-tool-draw");
   const btnToggleDrawer = document.getElementById("btn-toggle-drawer");
+  const btnToggleThumbnails = document.getElementById("btn-toggle-thumbnails");
 
   // Barras Flutuantes e Modais
   const selectionToolbar = document.getElementById("selection-toolbar");
@@ -47,7 +51,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const btnDrawEraser = document.getElementById("btn-draw-eraser");
   const btnDrawClear = document.getElementById("btn-draw-clear");
 
-  // Painel de Anotações
+  // Painel de Anotações (Estudos)
   const annotationsDrawer = document.getElementById("annotations-drawer");
   const btnCloseDrawer = document.getElementById("btn-close-drawer");
   const drawerTabs = document.querySelectorAll(".drawer-tab");
@@ -55,9 +59,24 @@ document.addEventListener("DOMContentLoaded", async () => {
   const countAllEl = document.getElementById("count-all-annotations");
   const countHighlightsEl = document.getElementById("count-highlights");
   const countNotesEl = document.getElementById("count-notes");
+  const countDrawingsEl = document.getElementById("count-drawings");
   const btnNewPageNote = document.getElementById("btn-new-page-note");
 
-  // Modal Editor de Anotação
+  const drawerSearchInput = document.getElementById("drawer-search-input");
+  const btnClearDrawerSearch = document.getElementById("btn-clear-drawer-search");
+  const btnToggleExportMenu = document.getElementById("btn-toggle-export-menu");
+  const exportDropdownMenu = document.getElementById("export-dropdown-menu");
+  const btnExportMarkdown = document.getElementById("btn-export-markdown");
+  const btnExportJson = document.getElementById("btn-export-json");
+  const btnTriggerImport = document.getElementById("btn-trigger-import");
+  const importFileInput = document.getElementById("import-file-input");
+
+  // Painel de Miniaturas
+  const thumbnailsDrawer = document.getElementById("thumbnails-drawer");
+  const btnCloseThumbnails = document.getElementById("btn-close-thumbnails");
+  const thumbnailsList = document.getElementById("thumbnails-list");
+
+  // Modais
   const modalNoteEditor = document.getElementById("modal-note-editor");
   const modalNoteTitle = document.getElementById("modal-note-title");
   const modalNoteQuoteBox = document.getElementById("modal-note-quote-box");
@@ -66,6 +85,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   const btnCloseModalNote = document.getElementById("btn-close-modal-note");
   const btnCancelNote = document.getElementById("btn-cancel-note");
   const btnSaveNote = document.getElementById("btn-save-note");
+
+  const modalImportPreview = document.getElementById("modal-import-preview");
+  const btnCloseModalImport = document.getElementById("btn-close-modal-import");
+  const btnCancelImport = document.getElementById("btn-cancel-import");
+  const btnConfirmImport = document.getElementById("btn-confirm-import");
+  const importPreviewSummary = document.getElementById("import-preview-summary");
+  const importPreviewList = document.getElementById("import-preview-list");
+
+  const modalShortcutsHelp = document.getElementById("modal-shortcuts-help");
+  const btnCloseModalShortcuts = document.getElementById("btn-close-modal-shortcuts");
+  const btnCloseShortcutsBtn = document.getElementById("btn-close-shortcuts-btn");
 
   // Containers de Visualização
   const viewportEl = document.getElementById("reader-viewport");
@@ -108,6 +138,36 @@ document.addEventListener("DOMContentLoaded", async () => {
   let currentStroke = null;
   let pageStrokesMap = new Map(); // pageNum -> array of strokes
   let saveDrawingTimeout = null;
+
+  // Estado da Iteração 4 (Navegação, Estudos, Miniaturas)
+  let lastVisitedPage = null;
+  let drawerSearchTerm = "";
+  let pendingImportData = null;
+  let thumbnailsInitialized = false;
+  const renderedThumbnails = new Set();
+  let thumbnailObserver = null;
+
+  function updateReadingProgressBar() {
+    if (!readingProgressFill) return;
+    const pct = totalPages > 0 ? (currentPage / totalPages) * 100 : 0;
+    readingProgressFill.style.width = `${pct}%`;
+  }
+
+  function updateLastVisitedPageButton() {
+    if (!btnBackLastPage) return;
+    if (lastVisitedPage && lastVisitedPage !== currentPage) {
+      btnBackLastPage.style.display = "inline-flex";
+      btnBackLastPage.title = `Voltar à página ${lastVisitedPage} (b)`;
+    } else {
+      btnBackLastPage.style.display = "none";
+    }
+  }
+
+  if (btnBackLastPage) {
+    btnBackLastPage.addEventListener("click", () => {
+      if (lastVisitedPage) goToPage(lastVisitedPage);
+    });
+  }
 
   // --- Tema ---
   function applyTheme(theme) {
@@ -235,6 +295,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       pageNumInput.value = num;
       btnPrevPage.disabled = num <= 1;
       btnNextPage.disabled = num >= totalPages;
+      updateReadingProgressBar();
+      if (thumbnailsInitialized) highlightActiveThumbnail();
       queueSaveProgress();
     } catch (err) {
       if (err.name !== "RenderingCancelledException") {
@@ -637,16 +699,53 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   });
 
+  // --- Formatação de Datas ---
+  function formatTimestamp(isoStr) {
+    if (!isoStr) return "";
+    try {
+      const d = new Date(isoStr);
+      if (isNaN(d.getTime())) return isoStr;
+      const day = String(d.getDate()).padStart(2, "0");
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const year = d.getFullYear();
+      const hours = String(d.getHours()).padStart(2, "0");
+      const mins = String(d.getMinutes()).padStart(2, "0");
+      return `${day}/${month}/${year} ${hours}:${mins}`;
+    } catch {
+      return isoStr;
+    }
+  }
+
   // --- Painel Lateral de Anotações (Drawer) ---
   let activeDrawerFilter = "all";
 
   btnToggleDrawer.addEventListener("click", () => {
     annotationsDrawer.classList.toggle("active");
     if (annotationsDrawer.classList.contains("active")) {
+      thumbnailsDrawer.classList.remove("active");
       reloadBookAnnotations();
     }
   });
   btnCloseDrawer.addEventListener("click", () => annotationsDrawer.classList.remove("active"));
+
+  if (drawerSearchInput) {
+    drawerSearchInput.addEventListener("input", (e) => {
+      drawerSearchTerm = e.target.value.toLowerCase().trim();
+      if (btnClearDrawerSearch) {
+        btnClearDrawerSearch.style.display = drawerSearchTerm ? "inline-block" : "none";
+      }
+      renderDrawerList();
+    });
+  }
+
+  if (btnClearDrawerSearch) {
+    btnClearDrawerSearch.addEventListener("click", () => {
+      drawerSearchInput.value = "";
+      drawerSearchTerm = "";
+      btnClearDrawerSearch.style.display = "none";
+      renderDrawerList();
+    });
+  }
 
   drawerTabs.forEach(tab => {
     tab.addEventListener("click", () => {
@@ -660,71 +759,147 @@ document.addEventListener("DOMContentLoaded", async () => {
   function updateDrawerCounts() {
     const hCount = (bookAnnotations.highlights || []).length;
     const nCount = (bookAnnotations.notes || []).length;
+    const dCount = (bookAnnotations.drawing_pages || []).length;
     countHighlightsEl.textContent = hCount;
     countNotesEl.textContent = nCount;
-    countAllEl.textContent = hCount + nCount;
+    if (countDrawingsEl) countDrawingsEl.textContent = dCount;
+    countAllEl.textContent = hCount + nCount + dCount;
   }
 
   function renderDrawerList() {
     const highlights = bookAnnotations.highlights || [];
     const notes = bookAnnotations.notes || [];
+    const drawingPages = bookAnnotations.drawing_pages || [];
 
     let items = [];
+
     if (activeDrawerFilter === "all" || activeDrawerFilter === "highlights") {
-      highlights.forEach(h => items.push({ type: "highlight", data: h, page: h.page, date: h.created_at }));
-    }
-    if (activeDrawerFilter === "all" || activeDrawerFilter === "notes") {
-      notes.forEach(n => items.push({ type: "note", data: n, page: n.page, date: n.created_at }));
+      highlights.forEach(h => {
+        if (!drawerSearchTerm || h.selected_text.toLowerCase().includes(drawerSearchTerm)) {
+          items.push({ type: "highlight", data: h, page: h.page, date: h.created_at });
+        }
+      });
     }
 
-    items.sort((a, b) => a.page - b.page || new Date(a.date) - new Date(b.date));
+    if (activeDrawerFilter === "all" || activeDrawerFilter === "notes") {
+      notes.forEach(n => {
+        const textMatch = n.content.toLowerCase().includes(drawerSearchTerm) ||
+          (n.highlight_text && n.highlight_text.toLowerCase().includes(drawerSearchTerm));
+        if (!drawerSearchTerm || textMatch) {
+          items.push({ type: "note", data: n, page: n.page, date: n.updated_at || n.created_at });
+        }
+      });
+    }
+
+    if (activeDrawerFilter === "all" || activeDrawerFilter === "drawings") {
+      drawingPages.forEach(d => {
+        const searchMatch = !drawerSearchTerm ||
+          `desenho pág página ${d.page}`.toLowerCase().includes(drawerSearchTerm);
+        if (searchMatch) {
+          items.push({ type: "drawing", data: d, page: d.page, date: d.updated_at });
+        }
+      });
+    }
 
     if (items.length === 0) {
       drawerItemsList.innerHTML = `
         <div style="text-align: center; color: var(--text-faint); padding: 3rem 1rem;">
-          <p>Nenhuma marcação ou anotação nesta categoria.</p>
-          <p style="font-size: 0.8rem; margin-top: 0.4rem;">Selecione textos no livro para destacar ou use o botão acima para anotar.</p>
+          <p>${drawerSearchTerm ? "Nenhum resultado encontrado para a busca." : "Nenhuma anotação nesta categoria."}</p>
+          <p style="font-size: 0.8rem; margin-top: 0.4rem;">
+            ${drawerSearchTerm ? "Tente buscar por outras palavras-chave." : "Selecione trechos no livro para destacar, adicionar notas ou desenhe livremente."}
+          </p>
         </div>
       `;
       return;
     }
 
-    drawerItemsList.innerHTML = items.map(item => {
-      if (item.type === "highlight") {
-        const h = item.data;
-        return `
-          <div class="annotation-item" data-goto-page="${h.page}">
-            <div class="annotation-item-header">
-              <span class="annotation-page-badge">Pág. ${h.page}</span>
-              <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background-color: ${h.color}; border: 1px solid rgba(0,0,0,0.2);"></span>
-            </div>
-            <div class="annotation-quote" style="border-left-color: ${h.color};">
-              "${escapeHtml(h.selected_text)}"
-            </div>
-            <div class="annotation-item-actions">
-              <button class="btn-item-action btn-add-note-to-h" data-h-id="${h.id}" data-page="${h.page}" data-quote="${escapeHtml(h.selected_text)}">Adicionar Nota</button>
-              <button class="btn-item-action danger btn-del-highlight" data-h-id="${h.id}">Excluir</button>
-            </div>
-          </div>
-        `;
-      } else {
-        const n = item.data;
-        return `
-          <div class="annotation-item" data-goto-page="${n.page}">
-            <div class="annotation-item-header">
-              <span class="annotation-page-badge">Pág. ${n.page}</span>
-              <span style="font-size: 0.72rem; color: var(--text-faint);">Nota</span>
-            </div>
-            ${n.highlight_text ? `<div class="annotation-quote">"${escapeHtml(n.highlight_text)}"</div>` : ""}
-            <div class="annotation-note-text">${escapeHtml(n.content)}</div>
-            <div class="annotation-item-actions">
-              <button class="btn-item-action btn-edit-note" data-note-id="${n.id}" data-page="${n.page}" data-content="${escapeHtml(n.content)}">Editar</button>
-              <button class="btn-item-action danger btn-del-note" data-note-id="${n.id}">Excluir</button>
-            </div>
-          </div>
-        `;
+    // Agrupa por página
+    const pageMap = new Map();
+    items.forEach(item => {
+      if (!pageMap.has(item.page)) {
+        pageMap.set(item.page, []);
       }
-    }).join("");
+      pageMap.get(item.page).push(item);
+    });
+
+    const sortedPages = Array.from(pageMap.keys()).sort((a, b) => a - b);
+
+    let html = "";
+    sortedPages.forEach(pageNum => {
+      const pageItems = pageMap.get(pageNum);
+      pageItems.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      html += `
+        <div class="drawer-page-group">
+          <div class="drawer-page-header">
+            <span>Página ${pageNum}</span>
+            <span style="font-size: 0.72rem; color: var(--text-faint);">${pageItems.length} item(s)</span>
+          </div>
+      `;
+
+      pageItems.forEach(item => {
+        if (item.type === "highlight") {
+          const h = item.data;
+          const dateFormatted = formatTimestamp(h.created_at);
+          html += `
+            <div class="annotation-item" data-goto-page="${h.page}">
+              <div class="annotation-item-header">
+                <span class="annotation-badge badge-highlight">Destaque</span>
+                <div style="display: flex; align-items: center; gap: 0.4rem;">
+                  <span class="annotation-date">${dateFormatted}</span>
+                  <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background-color: ${h.color}; border: 1px solid rgba(0,0,0,0.2);"></span>
+                </div>
+              </div>
+              <div class="annotation-quote" style="border-left-color: ${h.color};">
+                "${escapeHtml(h.selected_text)}"
+              </div>
+              <div class="annotation-item-actions">
+                <button class="btn-item-action btn-add-note-to-h" data-h-id="${h.id}" data-page="${h.page}" data-quote="${escapeHtml(h.selected_text)}">Adicionar Nota</button>
+                <button class="btn-item-action danger btn-del-highlight" data-h-id="${h.id}">Excluir</button>
+              </div>
+            </div>
+          `;
+        } else if (item.type === "note") {
+          const n = item.data;
+          const dateFormatted = formatTimestamp(n.updated_at || n.created_at);
+          html += `
+            <div class="annotation-item" data-goto-page="${n.page}">
+              <div class="annotation-item-header">
+                <span class="annotation-badge badge-note">Nota</span>
+                <span class="annotation-date">${dateFormatted}</span>
+              </div>
+              ${n.highlight_text ? `<div class="annotation-quote">"${escapeHtml(n.highlight_text)}"</div>` : ""}
+              <div class="annotation-note-text">${escapeHtml(n.content)}</div>
+              <div class="annotation-item-actions">
+                <button class="btn-item-action btn-edit-note" data-note-id="${n.id}" data-page="${n.page}" data-content="${escapeHtml(n.content)}">Editar</button>
+                <button class="btn-item-action danger btn-del-note" data-note-id="${n.id}">Excluir</button>
+              </div>
+            </div>
+          `;
+        } else if (item.type === "drawing") {
+          const d = item.data;
+          const dateFormatted = formatTimestamp(d.updated_at);
+          html += `
+            <div class="annotation-item" data-goto-page="${d.page}">
+              <div class="annotation-item-header">
+                <span class="annotation-badge badge-drawing">Desenho Livre</span>
+                <span class="annotation-date">${dateFormatted}</span>
+              </div>
+              <div style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">
+                Contém traços vetoriais e ilustrações desenhadas à mão.
+              </div>
+              <div class="annotation-item-actions">
+                <button class="btn-item-action" data-goto-page="${d.page}">Ir para a Página</button>
+              </div>
+            </div>
+          `;
+        }
+      });
+
+      html += `</div>`;
+    });
+
+    drawerItemsList.innerHTML = html;
 
     // Navegação ao clicar no item do painel
     drawerItemsList.querySelectorAll(".annotation-item").forEach(el => {
@@ -780,6 +955,283 @@ document.addEventListener("DOMContentLoaded", async () => {
           }
         }
       });
+    });
+  }
+
+  // --- Exportação e Importação de Estudos ---
+  if (btnToggleExportMenu) {
+    btnToggleExportMenu.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const isVisible = exportDropdownMenu.style.display !== "none";
+      exportDropdownMenu.style.display = isVisible ? "none" : "flex";
+    });
+    document.addEventListener("click", () => {
+      if (exportDropdownMenu) exportDropdownMenu.style.display = "none";
+    });
+  }
+
+  if (btnExportMarkdown) {
+    btnExportMarkdown.addEventListener("click", (e) => {
+      e.preventDefault();
+      window.location.href = `/api/books/${bookId}/export/markdown`;
+    });
+  }
+
+  if (btnExportJson) {
+    btnExportJson.addEventListener("click", (e) => {
+      e.preventDefault();
+      window.location.href = `/api/books/${bookId}/export/json`;
+    });
+  }
+
+  if (btnTriggerImport && importFileInput) {
+    btnTriggerImport.addEventListener("click", () => {
+      importFileInput.value = "";
+      importFileInput.click();
+    });
+
+    importFileInput.addEventListener("change", async () => {
+      const file = importFileInput.files[0];
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+
+        const res = await fetch(`/api/books/${bookId}/import/preview`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "Arquivo JSON de estudo incompatível.");
+        }
+
+        const jsonRes = await res.json();
+        pendingImportData = data;
+        openImportPreviewModal(jsonRes.preview);
+      } catch (err) {
+        alert("Erro ao processar importação: " + err.message);
+      }
+    });
+  }
+
+  function openImportPreviewModal(preview) {
+    if (!modalImportPreview) return;
+    const counts = preview.counts || {};
+    const srcBook = preview.source_book || {};
+    importPreviewSummary.innerHTML = `
+      <div class="import-stat-row"><strong>Documento de origem:</strong> <span>${escapeHtml(srcBook.title || "Não especificado")}</span></div>
+      <div class="import-stat-row"><strong>Destaques novos a importar:</strong> <span style="color: var(--accent); font-weight:600;">${counts.highlights_new || 0} (${counts.highlights_duplicate || 0} duplicatas ignoradas)</span></div>
+      <div class="import-stat-row"><strong>Notas novas a importar:</strong> <span style="color: var(--accent); font-weight:600;">${counts.notes_new || 0} (${counts.notes_duplicate || 0} duplicatas ignoradas)</span></div>
+      <div class="import-stat-row"><strong>Desenhos a importar/mesclar:</strong> <span style="color: var(--accent); font-weight:600;">${counts.drawings_new || 0} (${counts.drawings_duplicate || 0} duplicatas ignoradas)</span></div>
+      <div class="import-stat-row" style="margin-top:0.4rem; padding-top:0.4rem; border-top:1px dashed var(--border-color);">
+        <strong>Total de novos itens:</strong> <span style="font-size:0.95rem; font-weight:700; color:var(--success);">${counts.total_new_items || 0}</span>
+      </div>
+    `;
+
+    let samplesHtml = "";
+    if (preview.preview_highlights && preview.preview_highlights.length > 0) {
+      samplesHtml += `<div><strong>Amostra de destaques a importar:</strong></div>`;
+      preview.preview_highlights.forEach(h => {
+        samplesHtml += `<div>• Pág. ${h.page}: "${escapeHtml(h.text)}..."</div>`;
+      });
+    }
+    if (preview.preview_notes && preview.preview_notes.length > 0) {
+      samplesHtml += `<div style="margin-top:0.4rem;"><strong>Amostra de notas a importar:</strong></div>`;
+      preview.preview_notes.forEach(n => {
+        samplesHtml += `<div>• Pág. ${n.page}: ${escapeHtml(n.content)}</div>`;
+      });
+    }
+    if (!samplesHtml) {
+      samplesHtml = `<em>Nenhum item novo para importar (todos os itens já existem neste documento).</em>`;
+    }
+    importPreviewList.innerHTML = samplesHtml;
+    modalImportPreview.classList.add("active");
+  }
+
+  function closeImportPreviewModal() {
+    if (modalImportPreview) modalImportPreview.classList.remove("active");
+    pendingImportData = null;
+  }
+  if (btnCloseModalImport) btnCloseModalImport.addEventListener("click", closeImportPreviewModal);
+  if (btnCancelImport) btnCancelImport.addEventListener("click", closeImportPreviewModal);
+
+  if (btnConfirmImport) {
+    btnConfirmImport.addEventListener("click", async () => {
+      if (!pendingImportData) return;
+      try {
+        btnConfirmImport.disabled = true;
+        btnConfirmImport.textContent = "Importando...";
+
+        const res = await fetch(`/api/books/${bookId}/import/confirm`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(pendingImportData),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "Falha ao gravar importação.");
+        }
+
+        const data = await res.json();
+        closeImportPreviewModal();
+        alert(`Importação concluída com sucesso! (${data.result.imported_counts.total} itens processados)`);
+        await reloadBookAnnotations();
+        if (thumbnailsInitialized) {
+          thumbnailsInitialized = false;
+          initThumbnails();
+        }
+      } catch (e) {
+        alert("Erro na importação: " + e.message);
+      } finally {
+        btnConfirmImport.disabled = false;
+        btnConfirmImport.textContent = "Confirmar Importação";
+      }
+    });
+  }
+
+  // --- Painel Lateral de Miniaturas com Lazy Rendering ---
+  if (btnToggleThumbnails) {
+    btnToggleThumbnails.addEventListener("click", () => {
+      thumbnailsDrawer.classList.toggle("active");
+      if (thumbnailsDrawer.classList.contains("active")) {
+        annotationsDrawer.classList.remove("active");
+        initThumbnails();
+      }
+    });
+  }
+  if (btnCloseThumbnails) {
+    btnCloseThumbnails.addEventListener("click", () => {
+      thumbnailsDrawer.classList.remove("active");
+    });
+  }
+
+  function initThumbnails() {
+    if (!pdfDoc) return;
+    if (thumbnailsInitialized) {
+      highlightActiveThumbnail();
+      return;
+    }
+    thumbnailsInitialized = true;
+    thumbnailsList.innerHTML = "";
+
+    const annotatedPages = new Map();
+    (bookAnnotations.highlights || []).forEach(h => {
+      if (!annotatedPages.has(h.page)) annotatedPages.set(h.page, {});
+      annotatedPages.get(h.page).h = true;
+    });
+    (bookAnnotations.notes || []).forEach(n => {
+      if (!annotatedPages.has(n.page)) annotatedPages.set(n.page, {});
+      annotatedPages.get(n.page).n = true;
+    });
+    (bookAnnotations.drawing_pages || []).forEach(d => {
+      if (!annotatedPages.has(d.page)) annotatedPages.set(d.page, {});
+      annotatedPages.get(d.page).d = true;
+    });
+
+    thumbnailObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const card = entry.target;
+          const pNum = parseInt(card.getAttribute("data-page-num"), 10);
+          renderThumbnail(pNum, card);
+          thumbnailObserver.unobserve(card);
+        }
+      });
+    }, { root: thumbnailsList, rootMargin: "200px" });
+
+    for (let i = 1; i <= totalPages; i++) {
+      const card = document.createElement("div");
+      card.className = `thumbnail-card ${i === currentPage ? "active" : ""}`;
+      card.id = `thumbnail-card-${i}`;
+      card.setAttribute("data-page-num", i);
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "thumbnail-canvas-wrapper";
+      const canvasEl = document.createElement("canvas");
+      canvasEl.className = "thumbnail-canvas";
+      wrapper.appendChild(canvasEl);
+      card.appendChild(wrapper);
+
+      const footer = document.createElement("div");
+      footer.className = "thumbnail-footer";
+
+      const numSpan = document.createElement("span");
+      numSpan.className = "thumbnail-page-number";
+      numSpan.textContent = `Pág. ${i}`;
+      footer.appendChild(numSpan);
+
+      const badges = document.createElement("div");
+      badges.className = "thumbnail-badges";
+      const pData = annotatedPages.get(i);
+      if (pData) {
+        if (pData.h) {
+          const dot = document.createElement("span");
+          dot.className = "thumbnail-badge-dot";
+          dot.style.backgroundColor = "#eab308";
+          dot.title = "Destaques";
+          badges.appendChild(dot);
+        }
+        if (pData.n) {
+          const dot = document.createElement("span");
+          dot.className = "thumbnail-badge-dot";
+          dot.style.backgroundColor = "#3b82f6";
+          dot.title = "Notas";
+          badges.appendChild(dot);
+        }
+        if (pData.d) {
+          const dot = document.createElement("span");
+          dot.className = "thumbnail-badge-dot";
+          dot.style.backgroundColor = "#10b981";
+          dot.title = "Desenhos";
+          badges.appendChild(dot);
+        }
+      }
+      footer.appendChild(badges);
+      card.appendChild(footer);
+
+      card.addEventListener("click", () => {
+        goToPage(i);
+        highlightActiveThumbnail();
+      });
+
+      thumbnailsList.appendChild(card);
+      thumbnailObserver.observe(card);
+    }
+    highlightActiveThumbnail();
+  }
+
+  async function renderThumbnail(pageNum, cardEl) {
+    if (renderedThumbnails.has(pageNum)) return;
+    renderedThumbnails.add(pageNum);
+
+    try {
+      const page = await pdfDoc.getPage(pageNum);
+      const viewport = page.getViewport({ scale: 0.22 });
+      const canvasEl = cardEl.querySelector(".thumbnail-canvas");
+      if (!canvasEl) return;
+      canvasEl.width = viewport.width;
+      canvasEl.height = viewport.height;
+      const tCtx = canvasEl.getContext("2d");
+      await page.render({ canvasContext: tCtx, viewport }).promise;
+    } catch (e) {
+      console.warn(`Erro na miniatura da pág. ${pageNum}:`, e);
+    }
+  }
+
+  function highlightActiveThumbnail() {
+    document.querySelectorAll(".thumbnail-card").forEach(c => {
+      const p = parseInt(c.getAttribute("data-page-num"), 10);
+      if (p === currentPage) {
+        c.classList.add("active");
+        c.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      } else {
+        c.classList.remove("active");
+      }
     });
   }
 
@@ -1139,7 +1591,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (target < 1) target = 1;
     if (target > totalPages) target = totalPages;
 
+    if (target !== currentPage) {
+      lastVisitedPage = currentPage;
+      updateLastVisitedPageButton();
+    }
+
     currentPage = target;
+    updateReadingProgressBar();
+    if (thumbnailsInitialized) highlightActiveThumbnail();
 
     if (viewMode === "single") {
       renderSinglePage(currentPage);
@@ -1188,7 +1647,24 @@ document.addEventListener("DOMContentLoaded", async () => {
     else setupContinuousView();
   });
 
-  // --- Atalhos de Teclado ---
+  // --- Modal de Atalhos de Teclado ---
+  if (btnShortcutsHelp && modalShortcutsHelp) {
+    btnShortcutsHelp.addEventListener("click", () => {
+      modalShortcutsHelp.classList.add("active");
+    });
+  }
+  if (btnCloseModalShortcuts && modalShortcutsHelp) {
+    btnCloseModalShortcuts.addEventListener("click", () => {
+      modalShortcutsHelp.classList.remove("active");
+    });
+  }
+  if (btnCloseShortcutsBtn && modalShortcutsHelp) {
+    btnCloseShortcutsBtn.addEventListener("click", () => {
+      modalShortcutsHelp.classList.remove("active");
+    });
+  }
+
+  // --- Atalhos de Teclado Globais ---
   window.addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
 
@@ -1208,10 +1684,27 @@ document.addEventListener("DOMContentLoaded", async () => {
       setToolMode(currentTool === "draw" ? "read" : "draw");
     } else if (e.key.toLowerCase() === "h") {
       setToolMode(currentTool === "highlight" ? "read" : "highlight");
+    } else if (e.key.toLowerCase() === "r") {
+      setToolMode("read");
+    } else if (e.key.toLowerCase() === "b") {
+      if (lastVisitedPage) goToPage(lastVisitedPage);
+    } else if (e.key.toLowerCase() === "a") {
+      btnToggleDrawer.click();
+    } else if (e.key.toLowerCase() === "m") {
+      if (btnToggleThumbnails) btnToggleThumbnails.click();
+    } else if (e.key.toLowerCase() === "s") {
+      setViewMode(viewMode === "single" ? "continuous" : "single");
+    } else if (e.key.toLowerCase() === "t") {
+      applyTheme(currentTheme === "dark" ? "light" : "dark");
+    } else if (e.key === "?") {
+      if (modalShortcutsHelp) modalShortcutsHelp.classList.add("active");
     } else if (e.key === "Escape") {
       hideSelectionToolbar();
       closeNoteEditorModal();
-      annotationsDrawer.classList.remove("active");
+      if (modalImportPreview) modalImportPreview.classList.remove("active");
+      if (modalShortcutsHelp) modalShortcutsHelp.classList.remove("active");
+      if (annotationsDrawer) annotationsDrawer.classList.remove("active");
+      if (thumbnailsDrawer) thumbnailsDrawer.classList.remove("active");
     }
   });
 
