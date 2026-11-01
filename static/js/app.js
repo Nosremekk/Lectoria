@@ -3,6 +3,36 @@
  * JavaScript puro (Vanilla ES6), rápido e sem dependências pesadas.
  */
 
+// Utilitário de segurança CSRF com Double Submit Cookie
+function getCsrfToken() {
+  const match = document.cookie.match(/(^|;\s*)lectoria_csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[2]) : "";
+}
+
+// Interceptor global do fetch para injetar automaticamente o token CSRF em requisições mutantes
+const _nativeFetch = window.fetch;
+window.fetch = function(url, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const token = getCsrfToken();
+    if (token) {
+      if (!options.headers) {
+        options.headers = {};
+      }
+      if (options.headers instanceof Headers) {
+        if (!options.headers.has("X-CSRF-Token")) {
+          options.headers.set("X-CSRF-Token", token);
+        }
+      } else if (Array.isArray(options.headers)) {
+        options.headers.push(["X-CSRF-Token", token]);
+      } else {
+        options.headers["X-CSRF-Token"] = token;
+      }
+    }
+  }
+  return _nativeFetch.call(this, url, options);
+};
+
 document.addEventListener("DOMContentLoaded", () => {
   // Elementos do DOM
   const booksContainer = document.getElementById("books-container");

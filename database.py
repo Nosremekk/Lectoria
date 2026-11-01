@@ -5,16 +5,17 @@ Gerencia conexão, modo WAL, chaves estrangeiras e controle de migrações de sc
 
 import sqlite3
 from contextlib import contextmanager
-from typing import Generator
+from pathlib import Path
+from typing import Generator, Optional
 import config
 
 SCHEMA_VERSION = 4
 
 
-def get_connection() -> sqlite3.Connection:
+def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
     """Cria e configura uma conexão com o SQLite."""
     conn = sqlite3.connect(
-        str(config.DB_PATH),
+        str(db_path or config.DB_PATH),
         timeout=30.0,
     )
     # Permite acessar colunas como dicionário: row['title']
@@ -27,9 +28,9 @@ def get_connection() -> sqlite3.Connection:
 
 
 @contextmanager
-def get_db() -> Generator[sqlite3.Connection, None, None]:
+def get_db(db_path: Optional[Path] = None) -> Generator[sqlite3.Connection, None, None]:
     """Context manager para operações de banco de dados com commit/rollback seguro."""
-    conn = get_connection()
+    conn = get_connection(db_path)
     try:
         yield conn
         conn.commit()
@@ -40,9 +41,9 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         conn.close()
 
 
-def init_db() -> None:
+def init_db(db_path: Optional[Path] = None) -> None:
     """Inicializa as tabelas do banco de dados e executa migrações necessárias."""
-    with get_db() as conn:
+    with get_db(db_path) as conn:
         cursor = conn.cursor()
 
         # Tabela de controle de versão de migrações

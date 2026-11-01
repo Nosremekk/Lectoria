@@ -4,6 +4,36 @@
  * Desenho livre vetorial (SVG) e Painel lateral de estudos.
  */
 
+// Utilitário de segurança CSRF com Double Submit Cookie
+function getCsrfToken() {
+  const match = document.cookie.match(/(^|;\s*)lectoria_csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[2]) : "";
+}
+
+// Interceptor global do fetch para injetar automaticamente o token CSRF em requisições mutantes
+const _nativeFetch = window.fetch;
+window.fetch = function(url, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const token = getCsrfToken();
+    if (token) {
+      if (!options.headers) {
+        options.headers = {};
+      }
+      if (options.headers instanceof Headers) {
+        if (!options.headers.has("X-CSRF-Token")) {
+          options.headers.set("X-CSRF-Token", token);
+        }
+      } else if (Array.isArray(options.headers)) {
+        options.headers.push(["X-CSRF-Token", token]);
+      } else {
+        options.headers["X-CSRF-Token"] = token;
+      }
+    }
+  }
+  return _nativeFetch.call(this, url, options);
+};
+
 if (window.pdfjsLib) {
   pdfjsLib.GlobalWorkerOptions.workerSrc = "/static/vendor/pdfjs/pdf.worker.min.js";
 }
@@ -213,10 +243,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   function emergencySave() {
     const payload = JSON.stringify({ current_page: currentPage, total_pages: totalPages });
+    const csrfToken = getCsrfToken();
+    const progressUrl = csrfToken
+      ? `/api/books/${bookId}/progress?csrf_token=${encodeURIComponent(csrfToken)}`
+      : `/api/books/${bookId}/progress`;
     if (navigator.sendBeacon) {
-      navigator.sendBeacon(`/api/books/${bookId}/progress`, new Blob([payload], { type: "application/json" }));
+      navigator.sendBeacon(progressUrl, new Blob([payload], { type: "application/json" }));
     } else {
-      fetch(`/api/books/${bookId}/progress`, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload, keepalive: true });
+      fetch(progressUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload, keepalive: true });
     }
   }
   window.addEventListener("beforeunload", emergencySave);

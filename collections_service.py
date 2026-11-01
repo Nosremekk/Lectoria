@@ -181,20 +181,17 @@ def delete_collection(collection_id: int, user_id: Optional[int] = None) -> bool
 
         cursor.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
         return True
-        cursor.execute("SELECT id FROM collections WHERE id = ?", (collection_id,))
-        if not cursor.fetchone():
-            raise CollectionNotFoundError(f"Coleção #{collection_id} não encontrada.")
-
-        cursor.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
-        return True
 
 
-def add_book_to_collection(collection_id: int, book_id: str) -> bool:
+def add_book_to_collection(collection_id: int, book_id: str, user_id: Optional[int] = None) -> bool:
     """Associa um livro a uma coleção."""
     with get_db() as conn:
         cursor = conn.cursor()
         # Valida existência de ambos
-        cursor.execute("SELECT id FROM collections WHERE id = ?", (collection_id,))
+        if user_id is not None:
+            cursor.execute("SELECT id FROM collections WHERE id = ? AND user_id = ?", (collection_id, user_id))
+        else:
+            cursor.execute("SELECT id FROM collections WHERE id = ?", (collection_id,))
         if not cursor.fetchone():
             raise CollectionNotFoundError(f"Coleção #{collection_id} não encontrada.")
 
@@ -212,10 +209,14 @@ def add_book_to_collection(collection_id: int, book_id: str) -> bool:
         return True
 
 
-def remove_book_from_collection(collection_id: int, book_id: str) -> bool:
+def remove_book_from_collection(collection_id: int, book_id: str, user_id: Optional[int] = None) -> bool:
     """Remove a associação de um livro com uma coleção sem apagar o arquivo do livro."""
     with get_db() as conn:
         cursor = conn.cursor()
+        if user_id is not None:
+            cursor.execute("SELECT id FROM collections WHERE id = ? AND user_id = ?", (collection_id, user_id))
+            if not cursor.fetchone():
+                raise CollectionNotFoundError(f"Coleção #{collection_id} não encontrada.")
         cursor.execute(
             "DELETE FROM collection_books WHERE collection_id = ? AND book_id = ?",
             (collection_id, book_id),

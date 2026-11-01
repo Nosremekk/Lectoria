@@ -6,7 +6,9 @@ Suporta streaming com HTTP Range, downloads, múltiplas fontes e perfis com isol
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+import secrets
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -104,9 +106,75 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=config.APP_NAME,
     description="Servidor pessoal de livros digitais em PDF",
-    version="1.0.0",
+    version="1.1.1",
     lifespan=lifespan,
 )
+
+CSRF_COOKIE_NAME = "lectoria_csrf"
+SAFE_HTTP_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+@app.middleware("http")
+async def csrf_and_security_middleware(request: Request, call_next):
+    """
+    Middleware de segurança:
+    1. Valida correspondência de Host com Origin/Referer em requisições mutantes para barrar CSRF cross-origin.
+    2. Aplica validação Double Submit Cookie CSRF caso o cookie lectoria_csrf esteja presente.
+    3. Emite cookie lectoria_csrf transparente para clientes em navegação (GET/HEAD).
+    """
+    # 1. Proteção de Origem e CSRF para métodos que modificam estado
+    if request.method not in SAFE_HTTP_METHODS:
+        host = request.headers.get("host")
+        origin = request.headers.get("origin")
+        referer = request.headers.get("referer")
+
+        if origin:
+            parsed_origin = urlparse(origin)
+            if parsed_origin.netloc and host and parsed_origin.netloc.lower() != host.lower():
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Origem da requisição não permitida (CSRF detectado)."},
+                )
+        elif referer:
+            parsed_referer = urlparse(referer)
+            if parsed_referer.netloc and host and parsed_referer.netloc.lower() != host.lower():
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Referer da requisição não permitido (CSRF detectado)."},
+                )
+
+        # 2. Validação Double Submit Cookie CSRF
+        # Se o cliente possui o cookie lectoria_csrf, valida o token enviado no cabeçalho ou parâmetro
+        expected_csrf = request.cookies.get(CSRF_COOKIE_NAME)
+        if expected_csrf:
+            provided_csrf = (
+                request.headers.get("x-csrf-token")
+                or request.query_params.get("csrf_token")
+            )
+            if not provided_csrf or not secrets.compare_digest(provided_csrf, expected_csrf):
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Token CSRF inválido ou ausente."},
+                )
+
+    response = await call_next(request)
+
+    # 3. Emissão transparente do cookie CSRF em navegação de páginas HTML (fora de /api/)
+    is_html_page = (
+        request.method in SAFE_HTTP_METHODS
+        and not request.url.path.startswith("/api/")
+    )
+    if is_html_page and CSRF_COOKIE_NAME not in request.cookies:
+        new_csrf = secrets.token_urlsafe(32)
+        response.set_cookie(
+            key=CSRF_COOKIE_NAME,
+            value=new_csrf,
+            httponly=False,  # Legível pelo JavaScript para inclusão no cabeçalho X-CSRF-Token
+            samesite="lax",
+            path="/",
+        )
+
+    return response
 
 # Monta arquivos estáticos (CSS, JS, assets do PDF.js)
 static_path = config.BASE_DIR / "static"
@@ -379,6 +447,22 @@ async def get_me(request: Request):
     return {"user": user}
 
 
+@app.get("/api/auth/csrf")
+async def get_csrf_token_endpoint(request: Request, response: Response):
+    """Retorna o token CSRF atual ou gera um novo caso não exista."""
+    token = request.cookies.get(CSRF_COOKIE_NAME)
+    if not token:
+        token = secrets.token_urlsafe(32)
+        response.set_cookie(
+            key=CSRF_COOKIE_NAME,
+            value=token,
+            httponly=False,
+            samesite="lax",
+            path="/",
+        )
+    return {"csrf_token": token}
+
+
 # =========================================================================
 # ENDPOINTS ADMINISTRATIVOS: GERENCIAMENTO DE USUÁRIOS
 # =========================================================================
@@ -502,12 +586,11 @@ async def scan_single_source_endpoint(source_id: int, request: Request):
 
 @app.get("/api/health")
 async def health_check():
-    """Verificação de integridade e configurações ativas."""
+    """Verificação de integridade do servidor sem exposição de caminhos internos."""
     return {
         "status": "healthy",
         "app_name": config.APP_NAME,
-        "library_dir": str(config.LIBRARY_DIR),
-        "data_dir": str(config.DATA_DIR),
+        "version": "1.1.1",
     }
 
 
@@ -678,8 +761,7 @@ async def add_book_to_col(collection_id: int, payload: CollectionBookPayload, re
     """Adiciona um livro a uma coleção do usuário autenticado."""
     user = require_user(request)
     try:
-        get_collection(collection_id, user_id=user["id"])
-        add_book_to_collection(collection_id, payload.book_id)
+        add_book_to_collection(collection_id, payload.book_id, user_id=user["id"])
         return {"status": "success", "message": "Livro adicionado à coleção."}
     except CollectionNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -692,8 +774,7 @@ async def remove_book_from_col(collection_id: int, book_id: str, request: Reques
     """Remove a associação de um livro com uma coleção do usuário autenticado."""
     user = require_user(request)
     try:
-        get_collection(collection_id, user_id=user["id"])
-        removed = remove_book_from_collection(collection_id, book_id)
+        removed = remove_book_from_collection(collection_id, book_id, user_id=user["id"])
         return {"status": "success", "removed": removed}
     except CollectionNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

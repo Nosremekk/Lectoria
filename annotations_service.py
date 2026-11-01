@@ -126,6 +126,14 @@ def create_note(
         if not cursor.fetchone():
             raise ValueError(f"Livro '{book_id}' não encontrado.")
 
+        if highlight_id:
+            cursor.execute(
+                "SELECT id FROM highlights WHERE id = ? AND book_id = ? AND user_id = ?",
+                (highlight_id, book_id, user_id),
+            )
+            if not cursor.fetchone():
+                raise ValueError("Destaque vinculado não encontrado ou não pertence a este usuário.")
+
         cursor.execute(
             """
             INSERT INTO notes (id, book_id, page, highlight_id, content, color, user_id)
@@ -134,22 +142,25 @@ def create_note(
             (note_id, book_id, page, highlight_id, clean_content, color or "#fef08a", user_id),
         )
 
-        return get_note_by_id(note_id, cursor=cursor)
+        return get_note_by_id(note_id, user_id=user_id, cursor=cursor)
 
 
-def get_note_by_id(note_id: str, cursor=None) -> Dict[str, Any]:
+def get_note_by_id(note_id: str, user_id: Optional[int] = None, cursor=None) -> Dict[str, Any]:
     """Retorna os dados de uma única anotação."""
     def _fetch(c):
-        c.execute(
-            """
+        sql = """
             SELECT n.id, n.book_id, n.page, n.highlight_id, n.content, n.color, n.user_id, n.created_at, n.updated_at,
                    h.selected_text as highlight_text, h.color as highlight_color
             FROM notes n
             LEFT JOIN highlights h ON n.highlight_id = h.id
             WHERE n.id = ?
-            """,
-            (note_id,),
-        )
+        """
+        params: List[Any] = [note_id]
+        if user_id is not None:
+            sql += " AND n.user_id = ?"
+            params.append(user_id)
+
+        c.execute(sql, params)
         row = c.fetchone()
         if not row:
             raise AnnotationNotFoundError(f"Anotação '{note_id}' não encontrada.")

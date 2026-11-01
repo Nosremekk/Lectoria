@@ -188,6 +188,8 @@ def authenticate_user(username: str, password: str, client_ip: str = "") -> Dict
             raise AuthError("Credenciais inválidas ou conta desativada.")
 
         _clear_failed_attempts(rate_key)
+        # Limpeza periódica de sessões expiradas
+        cursor.execute("DELETE FROM sessions WHERE expires_at <= ?", (datetime.now().isoformat(),))
         return {
             "id": row["id"],
             "username": row["username"],
@@ -273,6 +275,10 @@ def update_user(
             params.append(user_id)
             cursor.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", params)
 
+        # Se a senha foi alterada ou o usuário foi desativado, revoga todas as sessões ativas
+        if (new_password is not None and new_password.strip()) or (is_active is False):
+            cursor.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+
         cursor.execute(
             "SELECT id, username, display_name, role, is_active, created_at FROM users WHERE id = ?",
             (user_id,),
@@ -294,21 +300,28 @@ def delete_user(user_id: int) -> bool:
             if cursor.fetchone()[0] < 1:
                 raise AuthError("Não é permitido excluir o único administrador do sistema.")
 
+        cursor.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
         cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
         return True
 
 
 # =========================================================================
-# GERENCIAMENTO DE SESSÕES COM TOKENS CRIPTOGRÁFICOS
+# GERENCIAMENTO DE SESSÕES COM TOKENS CRIPTOGRÁFICOS HASHED
 # =========================================================================
 
 SESSION_COOKIE_NAME = "lectoria_session"
 DEFAULT_SESSION_DAYS = 7
 
 
+def _hash_session_token(token: str) -> str:
+    """Gera hash SHA-256 do token para armazenamento seguro no banco."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def create_session(user_id: int, days: int = DEFAULT_SESSION_DAYS) -> str:
-    """Gera um token de sessão criptográfico e o persiste no SQLite com expiração."""
+    """Gera um token de sessão criptográfico, armazena seu hash SHA-256 no SQLite e retorna o token bruto."""
     token = secrets.token_urlsafe(32)
+    token_hash = _hash_session_token(token)
     expires_at = datetime.now() + timedelta(days=days)
 
     with get_db() as conn:
@@ -318,7 +331,7 @@ def create_session(user_id: int, days: int = DEFAULT_SESSION_DAYS) -> str:
             INSERT INTO sessions (token, user_id, expires_at)
             VALUES (?, ?, ?)
             """,
-            (token, user_id, expires_at.isoformat()),
+            (token_hash, user_id, expires_at.isoformat()),
         )
     return token
 
@@ -328,6 +341,7 @@ def get_user_from_session(token: Optional[str]) -> Optional[Dict[str, Any]]:
     if not token or not isinstance(token, str):
         return None
 
+    token_hash = _hash_session_token(token)
     now_iso = datetime.now().isoformat()
     with get_db() as conn:
         cursor = conn.cursor()
@@ -336,9 +350,9 @@ def get_user_from_session(token: Optional[str]) -> Optional[Dict[str, Any]]:
             SELECT u.id, u.username, u.display_name, u.role, u.is_active, s.expires_at
             FROM sessions s
             INNER JOIN users u ON s.user_id = u.id
-            WHERE s.token = ? AND s.expires_at > ? AND u.is_active = 1
+            WHERE (s.token = ? OR s.token = ?) AND s.expires_at > ? AND u.is_active = 1
             """,
-            (token, now_iso),
+            (token_hash, token, now_iso),
         )
         row = cursor.fetchone()
         if not row:
@@ -356,10 +370,14 @@ def destroy_session(token: Optional[str]) -> bool:
     """Invalida um token de sessão (logout)."""
     if not token:
         return False
+    token_hash = _hash_session_token(token)
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM sessions WHERE token = ?", (token,))
-        return cursor.rowcount > 0
+        cursor.execute("DELETE FROM sessions WHERE token = ? OR token = ?", (token_hash, token))
+        count = cursor.rowcount
+        # Aproveita para limpar sessões antigas expiradas
+        cursor.execute("DELETE FROM sessions WHERE expires_at <= ?", (datetime.now().isoformat(),))
+        return count > 0
 
 
 def cleanup_expired_sessions() -> int:

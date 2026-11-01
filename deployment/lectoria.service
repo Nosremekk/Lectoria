@@ -22,6 +22,8 @@ Environment=PORT=8765
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths="/home/vini/Jellyfin livros/data" "/home/vini/Jellyfin livros/backups"
 
 # Limites de recursos para proteger a execução concorrente com o Jellyfin
 MemoryMax=512M

@@ -270,10 +270,16 @@ def get_books(
             sql += " AND (b.title LIKE ? OR b.author LIKE ?)"
             params.extend([query_term, query_term])
 
-        # Filtro por coleção
+        # Filtro por coleção (pertencente ao usuário)
         if collection_id is not None:
-            sql += " AND b.id IN (SELECT book_id FROM collection_books WHERE collection_id = ?)"
-            params.append(collection_id)
+            sql += (
+                " AND b.id IN ("
+                "   SELECT cb.book_id FROM collection_books cb"
+                "   INNER JOIN collections c ON cb.collection_id = c.id"
+                "   WHERE c.id = ? AND c.user_id = ?"
+                " )"
+            )
+            params.extend([collection_id, user_id])
 
         # Filtro por fonte
         if source_id is not None:

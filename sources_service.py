@@ -77,12 +77,14 @@ def validate_and_canonicalize_path(raw_path: str) -> Path:
         if resolved == forbidden or forbidden in resolved.parents:
             raise InvalidSourceError(f"Acesso negado: '{resolved}' é um diretório reservado do sistema operacional.")
 
-    # 2. Bloqueio de diretórios internos da aplicação (dados, backups e raiz do código-fonte)
+    # 2. Bloqueio de diretórios internos da aplicação (dados, backups, .venv, .git e raiz do código-fonte)
     data_dir = config.DATA_DIR.resolve()
     backups_dir = config.BACKUPS_DIR.resolve()
     base_dir = config.BASE_DIR.resolve()
+    venv_dir = (base_dir / ".venv").resolve()
+    git_dir = (base_dir / ".git").resolve()
 
-    # O diretório padrão de livros books/ é permitido, mas a raiz da aplicação base_dir, data_dir e backups_dir são proibidos
+    # O diretório padrão de livros books/ é permitido, mas a raiz da aplicação base_dir, data_dir, backups_dir, .venv e .git são proibidos
     if resolved == base_dir:
         raise InvalidSourceError("A raiz do projeto Lectoria não pode ser cadastrada como fonte de biblioteca.")
 
@@ -91,6 +93,12 @@ def validate_and_canonicalize_path(raw_path: str) -> Path:
 
     if resolved == backups_dir or backups_dir in resolved.parents:
         raise InvalidSourceError("O diretório de backups da aplicação não pode ser cadastrado como fonte de biblioteca.")
+
+    if venv_dir.exists() and (resolved == venv_dir or venv_dir in resolved.parents):
+        raise InvalidSourceError("O diretório de ambiente virtual (.venv) não pode ser cadastrado como fonte de biblioteca.")
+
+    if git_dir.exists() and (resolved == git_dir or git_dir in resolved.parents):
+        raise InvalidSourceError("O diretório de controle de versão (.git) não pode ser cadastrado como fonte de biblioteca.")
 
     # Verifica permissão de leitura
     if not os.access(resolved, os.R_OK):

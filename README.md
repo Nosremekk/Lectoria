@@ -1,4 +1,4 @@
-# Lectoria — Servidor Pessoal de Livros Digitais (v1.1.0)
+# Lectoria — Servidor Pessoal de Livros Digitais (v1.1.1)
 
 O **Lectoria** é um servidor pessoal de leitura focado em documentos PDF, projetado especificamente para operar com consumo mínimo de CPU, memória RAM e I/O de disco em hardware modesto (como computadores antigos com processador Intel Celeron, operando concomitantemente com o Jellyfin).
 
@@ -342,26 +342,73 @@ Para garantir que o Lectoria inicialize automaticamente junto com o computador e
 
 ---
 
-## 10. Modelo de Segurança e Acesso em Rede
+## 10. Modelo de Segurança, Permissões e Acesso em Rede
 
-### 10.1 Autenticação e Sessões Seguras
-O Lectoria conta com camada completa de autenticação integrada:
-- **Hashing de Senhas**: Utiliza `scrypt` com parâmetros robustos e salt criptográfico individual.
-- **Sessões HTTP**: Cookies seguros com token opaco aleatório de 256 bits, `HttpOnly` e `SameSite=Lax`.
-- **Rate-Limiting**: Bloqueio temporário automático de 5 minutos contra tentativas excessivas e contínuas de adivinhação de senhas.
-- **Controle de Acesso Baseado em Papéis (RBAC)**: Rotas de fontes, usuários e backups são estritamente autorizadas no servidor apenas para usuários administradores.
+### 10.1 Autenticação, Sessões e Proteção CSRF
+O Lectoria conta com uma camada robusta de proteção em nível de aplicação:
+- **Hashing de Senhas**: Utiliza `hashlib.scrypt` com salt individual de 16 bytes e parâmetros de derivação fortes (`N=16384, r=8, p=1`).
+- **Hashing SHA-256 de Sessões**: Tokens de sessão são armazenados no banco de dados na forma de hash SHA-256 (`token_hash`), impedindo o sequestro de contas mesmo em caso de acesso físico ao arquivo de banco de dados ou backups.
+- **Revogação Imediata**: Sessões ativas são automaticamente destruídas na troca de senha, na desativação de conta ou na exclusão do usuário.
+- **Proteção Completa contra CSRF (Cross-Site Request Forgery)**:
+  - Validação estrita de correspondência de `Origin` e `Referer` contra o cabeçalho `Host` em todas as rotas mutantes (`POST`, `PUT`, `DELETE`, `PATCH`).
+  - Padrão *Double Submit Cookie* via cookie `lectoria_csrf` e injeção do cabeçalho `X-CSRF-Token` pelo frontend Vanilla JavaScript.
+  - Compatibilidade com `emergencySave` em fechamento de página (`sendBeacon`) através de validação via parâmetro de consulta (`?csrf_token=...`).
+- **Rate-Limiting em Memória**: Bloqueio temporário automático de 5 minutos contra tentativas sucessivas e contínuas de força bruta no login.
+- **Controle de Acesso Baseado em Papéis (RBAC)**: Rotas de fontes, usuários e backups são restritas estritamente a administradores autenticados.
+- **Sanitização de Informações**: O endpoint `/api/health` retorna exclusivamente o status do serviço sem expor a topologia de diretórios do servidor.
 
-### 10.2 Recomendações para Acesso Externo (WAN / Internet)
-> [!WARNING]
-> **Nunca exponha a porta `8765` diretamente à Internet** sem criptografia de transporte (HTTPS / TLS).
+### 10.2 Permissões de Sistema de Arquivos (Menor Privilégio)
+Para garantir a máxima segurança operacional no Linux Mint:
+- **Diretórios com Permissão Apenas de Leitura (`r` / `rx`)**:
+  - `books/` (e qualquer diretório cadastrado como fonte de biblioteca): O Lectoria opera sobre os arquivos PDF exclusivamente em modo de leitura. Arquivos físicos **nunca** são modificados, renomeados ou excluídos pelo servidor.
+  - Diretórios de código (`main.py`, `static/`, `.venv/`).
+- **Diretórios com Permissão de Escrita (`rw` / `rwx`)**:
+  - `data/`: Armazenamento do banco SQLite (`lectoria.db`) e seus arquivos de journal (`lectoria.db-wal`, `lectoria.db-shm`).
+  - `backups/`: Destino exclusivo para os arquivos de cópias de segurança gerados via API ou CLI.
 
-Se desejar acessar seus livros fora de casa:
-1. **Opção Recomendada (Rede Mesh / VPN Pessoal)**: Utilize ferramentas seguras como **Tailscale** ou **WireGuard**. Isso permite acessar o servidor remotamente criptografado ponto-a-ponto sem abrir portas no roteador doméstico.
-2. **Opção Alternativa (Reverse Proxy com TLS)**: Utilize um servidor reverso como Caddy ou Nginx com certificado Let's Encrypt (HTTPS) redirecionando para a porta `8765`.
+### 10.3 Recomendações para Acesso em Rede Local e Externa
+- **Rede Local (LAN)**: Por padrão, o Lectoria escuta na interface `0.0.0.0:8765`, permitindo acesso instantâneo por outros dispositivos da rede Wi-Fi/Ethernet doméstica (computadores, tablets e celulares).
+- **Tráfego HTTP sem TLS/HTTPS**: Na rede local doméstica direta, o tráfego HTTP ocorre em texto claro. Caso haja necessidade de proteção contra tráfego não criptografado na rede interna ou acesso via internet:
+  - **Opção Recomendada (Rede Mesh / VPN Pessoal)**: Utilize ferramentas seguras como **Tailscale** ou **WireGuard**. Isso permite acessar o servidor remotamente criptografado ponto-a-ponto sem abrir portas no roteador doméstico.
+  - **Opção Alternativa (Reverse Proxy com TLS)**: Utilize um servidor reverso como Caddy ou Nginx com certificado Let's Encrypt (HTTPS) redirecionando para a porta `8765`.
+- **Aviso**: **Nunca exponha a porta `8765` diretamente à Internet aberta** sem HTTPS e autenticação perimetral.
 
 ---
 
-## 11. Atalhos de Teclado no Leitor
+## 11. Atualização de uma Instalação Existente
+
+Para atualizar o Lectoria para a versão mais recente em seu servidor doméstico:
+
+1. **Acessar o diretório da aplicação e parar o serviço**:
+   ```bash
+   cd "/home/vini/Jellyfin livros"
+   sudo systemctl stop lectoria.service
+   ```
+
+2. **Gerar um backup de segurança preventivo**:
+   ```bash
+   .venv/bin/python scripts/backup.py --backup
+   ```
+
+3. **Atualizar o repositório Git**:
+   ```bash
+   git pull origin main
+   ```
+
+4. **Atualizar as dependências no ambiente virtual (se houver)**:
+   ```bash
+   .venv/bin/pip install -r requirements.txt
+   ```
+
+5. **Reiniciar o serviço systemd**:
+   ```bash
+   sudo systemctl start lectoria.service
+   sudo systemctl status lectoria.service
+   ```
+
+---
+
+## 12. Atalhos de Teclado no Leitor
 
 | Tecla | Ação |
 | :--- | :--- |
@@ -384,7 +431,7 @@ Se desejar acessar seus livros fora de casa:
 
 ---
 
-## 12. Execução dos Testes Automatizados
+## 13. Execução dos Testes Automatizados
 
 Com o ambiente virtual ativado:
 
@@ -393,7 +440,7 @@ source .venv/bin/activate
 pytest -v tests/
 ```
 
-Resultado atual: **52 testes aprovados (100% de sucesso)** cobrindo:
+Resultado atual: **61 testes aprovados (100% de sucesso)** cobrindo:
 - Catálogo, scanner e metadados (`test_library.py`).
 - Coleções e associações em lote (`test_collections.py`, `test_iteration2_features.py`).
 - Filtros de estado de leitura, busca e ordenação (`test_filters_and_sorting.py`).
@@ -403,16 +450,17 @@ Resultado atual: **52 testes aprovados (100% de sucesso)** cobrindo:
 - Exportação Markdown/JSON, preview de importação e rollback (`test_iteration4.py`).
 - Limites de DoS na importação, validação de profundidade JSON, concorrência de backups e retenção (`test_iteration5.py`).
 - Download de PDFs originais, gerenciamento de fontes, symlinks, scrypt, rate limiting, controle de papéis e isolamento de dados por usuário (`test_iteration6.py`).
+- Hashing de sessões, invalidação de sessões, CSRF Double Submit, Origin check, IDOR em anotações, probing de coleções, proteção de fontes (.venv, .git) e integridade em restauração multiusuário (`test_iteration7.py`).
 
 ---
 
-## 13. Desempenho Real e Limitações Conhecidas
+## 14. Desempenho Real e Limitações Conhecidas
 
-### 13.1 Medições Reais no Hardware Alvo (Intel Celeron 847 1.5 GHz / 8 GB RAM / SSD)
+### 14.1 Medições Reais no Hardware Alvo (Intel Celeron 847 1.5 GHz / 8 GB RAM / SSD)
 - **Consumo de Memória RAM**: **~58 MB a 62 MB** (RSS total em repouso).
 - **Consumo de CPU em Repouso**: **0.0%**.
 - **Impacto no Jellyfin**: Desprezível. O streaming por chunks sob demanda (HTTP Range) evita picos de leitura e o descarregamento dinâmico de páginas fora do viewport na rolagem contínua previne saturação do navegador do cliente.
 
-### 13.2 Limitações Conhecidas da Versão 1.1
+### 14.2 Limitações Conhecidas da Versão 1.1.1
 - **Suporte Exclusivo a PDFs**: Formatos como EPUB, MOBI ou CBZ não são suportados nativamente nesta versão.
 - **Varredura Sob Demanda**: Para não degradar a CPU nem gastar ciclos com sentinelas contínuos de disco (`inotify`), novas adições de arquivos nas pastas de fontes são indexadas sob demanda ao clicar no botão "Escanear" na interface web ou via API.

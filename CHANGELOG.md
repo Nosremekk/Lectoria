@@ -7,6 +7,42 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.1.1] - 2026-11-01
+
+### Segurança e Auditoria
+- **Hashing SHA-256 de Tokens de Sessão (`auth_service.py`)**:
+  - Armazenamento de tokens na tabela `sessions` convertido para hashes SHA-256, impedindo o sequestro de sessões caso ocorra vazamento de backups ou leitura indevida do banco de dados SQLite.
+  - Compatibilidade mantida para sessões preexistentes.
+- **Revogação Automática de Sessões em Troca de Senha e Desativação (`auth_service.py`)**:
+  - Alterações de senha (`new_password`) e desativação de conta (`is_active = False`) agora revogam imediatamente todas as sessões ativas do usuário do SQLite.
+  - Exclusão de usuário (`delete_user`) limpa explicitamente todos os tokens de sessão associados.
+  - Limpeza automática de sessões expiradas acionada durante autenticação e logout.
+- **Proteção Completa contra CSRF (Cross-Site Request Forgery) (`main.py`, `app.js`, `reader.js`)**:
+  - Middleware de segurança com validação rigorosa de `Origin` e `Referer` contra o cabeçalho `Host` em todas as requisições que modificam estado (`POST`, `PUT`, `DELETE`, `PATCH`).
+  - Implementação de proteção *Double Submit Cookie* com cookie `lectoria_csrf` (`SameSite=Lax`, `Path=/`).
+  - Interceptador JavaScript nativo em `app.js` e `reader.js` que injeta automaticamente o cabeçalho `X-CSRF-Token` em todas as requisições de mutação.
+  - Suporte a `emergencySave` (`beforeunload`/`pagehide`) via `sendBeacon` e `fetch(keepalive)` com token CSRF via parâmetro de consulta (`?csrf_token=...`).
+- **Correção de Probing e Vazamento de Dados entre Usuários em Coleções (`library.py`)**:
+  - O filtro `collection_id` em `get_books` agora valida estritamente a posse da coleção pelo usuário (`WHERE c.id = ? AND c.user_id = ?`), impedindo que o Usuário A descubra quais livros estão presentes em coleções privadas do Usuário B.
+- **Prevenção de IDOR e Vazamento de Texto Privado em Notas (`annotations_service.py`)**:
+  - `create_note` agora valida explicitamente se o `highlight_id` informado pertence ao mesmo `user_id` e `book_id`, impedindo vinculação maliciosa a destaques de outros usuários e vazamento de trechos privados via `LEFT JOIN`.
+  - Validação estrita de posse em `get_note_by_id`, `add_book_to_collection` e `remove_book_from_collection`.
+- **Bloqueio de Pastas Críticas como Fontes de Biblioteca (`sources_service.py`)**:
+  - Adicionado bloqueio explícito contra cadastro dos diretórios `.venv` e `.git` como fontes de livros.
+- **Proteção contra Vazamento de Informações Internas (`main.py`)**:
+  - Endpoint `GET /api/health` sanitizado para retornar apenas o status do serviço, nome da aplicação e versão, sem expor os caminhos absolutos do sistema de arquivos (`data_dir` e `library_dir`).
+- **Endurecimento do Serviço systemd (`deployment/lectoria.service`)**:
+  - Adicionadas diretivas `ProtectHome=read-only` e `ReadWritePaths` restritas a `data/` e `backups/`, garantindo o princípio do menor privilégio.
+
+### Corrigido
+- Remoção de código morto e duplicado na função `delete_collection` de `collections_service.py`.
+- Suporte a caminho customizado de banco em `init_db(db_path)` e `get_db(db_path)` para testes isolados e auditorias.
+
+### Testes
+- Adicionados 9 testes automatizados na suíte `tests/test_iteration7.py`, cobrindo hashing de sessões, invalidação de sessões, validação de CSRF, prevenção de IDOR em notas, isolamento de coleções, bloqueio de pastas em fontes, integridade em backups multiusuário e integridade de `/api/health` (total: 61 testes aprovados).
+
+---
+
 ## [1.1.0] - 2026-11-01
 
 ### Adicionado
