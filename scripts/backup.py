@@ -20,6 +20,7 @@ import config
 from backup_service import (
     create_backup,
     list_backups,
+    prune_backups,
     restore_backup,
     verify_sqlite_integrity,
     BackupError,
@@ -51,6 +52,12 @@ def main():
         "--verify",
         action="store_true",
         help="Verifica a integridade do banco de dados SQLite ativo",
+    )
+    group.add_argument(
+        "--prune",
+        type=int,
+        metavar="N",
+        help="Remove os backups mais antigos mantendo apenas os N mais recentes",
     )
     parser.add_argument(
         "--force",
@@ -99,6 +106,21 @@ def main():
             print("[ERRO] O banco de dados apresentou problemas de integridade!", file=sys.stderr)
             sys.exit(1)
 
+    elif args.prune is not None:
+        if args.prune < 1:
+            print("[ERRO] A quantidade de backups a preservar deve ser de no mínimo 1.", file=sys.stderr)
+            sys.exit(1)
+        print(f"[*] Limpando backups antigos (preservando os {args.prune} mais recentes)...")
+        try:
+            removed = prune_backups(args.prune)
+            if removed > 0:
+                print(f"[OK] {removed} backup(s) antigo(s) removido(s) com sucesso.")
+            else:
+                print(f"[INFO] Nenhum backup excedente para remover. Total existente é menor ou igual a {args.prune}.")
+        except BackupError as e:
+            print(f"[ERRO] {e}", file=sys.stderr)
+            sys.exit(1)
+
     elif args.restore:
         target_file = args.restore
         print(f"[ATENÇÃO] Você solicitou restaurar o banco a partir de: {target_file}")
@@ -123,3 +145,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

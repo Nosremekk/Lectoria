@@ -1,0 +1,31 @@
+[Unit]
+Description=Lectoria — Servidor Pessoal de Livros Digitais
+Documentation=https://github.com/vini/lectoria
+After=network.target
+
+[Service]
+Type=simple
+User=vini
+Group=vini
+WorkingDirectory=/home/vini/Jellyfin livros
+ExecStart=/home/vini/Jellyfin livros/.venv/bin/python3 main.py
+
+# Reinicialização automática em caso de falha transitória
+Restart=on-failure
+RestartSec=5
+
+# Variáveis de ambiente
+Environment=PYTHONUNBUFFERED=1
+Environment=PORT=8765
+
+# Diretivas de isolamento e segurança para hardware modesto (Positivo C1260)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+# Limites de recursos para proteger a execução concorrente com o Jellyfin
+MemoryMax=512M
+CPUWeight=100
+
+[Install]
+WantedBy=multi-user.target

@@ -1,42 +1,41 @@
-# Lectoria — Servidor Pessoal de Livros Digitais
+# Lectoria — Servidor Pessoal de Livros Digitais (v1.0.0)
 
-Servidor pessoal de leitura focado exclusivamente em documentos PDF, projetado para operar com mínimo consumo de CPU, RAM e I/O de disco em hardware modesto (como computadores antigos com processador Intel Celeron, operando concomitantemente com o Jellyfin).
-
----
-
-## 1. Novidades da Iteração 4: Estudos, Navegação e Confiabilidade
-
-- **Caderno de Estudos Aprimorado**:
-  - Agrupamento inteligente das anotações por página (`Página X`).
-  - Diferenciação visual clara entre *Destaques* (com citação e cor), *Notas* (com texto e citações vinculadas) e *Desenhos Livres* (com indicação vetorial).
-  - **Busca Instantânea Local**: pesquisa em tempo real no documento por texto de citações, notas e páginas.
-  - Filtros dinâmicos: *Todas*, *Destaques*, *Notas* e *Desenhos*.
-  - Exibição de carimbos de data/hora (`dd/mm/aaaa hh:mm`) de criação e última edição.
-  - Salto imediato para a página ou trecho ao clicar em qualquer registro.
-- **Exportação de Anotações**:
-  - **Markdown (`.md`)**: relatório editorial formatado com sumário, metadados do documento (título, autor, arquivo), destaques em citação (`>`), notas associadas e anotações avulsas da página.
-  - **JSON (`.json`)**: exportação completa estruturada preservando coordenadas normalizadas, retângulos, cores, notas e traços vetoriais SVG para portabilidade total.
-- **Importação Confiável de Anotações**:
-  - Validação estrita de formato e schema JSON.
-  - **Detecção e Prevenção de Duplicatas**: identifica marcações idênticas já existentes e importa apenas novidades.
-  - **Pré-visualização (Preview Modal)**: apresenta resumo detalhado (novos destaques, notas, desenhos e duplicatas ignoradas) antes de qualquer gravação.
-  - **Transação Atômica no SQLite**: garantia de integridade com *rollback* imediato em caso de qualquer inconsistência.
-- **Navegação Aprimorada no Leitor**:
-  - **Barra de Progresso Visual**: indicador sutil de progresso percentual no topo da janela.
-  - **Voltar à Última Página**: botão e atalho (`b`) para retornar instantaneamente à página visitada anteriormente.
-  - **Miniaturas de Páginas com Lazy Loading**: gaveta lateral com miniaturas geradas sob demanda via `IntersectionObserver` em baixa resolução, com cache em memória (zero re-renderização desnecessária).
-  - **Badges de Anotações**: indicadores visuais nas miniaturas sinalizando quais páginas possuem destaques, notas ou desenhos.
-  - **Janela de Atalhos de Teclado**: modal de consulta rápida (`?` ou botão no cabeçalho).
-- **Sistema de Backup Seguro e Auditoria**:
-  - Módulo nativo `backup_service.py` utilizando a **SQLite Online Backup API**, garantindo cópias consistentes mesmo com o banco aberto e em modo WAL.
-  - Utilitário de linha de comando `scripts/backup.py` para geração, listagem, verificação e restauração segura.
-  - Armazenamento em `backups/` estritamente ignorado pelo Git, mantendo o histórico de código e o banco principal `data/lectoria.db` protegidos.
+O **Lectoria** é um servidor pessoal de leitura focado exclusivamente em documentos PDF, projetado especificamente para operar com consumo mínimo de CPU, memória RAM e I/O de disco em hardware modesto (como computadores antigos com processador Intel Celeron, operando concomitantemente com o Jellyfin).
 
 ---
 
-## 2. Controle de Versão Git e Backup dos Dados
+## 1. Principais Recursos da Versão 1.0
 
-O Lectoria conta com um repositório Git estritamente **local** para histórico de alterações e preservação do banco de dados da aplicação.
+- **Biblioteca Pessoal sem Telemetria**:
+  - Catálogo de livros PDF com extração rápida de metadados (`pypdf`), sem modificação dos arquivos originais em `books/`.
+  - Capas editoriais procedurais em CSS/SVG com tipografia adaptativa baseada no título.
+  - Busca instantânea por título e autor, filtros por estado de leitura e ordenação multicritério.
+  - Gestão de Coleções personalizadas com atribuição de livros em lote.
+- **Leitor Integrado de Alta Performance (PDF.js)**:
+  - Modos de leitura em **Página Única** e **Rolagem Contínua Virtualizada** (descarregamento dinâmico de páginas fora do viewport).
+  - Streaming eficiente via **HTTP Range Requests (206 Partial Content)**, evitando o carregamento do arquivo PDF inteiro na memória RAM.
+  - Salvamento automático contínuo de progresso de leitura via API e Beacon API.
+  - Temas Claro e Escuro com paletas de baixo contraste para conforto visual prolongado.
+  - Gaveta lateral de miniaturas (*thumbnails*) com *lazy rendering* via `IntersectionObserver` e descarte automático de ciclo de CPU quando fechada.
+  - Barra de progresso visual, histórico de navegação (`b`) e atalhos completos de teclado (`?`).
+- **Caderno de Estudos e Anotações Avançado**:
+  - Marca-texto com 5 cores e gravação de retângulos normalizados independentes de zoom ou resolução de tela.
+  - Anotações e notas vinculadas a trechos destacados ou avulsas por página.
+  - Desenho livre vetorial em SVG sobreposto às páginas com ferramenta de borracha geométrica de alta precisão.
+  - Painel de estudos com busca local, filtros dinâmicos e navegação direta para os trechos anotados.
+  - Exportação formatada em **Markdown (`.md`)** e exportação estruturada em **JSON (`.json`)**.
+- **Segurança, Integridade e Estabilidade 1.0**:
+  - Importação de anotações com preview, detecção de duplicatas e transações atômicas no SQLite com rollback.
+  - Endurecimento estrito contra DoS na importação: limites de tamanho de corpo (15 MB / `HTTP 413`), profundidade JSON máxima de 10 níveis, limites de contagem de itens e checagem de limites numéricos e geométricos.
+  - Prevenção estrita contra *Path Traversal* em todas as rotas de arquivos e restauração.
+  - Sistema de backup SQLite Online com proteção contra concorrência (`threading.Lock`), criação de salvaguarda prévia (`lectoria_pre_restore.db.bak`) e suporte a retenção (`--prune`).
+  - Unidade de serviço para inicialização em segundo plano via **systemd** com diretivas de sandboxing.
+
+---
+
+## 2. Controle de Versão Git e Sistema de Backups
+
+O Lectoria conta com um repositório Git estritamente **local** para histórico de código e preservação do banco de dados da aplicação (`data/lectoria.db`).
 
 ### 2.1 Comandos Básicos do Git
 
@@ -68,82 +67,84 @@ O Lectoria conta com um repositório Git estritamente **local** para histórico 
 
 ---
 
-### 2.2 Sistema de Backup e Procedimento de Restauração
+### 2.2 Gerenciamento de Backups (`scripts/backup.py`)
 
-O Lectoria dispõe de um utilitário dedicado (`scripts/backup.py`) e de um módulo interno (`backup_service.py`) que utiliza a **SQLite Online Backup API**. Isso possibilita gerar snapshots 100% consistentes do banco de dados mesmo durante execuções ativas ou em modo WAL, armazenando-os em `backups/` (ignorado pelo versionamento Git).
+O Lectoria dispõe do módulo `backup_service.py` e da interface CLI `scripts/backup.py`, utilizando a **SQLite Online Backup API** com trava de exclusão mútua (`threading.Lock`). Isso permite gerar cópias de segurança consistentes mesmo durante execuções ativas ou em modo WAL, armazenando-as em `backups/` (ignorado pelo versionamento Git).
 
-#### Como gerar um backup:
+#### Criar um novo backup:
 ```bash
 python3 scripts/backup.py --backup
 ```
-*Gera uma cópia íntegra em `backups/lectoria_backup_AAAAMMDD_HHMMSS.db` e valida sua consistência (`PRAGMA integrity_check`).*
+*Gera uma cópia em `backups/lectoria_backup_AAAAMMDD_HHMMSS.db` e valida sua integridade.*
 
-#### Como listar backups existentes:
+#### Listar backups existentes:
 ```bash
 python3 scripts/backup.py --list
 ```
 
-#### Como verificar a integridade da base atual:
+#### Verificar a integridade do banco ativo:
 ```bash
 python3 scripts/backup.py --verify
 ```
 
+#### Limpar backups antigos (retenção manual):
+```bash
+# Preserva apenas os 5 backups mais recentes, removendo os excedentes antigos:
+python3 scripts/backup.py --prune 5
+```
+> *Nota: O Lectoria nunca remove backups automaticamente sem autorização explícita do usuário.*
+
 ---
 
-### 2.3 Procedimento Oficial de Restauração Passo a Passo
+### 2.3 Procedimento Oficial de Restauração de Banco de Dados
 
 Caso seja necessário restaurar os dados a partir de um backup anterior, siga estritamente o procedimento:
 
 1. **Parar o servidor Lectoria**:
-   Pressione `Ctrl + C` no terminal onde o servidor está em execução, ou encerre o serviço do sistema.
-   *(Isso garante que nenhuma escrita concorrente ocorra durante a restauração).*
+   ```bash
+   sudo systemctl stop lectoria.service
+   # Ou pressione Ctrl + C no terminal se estiver rodando em primeiro plano
+   ```
 
 2. **Identificar o arquivo de backup desejado**:
    ```bash
    python3 scripts/backup.py --list
    ```
-   Localize o nome do arquivo, por exemplo: `lectoria_backup_20261031_185428.db`.
 
-3. **Restaurar os dados**:
-   Execute o utilitário informando o arquivo escolhido:
+3. **Executar a restauração**:
    ```bash
-   python3 scripts/backup.py --restore lectoria_backup_20261031_185428.db
+   python3 scripts/backup.py --restore lectoria_backup_YYYYMMDD_HHMMSS.db
    ```
-   O script solicitará confirmação explícita (`s/N`) para impedir substituições acidentais. Ele realiza:
-   - Validação prévia de integridade do arquivo de backup;
-   - Cópia segura para `data/lectoria.db`;
-   - Limpeza de arquivos residuais órfãos do WAL (`lectoria.db-wal` e `lectoria.db-shm`).
+   *O processo cria automaticamente uma cópia de segurança prévia (`data/lectoria_pre_restore.db.bak`) antes de substituir os arquivos, garantindo recuperação em caso de falha de I/O.*
 
 4. **Verificar a integridade do banco restaurado**:
    ```bash
    python3 scripts/backup.py --verify
    ```
-   Deverá retornar `[OK] Banco de dados íntegro e sem erros de consistência`.
 
-5. **Iniciar novamente o servidor**:
+5. **Reiniciar o servidor**:
    ```bash
-   source .venv/bin/activate
-   python3 main.py
+   sudo systemctl start lectoria.service
    ```
 
 > [!IMPORTANT]
-> **Aviso de Segurança e Backup**:
-> O repositório Git local e a pasta `backups/` protegem contra alterações e exclusões acidentais. No entanto, **o Git local NÃO substitui uma rotina de backup externo** (como cópia da pasta `data/` ou `backups/` para um pendrive ou armazenamento em nuvem pessoal) em caso de pane física no disco SSD ou no computador Positivo C1260.
+> **Aviso de Segurança e Backup Externo**:
+> O repositório Git local e a pasta `backups/` protegem contra alterações e exclusões acidentais de software. No entanto, **o Git local NÃO substitui uma rotina de backup externo** (como cópia periódica da pasta `data/` ou `backups/` para um pendrive ou armazenamento em nuvem pessoal) em caso de pane física no disco SSD ou queima de componentes da placa-mãe.
 
 ---
 
 ## 3. Arquitetura e Decisões de Design
 
-- **Backend**: Python 3 com FastAPI e Uvicorn em processo único (`workers=1`), sem threads em background ou workers concorrentes desnecessários.
-- **Banco de Dados**: SQLite3 em modo **WAL** (`Write-Ahead Logging`), com `synchronous=NORMAL` e controle de migrações (`schema_migrations`), garantindo persistência rápida, sem bloqueios de leitura e com baixo desgaste de disco/SSD.
+- **Backend**: Python 3.10+ com FastAPI e Uvicorn em processo único (`workers=1`), sem threads em background ou workers concorrentes desnecessários.
+- **Banco de Dados**: SQLite3 em modo **WAL** (`Write-Ahead Logging`), com `synchronous=NORMAL` e controle de migrações (`schema_migrations`), garantindo persistência rápida, sem bloqueios de leitura e com baixo desgaste de disco SSD.
   - **Schema V1**: tabelas `users`, `books` e `reading_progress`.
   - **Schema V2**: tabelas `collections` e `collection_books`.
   - **Schema V3**: tabelas `highlights`, `notes` e `page_drawings`.
 - **Frontend**: HTML5 semântico, CSS3 enxuto e JavaScript Vanilla (ES6). Zero frameworks pesados (sem React, Vue, Angular ou Node.js).
 - **Leitor PDF**: Baseado em **PDF.js** estático local (`static/vendor/pdfjs/`). A renderização ocorre integralmente no navegador do cliente, sem requisições a CDNs externas e sem telemetria.
-- **Streaming de Arquivos**: Suporte nativo a **HTTP Range Requests (206 Partial Content)**. O servidor serve blocos sob demanda, permitindo ao PDF.js abrir documentos grandes sem carregar o arquivo PDF inteiro na memória RAM do servidor.
-- **Segurança**: Prevenção estrita contra *Path Traversal* com resolução canônica de caminhos (`pathlib.Path.resolve()`). Identificadores UUID estáveis em vez de expor caminhos do sistema operacional nas rotas públicas.
-- **Zero Ociosidade Forçada**: A aplicação consome 0% de CPU quando ociosa (sem file watchers contínuos com `inotify`). O escaneamento é acionado sob demanda.
+- **Streaming de Arquivos**: Suporte nativo a **HTTP Range Requests (206 Partial Content)**. O servidor serve blocos sob demanda, permitindo abrir documentos grandes sem carregar o arquivo PDF inteiro na memória RAM do servidor.
+- **Segurança de Caminhos**: Prevenção estrita contra *Path Traversal* com resolução canônica de caminhos (`pathlib.Path.resolve()`). Identificadores UUID estáveis em vez de expor caminhos do sistema operacional nas rotas públicas.
+- **Zero Ociosidade Forçada**: A aplicação consome 0% de CPU quando ociosa (sem file watchers contínuos com `inotify`). O escaneamento da biblioteca é acionado sob demanda pelo usuário.
 
 ---
 
@@ -157,44 +158,49 @@ Caso seja necessário restaurar os dados a partir de um backup anterior, siga es
 ├── database.py                 # Conexão SQLite (WAL mode) e migrações V1, V2 e V3
 ├── collections_service.py      # Serviço de coleções (CRUD e associações de livros)
 ├── annotations_service.py      # Serviço de marcações, anotações e desenhos livres
-├── export_service.py           # Serviço de exportação (.md, .json) e importação transacional
-├── backup_service.py           # Serviço de backup pontual com SQLite Online Backup API
+├── export_service.py           # Serviço de exportação (.md, .json) e importação segura
+├── backup_service.py           # Serviço de backup SQLite com Lock e integridade
 ├── library.py                  # Scanner leve (pypdf), filtros, busca, ordenação e segurança
 ├── progress.py                 # Persistência e restauração do progresso de leitura
 ├── main.py                     # API FastAPI, rotas estáticas e streaming com Range
 ├── pytest.ini                  # Configurações do framework de testes
 ├── requirements.txt            # Dependências Python mínimas fixadas
+├── CHANGELOG.md                # Histórico de alterações e versões
 ├── README.md                   # Documentação completa do projeto
+├── deployment/                 # Arquivos de implantação em produção
+│   ├── lectoria.service        # Unidade systemd com sandboxing e limites cgroup
+│   └── README.md               # Guia de implantação systemd
 ├── scripts/
-│   └── backup.py               # Utilitário CLI para backup e restauração manual
+│   └── backup.py               # Utilitário CLI para backup, restauração e retenção
 ├── backups/                    # Armazenamento de backups manuais do banco (ignorado no Git)
 ├── books/                      # Diretório local para os arquivos PDF (mantido intacto)
 ├── data/                       # Banco de dados persistente versionado (lectoria.db)
 ├── static/                     # Frontend estático
-│   ├── index.html              # Interface da Biblioteca (Tema Claro/Escuro, Coleções, Filtros, Backup)
-│   ├── reader.html             # Interface do Leitor (Anotações, Marcações, Desenho, Miniaturas e Modais)
+│   ├── index.html              # Interface da Biblioteca
+│   ├── reader.html             # Interface do Leitor (PDF.js, Estudos, Miniaturas)
 │   ├── css/
 │   │   └── style.css           # Estilos e temas claro/escuro
 │   ├── js/
-│   │   ├── app.js              # Lógica da biblioteca (busca, coleções, filtros, ordenação)
-│   │   └── reader.js           # Lógica do leitor (PDF.js, texto, marca-texto, SVG draw, drawer, miniaturas)
+│   │   ├── app.js              # Lógica da biblioteca
+│   │   └── reader.js           # Lógica do leitor e anotações
 │   └── vendor/
 │       └── pdfjs/              # PDF.js e worker embutidos offline
-└── tests/                      # Suíte de testes automatizados
+└── tests/                      # Suíte de testes automatizados (44 testes)
     ├── conftest.py             # Fixtures e isolamento de ambiente
     ├── test_annotations.py     # Testes de destaques, notas e desenhos vetoriais
-    ├── test_iteration4.py      # Testes de exportação MD/JSON, importação transacional e backups
-    ├── test_library.py         # Testes de catálogo, metadados e busca
     ├── test_collections.py     # Testes de CRUD e associação de coleções
-    ├── test_filters_and_sorting.py # Testes de filtros de status, ordenação e concorrência
-    ├── test_iteration2_features.py # Testes de coleções em lote, validações e PDFs grandes
-    ├── test_progress.py        # Testes de salvamento automático de leitura e beacon
+    ├── test_filters_and_sorting.py # Testes de filtros de status e ordenação
+    ├── test_iteration2_features.py # Testes de coleções em lote e PDFs grandes
+    ├── test_iteration4.py      # Testes de exportação MD/JSON e backups
+    ├── test_iteration5.py      # Testes de limites DoS, concorrência e segurança
+    ├── test_library.py         # Testes de catálogo e busca
+    ├── test_progress.py        # Testes de progresso de leitura e beacon
     └── test_security.py        # Testes de Range requests, path traversal e integridade
 ```
 
 ---
 
-## 5. Instalação e Execução (Linux Mint / Debian)
+## 5. Instalação e Execução Manual
 
 ### 5.1 Ativar Ambiente Virtual e Dependências
 
@@ -204,7 +210,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 5.2 Iniciar o Servidor
+### 5.2 Iniciar o Servidor Manualmente
 
 ```bash
 source .venv/bin/activate
@@ -213,49 +219,83 @@ python3 main.py
 
 O servidor iniciará escutando em `http://0.0.0.0:8765`.
 
-> **Nota de Compatibilidade com o Jellyfin**: A porta padrão do Lectoria é `8765`, não interferindo com a porta `8096` nem `8920` do Jellyfin.
+> **Coexistência com o Jellyfin**: A porta padrão do Lectoria é `8765`, não interferindo com as portas `8096` ou `8920` do Jellyfin.
 
 ---
 
-## 6. Atalhos de Teclado no Leitor
+## 6. Implantação em Produção com systemd (Linux Mint / Debian)
+
+Para garantir que o Lectoria inicialize automaticamente junto com o computador e se recupere caso ocorra qualquer imprevisto, configure o serviço systemd:
+
+1. **Copiar o arquivo de serviço para o diretório do systemd**:
+   ```bash
+   sudo cp deployment/lectoria.service /etc/systemd/system/lectoria.service
+   ```
+
+2. **Recarregar a configuração do systemd**:
+   ```bash
+   sudo systemctl daemon-reload
+   ```
+
+3. **Habilitar a inicialização automática no boot do sistema**:
+   ```bash
+   sudo systemctl enable lectoria.service
+   ```
+
+4. **Iniciar o serviço imediatamente**:
+   ```bash
+   sudo systemctl start lectoria.service
+   ```
+
+5. **Verificar o status e logs**:
+   ```bash
+   sudo systemctl status lectoria.service
+   sudo journalctl -u lectoria.service -f
+   ```
+
+---
+
+## 7. Modelo de Segurança e Acesso em Rede
+
+### 7.1 Escopo de Rede e Confiança
+O Lectoria foi projetado para uso **pessoal e doméstico em Rede Local (LAN)** confiável:
+- Não possui autenticação por senha integrada na camada de aplicação.
+- Não implementa terminação TLS/HTTPS direta no processo Python (para manter o servidor o mais leve possível no processador Celeron).
+
+### 7.2 Recomendações para Acesso Externo (WAN / Internet)
+> [!WARNING]
+> **Nunca exponha a porta `8765` diretamente à Internet** sem mecanismos de proteção de borda.
+
+Se desejar acessar seus livros fora de casa:
+1. **Opção Recomendada (Rede Mesh / VPN Pessoal)**: Utilize ferramentas seguras como **Tailscale** ou **WireGuard**. Isso permite acessar o servidor remotamente criptografado ponto-a-ponto sem expor portas públicas no roteador doméstico.
+2. **Opção Alternativa (Reverse Proxy com TLS e Auth)**: Utilize um servidor reverso como Caddy ou Nginx com certificado Let's Encrypt (HTTPS) e autenticação de camada HTTP (ex.: HTTP Basic Authentication ou Authelia).
+
+---
+
+## 8. Atalhos de Teclado no Leitor
 
 | Tecla | Ação |
 | :--- | :--- |
 | `Seta Esquerda` / `PageUp` | Página anterior |
 | `Seta Direita` / `PageDown` / `Espaço` | Próxima página |
-| `b` | Voltar à última página lida / visitada |
+| `b` | Voltar à última página visitada |
 | `+` ou `=` | Aumentar zoom |
 | `-` | Diminuir zoom |
-| `w` | Ajustar à largura da tela (*Fit Width*) |
+| `w` | Ajustar à largura da janela (*Fit Width*) |
 | `p` | Ajustar à página inteira (*Fit Page*) |
 | `r` | Modo Leitura |
 | `h` | Modo Marca-texto |
-| `d` | Modo Desenho Livre |
+| `d` | Modo Desenho Livre SVG |
 | `a` | Abrir / fechar Caderno de Estudos |
 | `m` | Abrir / fechar Miniaturas de Páginas |
 | `s` | Alternar entre Página Única e Rolagem Contínua |
 | `t` | Alternar Tema Claro / Escuro |
-| `?` | Abrir janela de ajuda de atalhos de teclado |
-| `Esc` | Fechar modais, painéis laterais ou menus flutuantes |
+| `?` | Abrir guia de atalhos de teclado |
+| `Esc` | Fechar modais e painéis laterais |
 
 ---
 
-## 7. Acesso por Outros Dispositivos na Rede Local
-
-Como o servidor escuta por padrão em `0.0.0.0`:
-
-1. Descubra o IP local do servidor Linux:
-   ```bash
-   hostname -I
-   ```
-2. Em qualquer celular, tablet ou computador conectado ao mesmo Wi-Fi, abra o navegador e acesse:
-   ```text
-   http://<IP-DO-SERVIDOR>:8765
-   ```
-
----
-
-## 8. Execução dos Testes Automatizados
+## 9. Execução dos Testes Automatizados
 
 Com o ambiente virtual ativado:
 
@@ -264,18 +304,26 @@ source .venv/bin/activate
 pytest -v tests/
 ```
 
-Todos os **33 testes** cobrem os fluxos de leitura, coleções, migrações V1, V2 e V3, destaques, anotações, desenhos livres, exportação Markdown/JSON, importação com prevenção de duplicatas e rollback, backups SQLite, integridade e segurança.
+Resultado atual: **44 testes aprovados (100% de sucesso)** cobrindo:
+- Catálogo, scanner e metadados (`test_library.py`).
+- Coleções e associações em lote (`test_collections.py`, `test_iteration2_features.py`).
+- Filtros de estado de leitura, busca e ordenação (`test_filters_and_sorting.py`).
+- Progresso de leitura e Beacon API (`test_progress.py`).
+- Streaming por chunks HTTP Range e path traversal (`test_security.py`).
+- Destaques, notas, desenhos vetoriais e algoritmo geométrico da borracha (`test_annotations.py`).
+- Exportação Markdown/JSON, preview de importação e rollback (`test_iteration4.py`).
+- Limites de DoS na importação, validação de profundidade JSON, concorrência de backups e retenção (`test_iteration5.py`).
 
 ---
 
-## 9. Medições Reais de Consumo no Hardware
+## 10. Desempenho Real e Limitações Conhecidas
 
-Medições reais realizadas no processo do Lectoria em execução:
-
-```bash
-ps -o pid,ppid,%cpu,%mem,rss,cmd -p $(pgrep -f "main.py")
-```
-
-- **Consumo de Memória RAM**: **~57 MB a 60 MB** (RSS total).
+### 10.1 Medições Reais no Hardware Alvo (Intel Celeron 847 1.5 GHz / 8 GB RAM / SSD)
+- **Consumo de Memória RAM**: **~57 MB a 60 MB** (RSS total em repouso).
 - **Consumo de CPU em Repouso**: **0.0%**.
-- **Impacto no Celeron 847**: Desprezível em repouso. O streaming por chunks sob demanda (HTTP Range) evita picos de leitura e o descarregamento de páginas na rolagem contínua previne estouro de memória no navegador.
+- **Impacto no Jellyfin**: Desprezível. O streaming por chunks sob demanda (HTTP Range) evita picos de leitura e o descarregamento dinâmico de páginas fora do viewport na rolagem contínua previne saturação do navegador do cliente.
+
+### 10.2 Limitações Conhecidas da Versão 1.0
+- **Suporte Exclusivo a PDFs**: Formatos como EPUB, MOBI ou CBZ não são suportados nativamente nesta versão.
+- **Usuário Único**: O sistema foi concebido para o leitor pessoal ou uso doméstico unificado; não há múltiplos perfis isolados de usuários.
+- **Varredura Sob Demanda**: Para não degradar a CPU nem gastar ciclos com sentinelas contínuos de disco (`inotify`), novos livros colocados em `books/` são detectados ao clicar no botão "Escanear Livros" na biblioteca.

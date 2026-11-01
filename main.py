@@ -434,11 +434,52 @@ async def export_annotations_json(book_id: str):
     )
 
 
+MAX_IMPORT_BODY_BYTES = 15 * 1024 * 1024  # Limite rígido de 15 MB para payloads de importação
+
+
+async def _parse_import_body(request: Request) -> dict:
+    """Valida o tamanho do corpo da requisição e decodifica o JSON de importação."""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_IMPORT_BODY_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="Arquivo de importação excede o tamanho máximo permitido de 15 MB.",
+                )
+        except ValueError:
+            pass
+
+    body = await request.body()
+    if len(body) > MAX_IMPORT_BODY_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="Arquivo de importação excede o tamanho máximo permitido de 15 MB.",
+        )
+
+    import json
+    try:
+        data = json.loads(body.decode("utf-8"))
+        if not isinstance(data, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="O payload de importação deve ser um objeto JSON.",
+            )
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"JSON corrompido ou malformado: {e}",
+        )
+
+
 @app.post("/api/books/{book_id}/import/preview")
 async def preview_annotations_import(book_id: str, request: Request):
     """Valida o JSON de anotações e retorna um resumo antes da confirmação."""
     try:
-        payload = await request.json()
+        payload = await _parse_import_body(request)
         preview = preview_import_annotations(book_id, payload)
         return {"status": "success", "preview": preview}
     except BookNotFoundError as e:
@@ -451,7 +492,7 @@ async def preview_annotations_import(book_id: str, request: Request):
 async def confirm_annotations_import(book_id: str, request: Request):
     """Aplica a importação de anotações dentro de uma transação SQLite protegida."""
     try:
-        payload = await request.json()
+        payload = await _parse_import_body(request)
         result = apply_import_annotations(book_id, payload)
         return {"status": "success", "result": result}
     except BookNotFoundError as e:

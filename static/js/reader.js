@@ -722,7 +722,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   btnToggleDrawer.addEventListener("click", () => {
     annotationsDrawer.classList.toggle("active");
     if (annotationsDrawer.classList.contains("active")) {
-      thumbnailsDrawer.classList.remove("active");
+      closeThumbnailsDrawer();
       reloadBookAnnotations();
     }
   });
@@ -1094,25 +1094,68 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // --- Painel Lateral de Miniaturas com Lazy Rendering ---
+  // --- Painel Lateral de Miniaturas com Lazy Rendering e Gestão Eficiente de Recursos ---
+  function openThumbnailsDrawer() {
+    if (!thumbnailsDrawer) return;
+    thumbnailsDrawer.classList.add("active");
+    if (annotationsDrawer) annotationsDrawer.classList.remove("active");
+    if (!thumbnailsInitialized) {
+      initThumbnails();
+    } else {
+      attachThumbnailObserver();
+      highlightActiveThumbnail();
+    }
+  }
+
+  function closeThumbnailsDrawer() {
+    if (!thumbnailsDrawer) return;
+    thumbnailsDrawer.classList.remove("active");
+    // Desconecta o observer para poupar ciclos de CPU/RAM enquanto a gaveta estiver oculta
+    if (thumbnailObserver) {
+      thumbnailObserver.disconnect();
+    }
+  }
+
   if (btnToggleThumbnails) {
     btnToggleThumbnails.addEventListener("click", () => {
-      thumbnailsDrawer.classList.toggle("active");
       if (thumbnailsDrawer.classList.contains("active")) {
-        annotationsDrawer.classList.remove("active");
-        initThumbnails();
+        closeThumbnailsDrawer();
+      } else {
+        openThumbnailsDrawer();
       }
     });
   }
   if (btnCloseThumbnails) {
-    btnCloseThumbnails.addEventListener("click", () => {
-      thumbnailsDrawer.classList.remove("active");
+    btnCloseThumbnails.addEventListener("click", closeThumbnailsDrawer);
+  }
+
+  function attachThumbnailObserver() {
+    if (!thumbnailsList) return;
+    if (!thumbnailObserver) {
+      thumbnailObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            const card = entry.target;
+            const pNum = parseInt(card.getAttribute("data-page-num"), 10);
+            renderThumbnail(pNum, card);
+            if (thumbnailObserver) thumbnailObserver.unobserve(card);
+          }
+        });
+      }, { root: thumbnailsList, rootMargin: "200px" });
+    }
+    // Observa somente os cartões que ainda não foram renderizados
+    thumbnailsList.querySelectorAll(".thumbnail-card").forEach(card => {
+      const pNum = parseInt(card.getAttribute("data-page-num"), 10);
+      if (!renderedThumbnails.has(pNum)) {
+        thumbnailObserver.observe(card);
+      }
     });
   }
 
   function initThumbnails() {
     if (!pdfDoc) return;
     if (thumbnailsInitialized) {
+      attachThumbnailObserver();
       highlightActiveThumbnail();
       return;
     }
@@ -1132,17 +1175,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (!annotatedPages.has(d.page)) annotatedPages.set(d.page, {});
       annotatedPages.get(d.page).d = true;
     });
-
-    thumbnailObserver = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          const card = entry.target;
-          const pNum = parseInt(card.getAttribute("data-page-num"), 10);
-          renderThumbnail(pNum, card);
-          thumbnailObserver.unobserve(card);
-        }
-      });
-    }, { root: thumbnailsList, rootMargin: "200px" });
 
     for (let i = 1; i <= totalPages; i++) {
       const card = document.createElement("div");
@@ -1200,8 +1232,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
 
       thumbnailsList.appendChild(card);
-      thumbnailObserver.observe(card);
     }
+    attachThumbnailObserver();
     highlightActiveThumbnail();
   }
 
@@ -1704,9 +1736,24 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (modalImportPreview) modalImportPreview.classList.remove("active");
       if (modalShortcutsHelp) modalShortcutsHelp.classList.remove("active");
       if (annotationsDrawer) annotationsDrawer.classList.remove("active");
-      if (thumbnailsDrawer) thumbnailsDrawer.classList.remove("active");
+      closeThumbnailsDrawer();
     }
   });
+
+  // Limpeza de recursos e observers para evitar vazamento de memória e ciclos de CPU
+  function cleanupObservers() {
+    if (thumbnailObserver) {
+      thumbnailObserver.disconnect();
+      thumbnailObserver = null;
+    }
+    if (continuousObserver) {
+      continuousObserver.disconnect();
+      continuousObserver = null;
+    }
+  }
+
+  window.addEventListener("beforeunload", cleanupObservers);
+  window.addEventListener("pagehide", cleanupObservers);
 
   // Redimensionamento de Janela
   let resizeTimeout = null;

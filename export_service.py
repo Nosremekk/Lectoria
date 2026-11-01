@@ -184,18 +184,132 @@ def export_book_annotations_json(book_id: str) -> Dict[str, Any]:
 # IMPORTAÇÃO (VALIDAÇÃO, PREVIEW E APLICAÇÃO TRANSACTICIONAL)
 # =========================================================================
 
+MAX_IMPORT_HIGHLIGHTS = 5000
+MAX_IMPORT_NOTES = 5000
+MAX_IMPORT_DRAWINGS = 1000
+MAX_STROKES_PER_DRAWING = 500
+MAX_POINTS_PER_STROKE = 5000
+MAX_TEXT_LENGTH = 10000
+MAX_NOTE_LENGTH = 20000
+MAX_RECTS_PER_HIGHLIGHT = 100
+MAX_JSON_DEPTH = 10
+
+
+def _check_json_depth(obj: Any, current_depth: int = 1) -> None:
+    """Garante que o objeto JSON não possui aninhamento recursivo ou excessivo."""
+    if current_depth > MAX_JSON_DEPTH:
+        raise ImportError(f"Estrutura JSON com profundidade de aninhamento excessiva (máx: {MAX_JSON_DEPTH}).")
+    if isinstance(obj, dict):
+        for v in obj.values():
+            _check_json_depth(v, current_depth + 1)
+    elif isinstance(obj, list):
+        for item in obj:
+            _check_json_depth(item, current_depth + 1)
+
+
 def validate_import_payload(data: Any) -> None:
-    """Valida a estrutura básica do arquivo de importação JSON."""
+    """
+    Validação rigorosa de schema, tipos, limites de tamanho e intervalos
+    para prevenção de ataques de DoS, travamentos e injeção de dados malformados.
+    """
     if not isinstance(data, dict):
         raise ImportError("O conteúdo do arquivo deve ser um objeto JSON válido.")
+
+    _check_json_depth(data)
+
     if data.get("format") != "lectoria_study_export" and not ("highlights" in data or "notes" in data or "drawings" in data):
         raise ImportError("Formato de exportação incompatível com o Lectoria.")
-    if not isinstance(data.get("highlights", []), list):
+
+    highlights = data.get("highlights", [])
+    notes = data.get("notes", [])
+    drawings = data.get("drawings", [])
+
+    if not isinstance(highlights, list):
         raise ImportError("O campo 'highlights' deve ser uma lista.")
-    if not isinstance(data.get("notes", []), list):
+    if not isinstance(notes, list):
         raise ImportError("O campo 'notes' deve ser uma lista.")
-    if not isinstance(data.get("drawings", []), list):
+    if not isinstance(drawings, list):
         raise ImportError("O campo 'drawings' deve ser uma lista.")
+
+    if len(highlights) > MAX_IMPORT_HIGHLIGHTS:
+        raise ImportError(f"Quantidade de destaques excede o limite máximo permitido ({MAX_IMPORT_HIGHLIGHTS}).")
+    if len(notes) > MAX_IMPORT_NOTES:
+        raise ImportError(f"Quantidade de notas excede o limite máximo permitido ({MAX_IMPORT_NOTES}).")
+    if len(drawings) > MAX_IMPORT_DRAWINGS:
+        raise ImportError(f"Quantidade de desenhos excede o limite máximo permitido ({MAX_IMPORT_DRAWINGS}).")
+
+    # Validação detalhada de cada destaque
+    for idx, h in enumerate(highlights):
+        if not isinstance(h, dict):
+            raise ImportError(f"Item de destaque inválido na posição {idx}.")
+        page = h.get("page")
+        if not isinstance(page, int) or isinstance(page, bool) or page < 1 or page > 100000:
+            raise ImportError(f"Número de página inválido no destaque {idx}: {page}")
+        text = h.get("selected_text")
+        if text is None or not isinstance(text, str):
+            raise ImportError(f"Texto selecionado ausente ou inválido no destaque {idx}.")
+        if len(text) > MAX_TEXT_LENGTH:
+            raise ImportError(f"Texto do destaque {idx} excede o tamanho máximo de {MAX_TEXT_LENGTH} caracteres.")
+
+        rects = h.get("rects", [])
+        if not isinstance(rects, list):
+            raise ImportError(f"Retângulos de destaque inválidos na posição {idx}.")
+        if len(rects) > MAX_RECTS_PER_HIGHLIGHT:
+            raise ImportError(f"Número excessivo de retângulos no destaque {idx} (máx: {MAX_RECTS_PER_HIGHLIGHT}).")
+        for r in rects:
+            if not isinstance(r, dict):
+                raise ImportError(f"Retângulo inválido no destaque {idx}.")
+            for coord_key in ("x1", "y1", "x2", "y2", "x", "y", "w", "h"):
+                if coord_key in r:
+                    val = r[coord_key]
+                    if not isinstance(val, (int, float)) or isinstance(val, bool) or val < -0.5 or val > 1.5:
+                        raise ImportError(f"Coordenada normalizada fora dos limites permitidos ({coord_key}={val}) no destaque {idx}.")
+
+    # Validação detalhada de cada nota
+    for idx, n in enumerate(notes):
+        if not isinstance(n, dict):
+            raise ImportError(f"Item de nota inválido na posição {idx}.")
+        page = n.get("page")
+        if not isinstance(page, int) or isinstance(page, bool) or page < 1 or page > 100000:
+            raise ImportError(f"Número de página inválido na nota {idx}: {page}")
+        content = n.get("content")
+        if content is None or not isinstance(content, str):
+            raise ImportError(f"Conteúdo ausente ou inválido na nota {idx}.")
+        if len(content) > MAX_NOTE_LENGTH:
+            raise ImportError(f"Conteúdo da nota {idx} excede o limite de {MAX_NOTE_LENGTH} caracteres.")
+
+    # Validação detalhada de cada página de desenhos
+    for idx, d in enumerate(drawings):
+        if not isinstance(d, dict):
+            raise ImportError(f"Item de desenho inválido na posição {idx}.")
+        page = d.get("page")
+        if not isinstance(page, int) or isinstance(page, bool) or page < 1 or page > 100000:
+            raise ImportError(f"Número de página inválido no desenho {idx}: {page}")
+        strokes = d.get("strokes", [])
+        if not isinstance(strokes, list):
+            raise ImportError(f"Traços do desenho inválidos na página {page}.")
+        if len(strokes) > MAX_STROKES_PER_DRAWING:
+            raise ImportError(f"Quantidade de traços excede o limite na página {page} (máx: {MAX_STROKES_PER_DRAWING}).")
+        for s_idx, s in enumerate(strokes):
+            if not isinstance(s, dict):
+                continue
+            width = s.get("width")
+            if width is not None and (not isinstance(width, (int, float)) or isinstance(width, bool) or width < 0.5 or width > 64):
+                raise ImportError(f"Espessura do traço inválida ({width}) no desenho da página {page}.")
+            points = s.get("points", [])
+            if not isinstance(points, list):
+                raise ImportError(f"Lista de pontos inválida no traço {s_idx} da página {page}.")
+            if len(points) > MAX_POINTS_PER_STROKE:
+                raise ImportError(f"Traço com pontos excessivos na página {page} (máx: {MAX_POINTS_PER_STROKE}).")
+            for pt in points:
+                if not isinstance(pt, dict):
+                    continue
+                px = pt.get("x")
+                py = pt.get("y")
+                if px is not None and (not isinstance(px, (int, float)) or isinstance(px, bool) or px < -0.5 or px > 1.5):
+                    raise ImportError(f"Ponto X fora dos limites permitidos ({px}) na página {page}.")
+                if py is not None and (not isinstance(py, (int, float)) or isinstance(py, bool) or py < -0.5 or py > 1.5):
+                    raise ImportError(f"Ponto Y fora dos limites permitidos ({py}) na página {page}.")
 
 
 def preview_import_annotations(target_book_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -458,3 +572,4 @@ def apply_import_annotations(target_book_id: str, data: Dict[str, Any]) -> Dict[
             "total": imported_highlights_count + imported_notes_count + imported_drawings_count,
         },
     }
+
