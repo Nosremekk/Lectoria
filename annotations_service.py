@@ -25,6 +25,7 @@ def create_highlight(
     rects: List[Dict[str, float]],
     selected_text: str,
     text_context: Optional[str] = None,
+    user_id: int = 1,
 ) -> Dict[str, Any]:
     """Cria uma nova marcação de texto colorida com retângulos normalizados."""
     if page < 1:
@@ -46,15 +47,15 @@ def create_highlight(
 
         cursor.execute(
             """
-            INSERT INTO highlights (id, book_id, page, color, rects_json, selected_text, text_context)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO highlights (id, book_id, page, color, rects_json, selected_text, text_context, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (highlight_id, book_id, page, color or "#fef08a", rects_json, selected_text.strip(), text_context),
+            (highlight_id, book_id, page, color or "#fef08a", rects_json, selected_text.strip(), text_context, user_id),
         )
 
         cursor.execute(
             """
-            SELECT id, book_id, page, color, rects_json, selected_text, text_context, created_at
+            SELECT id, book_id, page, color, rects_json, selected_text, text_context, user_id, created_at
             FROM highlights WHERE id = ?
             """,
             (highlight_id,),
@@ -64,16 +65,16 @@ def create_highlight(
         return row
 
 
-def get_highlights(book_id: str, page: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Retorna os destaques de um documento, opcionalmente filtrados por página."""
+def get_highlights(book_id: str, page: Optional[int] = None, user_id: int = 1) -> List[Dict[str, Any]]:
+    """Retorna os destaques de um documento, opcionalmente filtrados por página e usuário."""
     with get_db() as conn:
         cursor = conn.cursor()
         sql = """
-            SELECT id, book_id, page, color, rects_json, selected_text, text_context, created_at
+            SELECT id, book_id, page, color, rects_json, selected_text, text_context, user_id, created_at
             FROM highlights
-            WHERE book_id = ?
+            WHERE book_id = ? AND user_id = ?
         """
-        params: List[Any] = [book_id]
+        params: List[Any] = [book_id, user_id]
         if page is not None:
             sql += " AND page = ?"
             params.append(page)
@@ -86,11 +87,14 @@ def get_highlights(book_id: str, page: Optional[int] = None) -> List[Dict[str, A
         return rows
 
 
-def delete_highlight(highlight_id: str) -> bool:
-    """Remove uma marcação de texto do banco de dados."""
+def delete_highlight(highlight_id: str, user_id: Optional[int] = None) -> bool:
+    """Remove uma marcação de texto do banco de dados, opcionalmente checando o dono."""
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM highlights WHERE id = ?", (highlight_id,))
+        if user_id is not None:
+            cursor.execute("DELETE FROM highlights WHERE id = ? AND user_id = ?", (highlight_id, user_id))
+        else:
+            cursor.execute("DELETE FROM highlights WHERE id = ?", (highlight_id,))
         return cursor.rowcount > 0
 
 
@@ -104,6 +108,7 @@ def create_note(
     content: str,
     color: Optional[str] = "#fef08a",
     highlight_id: Optional[str] = None,
+    user_id: int = 1,
 ) -> Dict[str, Any]:
     """Cria uma anotação textual vinculada a um destaque ou a uma página específica."""
     if page < 1:
@@ -123,10 +128,10 @@ def create_note(
 
         cursor.execute(
             """
-            INSERT INTO notes (id, book_id, page, highlight_id, content, color)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO notes (id, book_id, page, highlight_id, content, color, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (note_id, book_id, page, highlight_id, clean_content, color or "#fef08a"),
+            (note_id, book_id, page, highlight_id, clean_content, color or "#fef08a", user_id),
         )
 
         return get_note_by_id(note_id, cursor=cursor)
@@ -137,7 +142,7 @@ def get_note_by_id(note_id: str, cursor=None) -> Dict[str, Any]:
     def _fetch(c):
         c.execute(
             """
-            SELECT n.id, n.book_id, n.page, n.highlight_id, n.content, n.color, n.created_at, n.updated_at,
+            SELECT n.id, n.book_id, n.page, n.highlight_id, n.content, n.color, n.user_id, n.created_at, n.updated_at,
                    h.selected_text as highlight_text, h.color as highlight_color
             FROM notes n
             LEFT JOIN highlights h ON n.highlight_id = h.id
@@ -156,18 +161,18 @@ def get_note_by_id(note_id: str, cursor=None) -> Dict[str, Any]:
         return _fetch(conn.cursor())
 
 
-def get_notes(book_id: str, page: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Retorna todas as anotações do livro, com o texto do destaque vinculado se houver."""
+def get_notes(book_id: str, page: Optional[int] = None, user_id: int = 1) -> List[Dict[str, Any]]:
+    """Retorna todas as anotações do livro para o usuário indicado."""
     with get_db() as conn:
         cursor = conn.cursor()
         sql = """
-            SELECT n.id, n.book_id, n.page, n.highlight_id, n.content, n.color, n.created_at, n.updated_at,
+            SELECT n.id, n.book_id, n.page, n.highlight_id, n.content, n.color, n.user_id, n.created_at, n.updated_at,
                    h.selected_text as highlight_text, h.color as highlight_color
             FROM notes n
             LEFT JOIN highlights h ON n.highlight_id = h.id
-            WHERE n.book_id = ?
+            WHERE n.book_id = ? AND n.user_id = ?
         """
-        params: List[Any] = [book_id]
+        params: List[Any] = [book_id, user_id]
         if page is not None:
             sql += " AND n.page = ?"
             params.append(page)
@@ -177,7 +182,7 @@ def get_notes(book_id: str, page: Optional[int] = None) -> List[Dict[str, Any]]:
         return [dict(r) for r in cursor.fetchall()]
 
 
-def update_note(note_id: str, content: str, color: Optional[str] = None) -> Dict[str, Any]:
+def update_note(note_id: str, content: str, color: Optional[str] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
     """Atualiza o conteúdo de uma anotação textual existente."""
     clean_content = content.strip() if content else ""
     if not clean_content:
@@ -185,7 +190,10 @@ def update_note(note_id: str, content: str, color: Optional[str] = None) -> Dict
 
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM notes WHERE id = ?", (note_id,))
+        if user_id is not None:
+            cursor.execute("SELECT id FROM notes WHERE id = ? AND user_id = ?", (note_id, user_id))
+        else:
+            cursor.execute("SELECT id FROM notes WHERE id = ?", (note_id,))
         if not cursor.fetchone():
             raise AnnotationNotFoundError(f"Anotação '{note_id}' não encontrada.")
 
@@ -211,11 +219,14 @@ def update_note(note_id: str, content: str, color: Optional[str] = None) -> Dict
         return get_note_by_id(note_id, cursor=cursor)
 
 
-def delete_note(note_id: str) -> bool:
+def delete_note(note_id: str, user_id: Optional[int] = None) -> bool:
     """Remove uma anotação do banco de dados."""
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+        if user_id is not None:
+            cursor.execute("DELETE FROM notes WHERE id = ? AND user_id = ?", (note_id, user_id))
+        else:
+            cursor.execute("DELETE FROM notes WHERE id = ?", (note_id,))
         return cursor.rowcount > 0
 
 
@@ -223,17 +234,17 @@ def delete_note(note_id: str) -> bool:
 # DESENHO LIVRE VETORIAL (PAGE DRAWINGS)
 # =========================================================================
 
-def get_page_drawing(book_id: str, page: int) -> Dict[str, Any]:
-    """Retorna os traços vetoriais de desenho para uma página do livro."""
+def get_page_drawing(book_id: str, page: int, user_id: int = 1) -> Dict[str, Any]:
+    """Retorna os traços vetoriais de desenho para uma página do livro e usuário indicado."""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT id, book_id, page, strokes_json, updated_at
+            SELECT id, book_id, page, strokes_json, user_id, updated_at
             FROM page_drawings
-            WHERE book_id = ? AND page = ?
+            WHERE book_id = ? AND page = ? AND user_id = ?
             """,
-            (book_id, page),
+            (book_id, page, user_id),
         )
         row = cursor.fetchone()
         if not row:
@@ -244,8 +255,8 @@ def get_page_drawing(book_id: str, page: int) -> Dict[str, Any]:
         return data
 
 
-def save_page_drawing(book_id: str, page: int, strokes: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Salva ou atualiza a coleção de traços vetoriais de uma página."""
+def save_page_drawing(book_id: str, page: int, strokes: List[Dict[str, Any]], user_id: int = 1) -> Dict[str, Any]:
+    """Salva ou atualiza a coleção de traços vetoriais de uma página para o usuário indicado."""
     if page < 1:
         raise ValueError("Número de página inválido.")
 
@@ -261,25 +272,25 @@ def save_page_drawing(book_id: str, page: int, strokes: List[Dict[str, Any]]) ->
 
         cursor.execute(
             """
-            INSERT INTO page_drawings (id, book_id, page, strokes_json, updated_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(book_id, page) DO UPDATE SET
+            INSERT INTO page_drawings (id, book_id, page, strokes_json, user_id, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(book_id, page, user_id) DO UPDATE SET
                 strokes_json = excluded.strokes_json,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (drawing_id, book_id, page, strokes_json),
+            (drawing_id, book_id, page, strokes_json, user_id),
         )
 
         return {"status": "success", "page": page, "stroke_count": len(strokes)}
 
 
-def delete_page_drawing(book_id: str, page: int) -> bool:
-    """Limpa todos os traços de desenho de uma página."""
+def delete_page_drawing(book_id: str, page: int, user_id: int = 1) -> bool:
+    """Limpa todos os traços de desenho de uma página para o usuário indicado."""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "DELETE FROM page_drawings WHERE book_id = ? AND page = ?",
-            (book_id, page),
+            "DELETE FROM page_drawings WHERE book_id = ? AND page = ? AND user_id = ?",
+            (book_id, page, user_id),
         )
         return cursor.rowcount > 0
 
@@ -288,16 +299,16 @@ def delete_page_drawing(book_id: str, page: int) -> bool:
 # RESUMO DAS ANOTAÇÕES DO LIVRO (PARA O PAINEL DE ESTUDO)
 # =========================================================================
 
-def get_book_annotations_summary(book_id: str) -> Dict[str, Any]:
+def get_book_annotations_summary(book_id: str, user_id: int = 1) -> Dict[str, Any]:
     """Retorna todas as marcações, anotações e páginas com desenhos para o painel de leitura."""
-    highlights = get_highlights(book_id)
-    notes = get_notes(book_id)
+    highlights = get_highlights(book_id, user_id=user_id)
+    notes = get_notes(book_id, user_id=user_id)
 
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT page, updated_at FROM page_drawings WHERE book_id = ? ORDER BY page ASC",
-            (book_id,),
+            "SELECT page, updated_at FROM page_drawings WHERE book_id = ? AND user_id = ? ORDER BY page ASC",
+            (book_id, user_id),
         )
         drawing_pages = [dict(r) for r in cursor.fetchall()]
 

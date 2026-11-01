@@ -24,21 +24,21 @@ class ImportError(Exception):
 # EXPORTAÇÃO
 # =========================================================================
 
-def export_book_annotations_markdown(book_id: str) -> str:
+def export_book_annotations_markdown(book_id: str, user_id: int = 1) -> str:
     """
-    Gera um relatório completo de estudo em Markdown (.md) para o livro especificado.
+    Gera um relatório completo de estudo em Markdown (.md) para o livro especificado e usuário.
     Organizado por páginas, com destaques, notas vinculadas e notas avulsas.
     """
-    book = get_book(book_id)
-    highlights = get_highlights(book_id)
-    notes = get_notes(book_id)
+    book = get_book(book_id, user_id=user_id)
+    highlights = get_highlights(book_id, user_id=user_id)
+    notes = get_notes(book_id, user_id=user_id)
 
-    # Coleta páginas com desenhos
+    # Coleta páginas com desenhos do usuário
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT page, updated_at FROM page_drawings WHERE book_id = ? ORDER BY page ASC",
-            (book_id,),
+            "SELECT page, updated_at FROM page_drawings WHERE book_id = ? AND user_id = ? ORDER BY page ASC",
+            (book_id, user_id),
         )
         drawings = [dict(r) for r in cursor.fetchall()]
 
@@ -137,21 +137,21 @@ def export_book_annotations_markdown(book_id: str) -> str:
     return "\n".join(lines)
 
 
-def export_book_annotations_json(book_id: str) -> Dict[str, Any]:
+def export_book_annotations_json(book_id: str, user_id: int = 1) -> Dict[str, Any]:
     """
     Gera uma estrutura JSON completa preservando coordenadas, IDs, notas e traços vetoriais.
     Permite backup pontual das anotações e migração segura entre instâncias do Lectoria.
     """
-    book = get_book(book_id)
-    highlights = get_highlights(book_id)
-    notes = get_notes(book_id)
+    book = get_book(book_id, user_id=user_id)
+    highlights = get_highlights(book_id, user_id=user_id)
+    notes = get_notes(book_id, user_id=user_id)
 
-    # Coleta desenhos com seus traços completos
+    # Coleta desenhos com seus traços completos do usuário
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT id, page, strokes_json, updated_at FROM page_drawings WHERE book_id = ? ORDER BY page ASC",
-            (book_id,),
+            "SELECT id, page, strokes_json, updated_at FROM page_drawings WHERE book_id = ? AND user_id = ? ORDER BY page ASC",
+            (book_id, user_id),
         )
         drawings = []
         for r in cursor.fetchall():
@@ -312,20 +312,20 @@ def validate_import_payload(data: Any) -> None:
                     raise ImportError(f"Ponto Y fora dos limites permitidos ({py}) na página {page}.")
 
 
-def preview_import_annotations(target_book_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+def preview_import_annotations(target_book_id: str, data: Dict[str, Any], user_id: int = 1) -> Dict[str, Any]:
     """
-    Analisa os dados de importação sem alterar o banco de dados.
+    Analisa os dados de importação sem alterar o banco de dados para o usuário indicado.
     Detecta novos itens e duplicatas existentes para que o usuário aprove a operação.
     """
     validate_import_payload(data)
-    get_book(target_book_id)  # Valida que o livro de destino existe
+    get_book(target_book_id, user_id=user_id)  # Valida que o livro de destino existe
 
-    existing_highlights = get_highlights(target_book_id)
-    existing_notes = get_notes(target_book_id)
+    existing_highlights = get_highlights(target_book_id, user_id=user_id)
+    existing_notes = get_notes(target_book_id, user_id=user_id)
 
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT page, strokes_json FROM page_drawings WHERE book_id = ?", (target_book_id,))
+        cursor.execute("SELECT page, strokes_json FROM page_drawings WHERE book_id = ? AND user_id = ?", (target_book_id, user_id))
         existing_drawings = {r["page"]: r["strokes_json"] for r in cursor.fetchall()}
 
     # Conjuntos para detecção de duplicatas
@@ -410,13 +410,13 @@ def preview_import_annotations(target_book_id: str, data: Dict[str, Any]) -> Dic
     }
 
 
-def apply_import_annotations(target_book_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+def apply_import_annotations(target_book_id: str, data: Dict[str, Any], user_id: int = 1) -> Dict[str, Any]:
     """
-    Aplica a importação de forma estritamente transacional no SQLite.
+    Aplica a importação de forma estritamente transacional no SQLite para o usuário indicado.
     Se qualquer inserção falhar, a transação sofre rollback total, mantendo o banco intacto.
     """
     validate_import_payload(data)
-    get_book(target_book_id)
+    get_book(target_book_id, user_id=user_id)
 
     incoming_highlights = data.get("highlights", [])
     incoming_notes = data.get("notes", [])
@@ -432,18 +432,18 @@ def apply_import_annotations(target_book_id: str, data: Dict[str, Any]) -> Dict[
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # 1. Carrega dados já existentes para checagem rápida de duplicatas
-        cursor.execute("SELECT id, page, selected_text FROM highlights WHERE book_id = ?", (target_book_id,))
+        # 1. Carrega dados já existentes do usuário para checagem rápida de duplicatas
+        cursor.execute("SELECT id, page, selected_text FROM highlights WHERE book_id = ? AND user_id = ?", (target_book_id, user_id))
         existing_hl_rows = cursor.fetchall()
         existing_hl_ids = {r["id"] for r in existing_hl_rows}
         existing_hl_tuples = {(r["page"], r["selected_text"].strip()) for r in existing_hl_rows}
 
-        cursor.execute("SELECT id, page, content FROM notes WHERE book_id = ?", (target_book_id,))
+        cursor.execute("SELECT id, page, content FROM notes WHERE book_id = ? AND user_id = ?", (target_book_id, user_id))
         existing_note_rows = cursor.fetchall()
         existing_note_ids = {r["id"] for r in existing_note_rows}
         existing_note_tuples = {(r["page"], r["content"].strip()) for r in existing_note_rows}
 
-        cursor.execute("SELECT page, strokes_json FROM page_drawings WHERE book_id = ?", (target_book_id,))
+        cursor.execute("SELECT page, strokes_json FROM page_drawings WHERE book_id = ? AND user_id = ?", (target_book_id, user_id))
         existing_drawings = {r["page"]: r["strokes_json"] for r in cursor.fetchall()}
 
         # 2. Inserção de Destaques
@@ -475,10 +475,10 @@ def apply_import_annotations(target_book_id: str, data: Dict[str, Any]) -> Dict[
 
             cursor.execute(
                 """
-                INSERT INTO highlights (id, book_id, page, color, rects_json, selected_text, text_context)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO highlights (id, book_id, page, color, rects_json, selected_text, text_context, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (new_hl_id, target_book_id, page, color, rects_json, text, context),
+                (new_hl_id, target_book_id, page, color, rects_json, text, context, user_id),
             )
             existing_hl_ids.add(new_hl_id)
             existing_hl_tuples.add(h_tuple)
@@ -511,10 +511,10 @@ def apply_import_annotations(target_book_id: str, data: Dict[str, Any]) -> Dict[
 
             cursor.execute(
                 """
-                INSERT INTO notes (id, book_id, page, highlight_id, content, color)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO notes (id, book_id, page, highlight_id, content, color, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (new_note_id, target_book_id, page, target_hl_id, content, color),
+                (new_note_id, target_book_id, page, target_hl_id, content, color, user_id),
             )
             existing_note_ids.add(new_note_id)
             existing_note_tuples.add(n_tuple)
@@ -546,19 +546,19 @@ def apply_import_annotations(target_book_id: str, data: Dict[str, Any]) -> Dict[
                         """
                         UPDATE page_drawings
                         SET strokes_json = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE book_id = ? AND page = ?
+                        WHERE book_id = ? AND page = ? AND user_id = ?
                         """,
-                        (json.dumps(combined), target_book_id, page),
+                        (json.dumps(combined), target_book_id, page, user_id),
                     )
                     imported_drawings_count += 1
             else:
                 drawing_id = str(uuid.uuid4())
                 cursor.execute(
                     """
-                    INSERT INTO page_drawings (id, book_id, page, strokes_json, updated_at)
-                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    INSERT INTO page_drawings (id, book_id, page, strokes_json, user_id, updated_at)
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     """,
-                    (drawing_id, target_book_id, page, json.dumps(incoming_strokes)),
+                    (drawing_id, target_book_id, page, json.dumps(incoming_strokes), user_id),
                 )
                 existing_drawings[page] = json.dumps(incoming_strokes)
                 imported_drawings_count += 1

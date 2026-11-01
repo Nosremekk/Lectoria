@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from typing import Generator
 import config
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def get_connection() -> sqlite3.Connection:
@@ -69,6 +69,10 @@ def init_db() -> None:
         if current_version < 3:
             _apply_migration_v3(cursor)
             cursor.execute("INSERT INTO schema_migrations (version) VALUES (3);")
+
+        if current_version < 4:
+            _apply_migration_v4(cursor)
+            cursor.execute("INSERT INTO schema_migrations (version) VALUES (4);")
 
 
 def _apply_migration_v1(cursor: sqlite3.Cursor) -> None:
@@ -249,5 +253,157 @@ def _apply_migration_v3(cursor: sqlite3.Cursor) -> None:
         """
     )
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_drawings_book_page ON page_drawings(book_id, page);")
+
+
+def _apply_migration_v4(cursor: sqlite3.Cursor) -> None:
+    """
+    Schema V4:
+    - library_sources: múltiplas fontes de diretórios locais configuráveis
+    - books.source_id: vínculo entre livros e sua fonte de origem
+    - users: suporte a perfis de leitura com roles ('admin', 'reader') e senhas com hash seguro
+    - sessions: tokens de sessão criptográficos para autenticação de usuários
+    - isolamento de dados por usuário em collections, highlights, notes e page_drawings
+    """
+    # 1. Tabela de Fontes de Biblioteca
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS library_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL UNIQUE,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_scanned_at TIMESTAMP,
+            last_error TEXT
+        );
+        """
+    )
+    # Cadastra a biblioteca padrão como fonte inicial (#1)
+    canonical_lib = str(config.LIBRARY_DIR.resolve())
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO library_sources (id, name, path, is_active)
+        VALUES (1, 'Biblioteca Principal', ?, 1);
+        """,
+        (canonical_lib,),
+    )
+
+    # 2. Atualização de books para incluir source_id e unicidade por (source_id, rel_path)
+    cursor.execute("PRAGMA table_info(books);")
+    book_cols = [r["name"] for r in cursor.fetchall()]
+    if "source_id" not in book_cols:
+        cursor.execute(
+            """
+            CREATE TABLE books_v4 (
+                id TEXT PRIMARY KEY,
+                source_id INTEGER NOT NULL DEFAULT 1 REFERENCES library_sources(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                author TEXT,
+                filename TEXT NOT NULL,
+                rel_path TEXT NOT NULL,
+                filesize INTEGER NOT NULL,
+                page_count INTEGER DEFAULT 0,
+                file_hash TEXT,
+                is_missing INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (source_id, rel_path)
+            );
+            """
+        )
+        cursor.execute(
+            """
+            INSERT INTO books_v4 (id, source_id, title, author, filename, rel_path, filesize, page_count, file_hash, is_missing, created_at, updated_at)
+            SELECT id, 1, title, author, filename, rel_path, filesize, page_count, file_hash, is_missing, created_at, updated_at FROM books;
+            """
+        )
+        cursor.execute("DROP TABLE books;")
+        cursor.execute("ALTER TABLE books_v4 RENAME TO books;")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_title ON books(title COLLATE NOCASE);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_source ON books(source_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_source_rel ON books(source_id, rel_path);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_is_missing ON books(is_missing);")
+
+    # 3. Atualização de users para suportar autenticação e papéis
+    cursor.execute("PRAGMA table_info(users);")
+    user_cols = [r["name"] for r in cursor.fetchall()]
+    if "password_hash" not in user_cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN password_hash TEXT;")
+    if "role" not in user_cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'reader';")
+    if "is_active" not in user_cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;")
+
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO users (id, username, display_name, role, is_active)
+        VALUES (1, 'default', 'Leitor Padrão', 'reader', 1);
+        """
+    )
+
+    # 4. Tabela de Sessões Autenticadas
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);")
+
+    # 5. Adiciona user_id às coleções
+    cursor.execute("PRAGMA table_info(collections);")
+    col_cols = [r["name"] for r in cursor.fetchall()]
+    if "user_id" not in col_cols:
+        cursor.execute("ALTER TABLE collections ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_collections_user ON collections(user_id);")
+
+    # 6. Adiciona user_id aos destaques (highlights)
+    cursor.execute("PRAGMA table_info(highlights);")
+    hl_cols = [r["name"] for r in cursor.fetchall()]
+    if "user_id" not in hl_cols:
+        cursor.execute("ALTER TABLE highlights ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_highlights_user ON highlights(user_id);")
+
+    # 7. Adiciona user_id às notas
+    cursor.execute("PRAGMA table_info(notes);")
+    note_cols = [r["name"] for r in cursor.fetchall()]
+    if "user_id" not in note_cols:
+        cursor.execute("ALTER TABLE notes ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(user_id);")
+
+    # 8. Atualiza page_drawings para garantir chave única por (book_id, page, user_id)
+    cursor.execute("PRAGMA table_info(page_drawings);")
+    draw_cols = [r["name"] for r in cursor.fetchall()]
+    if "user_id" not in draw_cols:
+        cursor.execute(
+            """
+            CREATE TABLE page_drawings_v4 (
+                id TEXT PRIMARY KEY,
+                book_id TEXT NOT NULL,
+                page INTEGER NOT NULL,
+                strokes_json TEXT NOT NULL,
+                user_id INTEGER NOT NULL DEFAULT 1,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE(book_id, page, user_id)
+            );
+            """
+        )
+        cursor.execute(
+            """
+            INSERT INTO page_drawings_v4 (id, book_id, page, strokes_json, user_id, updated_at)
+            SELECT id, book_id, page, strokes_json, 1, updated_at FROM page_drawings;
+            """
+        )
+        cursor.execute("DROP TABLE page_drawings;")
+        cursor.execute("ALTER TABLE page_drawings_v4 RENAME TO page_drawings;")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_drawings_book_page_user ON page_drawings(book_id, page, user_id);")
+
 
 

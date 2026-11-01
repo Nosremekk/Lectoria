@@ -32,6 +32,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const btnModeSingle = document.getElementById("btn-mode-single");
   const btnModeContinuous = document.getElementById("btn-mode-continuous");
   const btnReaderTheme = document.getElementById("btn-reader-theme");
+  const btnDownloadPdf = document.getElementById("btn-download-pdf");
   const btnShortcutsHelp = document.getElementById("btn-shortcuts-help");
   const saveIndicator = document.getElementById("save-indicator");
   const readingProgressFill = document.getElementById("reading-progress-fill");
@@ -179,6 +180,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     applyTheme(currentTheme === "dark" ? "light" : "dark");
   });
   applyTheme(currentTheme);
+
+  if (btnDownloadPdf) {
+    btnDownloadPdf.addEventListener("click", () => {
+      window.location.href = `/api/books/${encodeURIComponent(bookId)}/download`;
+    });
+  }
 
   function showSavedIndicator() {
     saveIndicator.classList.add("visible");
@@ -1773,6 +1780,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   // --- Carregamento Inicial do Documento ---
   try {
     const bookRes = await fetch(`/api/books/${bookId}`);
+    if (bookRes.status === 401) {
+      window.location.href = `/?login=1`;
+      return;
+    }
     if (!bookRes.ok) throw new Error("Livro não encontrado.");
     const bookData = await bookRes.json();
     bookTitleEl.textContent = bookData.title;

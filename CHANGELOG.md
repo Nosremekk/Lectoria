@@ -7,6 +7,41 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.1.0] - 2026-11-01
+
+### Adicionado
+- **Download Direto de Arquivos PDF Originais (`GET /api/books/{book_id}/download`)**:
+  - Streaming eficiente de arquivos binários em chunks, mantendo consumo de memória RAM próximo de zero.
+  - Cabeçalho `Content-Disposition: attachment; filename="..."` com sanitização segura de caracteres para início imediato do download no navegador.
+  - Botão de download integrado nos cards da biblioteca (modos grade e lista) e na barra superior do leitor de PDFs.
+  - Validações de segurança: verificação de existência física, confirmação de que a fonte associada está ativa e proteção estrita contra *Path Traversal*.
+- **Gerenciamento de Múltiplas Fontes de Biblioteca (`sources_service.py` e Schema V4)**:
+  - Tabela `library_sources` no SQLite permitindo múltiplos diretórios locais configuráveis.
+  - Cadastro, listagem, ativação/desativação, varredura individual e exclusão de fontes via interface web (modal administrativo) e API.
+  - Bloqueio rígido de segurança contra inclusão de diretórios de sistema (`/`, `/bin`, `/boot`, `/dev`, `/etc`, `/lib`, `/proc`, `/root`, `/sys`, `/usr`) e pastas internas da aplicação (`data/`, `backups/`, `BASE_DIR`).
+  - Resolução canônica de links simbólicos, ignorando e rejeitando arquivos que apontem para fora do diretório da fonte autorizada.
+  - Garantia de preservação: a exclusão ou desativação de uma fonte no Lectoria **NUNCA apaga arquivos PDF físicos do disco**.
+- **Autenticação, Perfis de Usuário e Papéis (`auth_service.py` e `scripts/manage_users.py`)**:
+  - Perfis domésticos multiusuário com dois níveis de privilégio: Administrador (`admin`) e Leitor (`reader`).
+  - Hashing seguro de senhas com `hashlib.scrypt` (salt aleatório de 16 bytes, `N=16384`, `r=8`, `p=1`) da biblioteca padrão do Python, sem dependências externas.
+  - Sessões criptografadas com tokens seguros (`secrets.token_urlsafe(32)`) transmitidos via cookie `lectoria_session` com flags `HttpOnly`, `SameSite=Lax`.
+  - Proteção contra ataques de força bruta com rate-limiting em memória (bloqueio temporário de 5 minutos após 5 falhas consecutivas).
+  - Fluxo de configuração inicial (*setup wizard*) na primeira execução caso nenhum administrador esteja configurado.
+  - Utilitário administrativo CLI completo em `scripts/manage_users.py` (`--create-admin`, `--create-user`, `--reset-password`, `--set-role`, `--activate`, `--deactivate`, `--list`).
+- **Isolamento Estrito de Dados Pessoais de Leitura**:
+  - Catálogo compartilhado de PDFs, mas com isolamento total por usuário para:
+    - Progresso de leitura (`reading_progress`).
+    - Destaques de texto / marca-texto (`highlights`).
+    - Notas e anotações vinculadas (`notes`).
+    - Desenhos livres vetoriais por página (`page_drawings` com chave única composta `book_id, page, user_id`).
+    - Coleções personalizadas e atribuição de documentos (`collections` e `collection_books`).
+- **Migração Transacional Não-Destrutiva de Banco de Dados (`_apply_migration_v4`)**:
+  - Atualização do schema para a versão 4 preservando todo o acervo e atribuindo dados preexistentes ao usuário padrão.
+- **Suíte de Testes Automatizados da Iteração 6 (`tests/test_iteration6.py`)**:
+  - 8 novos testes cobrindo downloads, múltiplas fontes, rejeição de symlinks externos, preservação de arquivos no disco, fluxo de autenticação, força bruta, autorização de papéis e isolamento total de dados entre usuários (total da suíte: 52 testes aprovados).
+
+---
+
 ## [1.0.0] - 2026-11-01
 
 ### Adicionado
