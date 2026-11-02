@@ -11,13 +11,30 @@ from typing import Optional
 # Diretório raiz do projeto (resolvido dinamicamente a partir da localização deste arquivo)
 BASE_DIR = Path(__file__).resolve().parent
 
+# Se este módulo estiver na pasta 'app/' de um pacote de distribuição onde
+# as pastas de dados e manifesto existem na pasta superior:
+if BASE_DIR.name == "app" and (BASE_DIR.parent / "manifest.json").exists():
+    STORAGE_ROOT = BASE_DIR.parent
+else:
+    STORAGE_ROOT = BASE_DIR
+
 
 def load_env_file(env_path: Optional[Path] = None, override: bool = False) -> dict[str, str]:
     """
     Carrega variáveis de configuração a partir de um arquivo .env simples (CHAVE=VALOR).
     Por padrão não sobrescreve variáveis já definidas no ambiente do processo (override=False).
     """
-    target = env_path or Path(os.getenv("LECTORIA_ENV_FILE", BASE_DIR / ".env"))
+    if env_path:
+        target = env_path
+    elif os.getenv("LECTORIA_ENV_FILE"):
+        target = Path(os.environ["LECTORIA_ENV_FILE"])
+    elif (BASE_DIR / ".env").exists():
+        target = BASE_DIR / ".env"
+    elif (STORAGE_ROOT / ".env").exists():
+        target = STORAGE_ROOT / ".env"
+    else:
+        target = BASE_DIR / ".env"
+
     loaded: dict[str, str] = {}
     if not target.exists() or not target.is_file():
         return loaded
@@ -50,12 +67,12 @@ APP_NAME = os.getenv("LECTORIA_APP_NAME", "Lectoria")
 
 # Diretório onde os arquivos PDF da biblioteca padrão ficam armazenados
 LIBRARY_DIR = Path(
-    os.getenv("LECTORIA_LIBRARY_DIR", str(BASE_DIR / "books"))
+    os.getenv("LECTORIA_LIBRARY_DIR", str(STORAGE_ROOT / "books"))
 ).expanduser().resolve()
 
 # Diretório onde o banco de dados SQLite e dados persistentes ficam armazenados
 DATA_DIR = Path(
-    os.getenv("LECTORIA_DATA_DIR", str(BASE_DIR / "data"))
+    os.getenv("LECTORIA_DATA_DIR", str(STORAGE_ROOT / "data"))
 ).expanduser().resolve()
 
 # Caminho do banco SQLite principal
@@ -70,7 +87,7 @@ COVERS_DIR = Path(
 
 # Diretório para backups manuais e automáticos de pré-migração do banco de dados
 BACKUPS_DIR = Path(
-    os.getenv("LECTORIA_BACKUPS_DIR", str(BASE_DIR / "backups"))
+    os.getenv("LECTORIA_BACKUPS_DIR", str(STORAGE_ROOT / "backups"))
 ).expanduser().resolve()
 
 # Rede e escuta HTTP

@@ -11,6 +11,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ALLOW_ROOT=0
 RECREATE_VENV=0
 SKIP_PIP=0
+MIGRATION_PATH=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -26,15 +27,20 @@ while [[ $# -gt 0 ]]; do
             SKIP_PIP=1
             shift
             ;;
+        --with-migration|--migration-bundle)
+            MIGRATION_PATH="$2"
+            shift 2
+            ;;
         -h|--help)
             cat <<EOF
 Uso: ./deployment/install.sh [OPÇÕES]
 
 Opções:
-  --recreate-venv   Recria o ambiente virtual (.venv) do zero
-  --skip-pip        Pula a instalação/atualização de pacotes via pip (modo offline)
-  --allow-root      Permite executar como root (não recomendado)
-  -h, --help        Exibe esta ajuda
+  --recreate-venv                 Recria o ambiente virtual (.venv) do zero
+  --skip-pip                      Pula a instalação/atualização de pacotes via pip (modo offline)
+  --with-migration <PASTA_OU_ARQ> Restaura dados de uma migração existente (banco e capas)
+  --allow-root                    Permite executar como root (não recomendado)
+  -h, --help                      Exibe esta ajuda
 EOF
             exit 0
             ;;
@@ -93,17 +99,12 @@ echo "[2/5] Verificando ambiente virtual Python (.venv)..."
 VENV_DIR="${PROJECT_ROOT}/.venv"
 VENV_PYTHON="${VENV_DIR}/bin/python3"
 
-# Detecta se o .venv foi copiado de outra máquina com caminho incompatível
+# Detecta se o .venv foi copiado de outra máquina ou pasta com caminho incompatível
 if [[ -d "${VENV_DIR}" && "${RECREATE_VENV}" -eq 0 ]]; then
-    if ! "${VENV_PYTHON}" -c "import sys" >/dev/null 2>&1; then
-        echo "[INFO] Ambiente .venv existente pertence a outro caminho/máquina. Recriando..."
+    CURRENT_VENV_PREFIX="$("${VENV_PYTHON}" -c "import sys; print(sys.prefix)" 2>/dev/null || true)"
+    if [[ -z "${CURRENT_VENV_PREFIX}" || "${CURRENT_VENV_PREFIX}" != "${VENV_DIR}" ]]; then
+        echo "[INFO] Ambiente .venv existente pertence a outro caminho/máquina (${CURRENT_VENV_PREFIX:-inválido}). Recriando..."
         RECREATE_VENV=1
-    elif [[ -f "${VENV_DIR}/bin/pip" ]]; then
-        PIP_SHEBANG="$(head -n 1 "${VENV_DIR}/bin/pip" || true)"
-        if [[ "${PIP_SHEBANG}" != "#!${VENV_DIR}/bin/python"* ]]; then
-            echo "[INFO] Ajustando ambiente .venv migrado de outro diretório..."
-            RECREATE_VENV=1
-        fi
     fi
 fi
 
@@ -134,13 +135,67 @@ bash "${SCRIPT_DIR}/configure.sh" --non-interactive
 
 # 5. Inicialização e migração segura do banco de dados SQLite
 echo "[5/5] Inicializando e verificando integridade do banco de dados SQLite..."
-"${VENV_PYTHON}" -c "
+if [[ -n "${MIGRATION_PATH}" ]]; then
+    echo "[*] Aplicando pacote de migração de biblioteca: ${MIGRATION_PATH}..."
+    "${VENV_PYTHON}" -c "
+import sys; sys.path.insert(0, '${PROJECT_ROOT}')
+import config, database, shutil
+from pathlib import Path
+from backup_service import verify_sqlite_integrity
+
+mig_path = Path('${MIGRATION_PATH}').resolve()
+if not mig_path.exists():
+    print(f'[ERRO] Caminho de migração não encontrado: {mig_path}', file=sys.stderr)
+    sys.exit(1)
+
+source_db = None
+covers_dir = None
+if mig_path.is_file() and mig_path.name.endswith('.db'):
+    source_db = mig_path
+    potential_covers = mig_path.parent / 'covers'
+    if potential_covers.exists() and potential_covers.is_dir():
+        covers_dir = potential_covers
+elif mig_path.is_dir():
+    if (mig_path / 'lectoria.db').exists():
+        source_db = mig_path / 'lectoria.db'
+    elif (mig_path / 'data' / 'lectoria.db').exists():
+        source_db = mig_path / 'data' / 'lectoria.db'
+    if (mig_path / 'covers').exists():
+        covers_dir = mig_path / 'covers'
+    elif (mig_path / 'data' / 'covers').exists():
+        covers_dir = mig_path / 'data' / 'covers'
+
+if not source_db or not source_db.exists():
+    print(f'[ERRO] Banco lectoria.db não encontrado no pacote de migração {mig_path}', file=sys.stderr)
+    sys.exit(1)
+
+if not verify_sqlite_integrity(source_db):
+    print(f'[ERRO] Banco de migração {source_db} falhou na verificação de integridade SQLite.', file=sys.stderr)
+    sys.exit(1)
+
+config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+shutil.copy2(source_db, config.DB_PATH)
+
+if covers_dir and covers_dir.exists():
+    config.COVERS_DIR.mkdir(parents=True, exist_ok=True)
+    for cfile in covers_dir.glob('*'):
+        if cfile.is_file():
+            shutil.copy2(cfile, config.COVERS_DIR / cfile.name)
+
+database.init_db()
+assert verify_sqlite_integrity(config.DB_PATH), 'Falha de integridade após migração'
+print(f'[OK] Migração concluída com sucesso em: {config.DB_PATH} (Schema V{database.SCHEMA_VERSION})')
+"
+else
+    "${VENV_PYTHON}" -c "
+import sys; sys.path.insert(0, '${PROJECT_ROOT}')
 import config, database
 from backup_service import verify_sqlite_integrity
 database.init_db()
 assert verify_sqlite_integrity(config.DB_PATH), 'Falha de integridade no SQLite'
 print(f'[OK] Banco de dados pronto e íntegro em: {config.DB_PATH} (Schema V{database.SCHEMA_VERSION})')
 "
+fi
 
 echo ""
 echo "============================================================"

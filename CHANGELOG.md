@@ -7,6 +7,28 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [Iteração 10 — Empacotamento e Preparação para Transferência] - 2026-11-02
+
+### Adicionado
+- **Gerador de Pacote de Transferência (`scripts/package.py`)**:
+  - Script determinístico que constrói o pacote de distribuição limpo (`Lectoria-1.1.2-linux-x86_64/`), compacta em `.tar.gz` e `.zip` preservando permissões UNIX executáveis (`0755`), e gera o pacote opcional de migração da biblioteca (`Lectoria-1.1.2-migration-bundle/`).
+- **Verificador de Integridade do Pacote (`deployment/verify-package.sh` e atalho na raiz)**:
+  - Script autônomo que valida presença da estrutura de pastas (`app/`, `data/`, `books/`, `backups/`), integridade criptográfica SHA-256 (`SHA256SUMS`), permissões executáveis em todos os scripts e integridade do banco SQLite (`PRAGMA integrity_check`).
+- **Modalidade A (Instalação Limpa)**:
+  - Pacote independente de código em `app/` com pastas `data/`, `books/` e `backups/` acompanhadas de documentação orientativa, pronto para inicialização automática no destino via `./install.sh`.
+- **Modalidade B (Migração da Biblioteca Existente)**:
+  - Pacote de migração com cópia consistente do banco via SQLite Online Backup API, higienização estrita de segurança com revogação de todas as sessões ativas (`DELETE FROM sessions;`), preservação de capas personalizadas/extraídas (`covers/`), integridade SQLite validada e suporte no instalador (`./install.sh --with-migration <pasta>`).
+- **Documentação de Transferência e Instalação (`TRANSFER.txt`, `INSTALL.txt`, `VERSION.txt`, `manifest.json`)**:
+  - Instruções detalhadas para cópia física via pendrive/HD externo, opções de preservação de PDFs existentes, homologação com Jellyfin e primeiro boot no Positivo C1260.
+
+### Modificado
+- **Resolução de Diretórios de Armazenamento (`config.py`, `deployment/configure.sh`, `deployment/install.sh`)**:
+  - Detecção automática de execução dentro da pasta `app/` de um pacote distribuído, mantendo armazenamento em `data/`, `books/` e `backups/` na raiz do pacote e respeitando `.env`.
+  - Suporte ao argumento `--with-migration <caminho>` em `deployment/install.sh` para importação direta de dados e capas.
+  - Correção na verificação de migração de ambiente virtual em `deployment/install.sh` utilizando `sys.prefix` canônico do Python em vez de leitura ingênua da shebang do pip.
+
+---
+
 ## [Iteração 9 — Preparação para Deploy e Homologação no Positivo C1260] - 2026-11-02
 
 ### Adicionado

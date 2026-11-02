@@ -57,7 +57,7 @@ fi
 
 # 1. Backup preventivo obrigatório antes de atualizar
 echo "[1/5] Executando backup preventivo antes da atualização..."
-DB_EXISTS="$("${PYTHON_BIN}" -c "import config; print('1' if config.DB_PATH.exists() else '0')")"
+DB_EXISTS="$("${PYTHON_BIN}" -c "import sys; sys.path.insert(0, '${PROJECT_ROOT}'); import config; print('1' if config.DB_PATH.exists() else '0')")"
 if [[ "${DB_EXISTS}" == "1" ]]; then
     bash "${SCRIPT_DIR}/backup.sh"
 else
@@ -92,6 +92,7 @@ bash "${SCRIPT_DIR}/configure.sh" --non-interactive
 # 5. Migração automática de schema e verificação de integridade
 echo "[5/5] Aplicando migrações de banco de dados e validando integridade..."
 "${PYTHON_BIN}" -c "
+import sys; sys.path.insert(0, '${PROJECT_ROOT}')
 import config, database
 from backup_service import verify_sqlite_integrity
 database.init_db()

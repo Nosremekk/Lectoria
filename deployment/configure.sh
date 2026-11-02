@@ -7,17 +7,28 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PARENT_DIR="$(cd "${PROJECT_ROOT}/.." && pwd)"
+
+# Se estivermos dentro da pasta app/ de um pacote com pastas de dados na raiz:
+if [[ -d "${PARENT_DIR}/data" && -d "${PARENT_DIR}/books" && -d "${PARENT_DIR}/backups" ]]; then
+    STORAGE_ROOT="${PARENT_DIR}"
+else
+    STORAGE_ROOT="${PROJECT_ROOT}"
+fi
 
 ENV_FILE="${PROJECT_ROOT}/.env"
+if [[ -f "${STORAGE_ROOT}/.env" ]]; then
+    ENV_FILE="${STORAGE_ROOT}/.env"
+fi
 SERVICE_FILE="${PROJECT_ROOT}/deployment/lectoria.service"
 NON_INTERACTIVE=0
 
 # Valores padrão iniciais
 CFG_HOST="0.0.0.0"
 CFG_PORT="8765"
-CFG_LIBRARY_DIR="${PROJECT_ROOT}/books"
-CFG_DATA_DIR="${PROJECT_ROOT}/data"
-CFG_BACKUPS_DIR="${PROJECT_ROOT}/backups"
+CFG_LIBRARY_DIR="${STORAGE_ROOT}/books"
+CFG_DATA_DIR="${STORAGE_ROOT}/data"
+CFG_BACKUPS_DIR="${STORAGE_ROOT}/backups"
 CFG_USER="$(id -un)"
 CFG_GROUP="$(id -gn)"
 
