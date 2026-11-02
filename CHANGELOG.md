@@ -7,6 +7,25 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [Iteração 8 — Redesign Editorial, Capas e Seletor de Diretórios] - 2026-11-02
+
+### Adicionado
+- **Identidade Visual Editorial Própria (`static/css/style.css`, `static/index.html`, `static/reader.html`)**:
+  - Novo sistema de cores editorial nos temas Claro (Papel Marfim `#F6F3EC`, Tinta Carvão `#1C1B18`, Terracota Clássico `#9E3B24`) e Escuro (Obsidiana Quente `#141311`, Pergaminho `#EAE5DC`, Terracota Cobreado `#D46A4E`), substituindo a estética genérica de painel azul-neon.
+  - Hierarquia tipográfica exclusivamente local/offline: Serifada Editorial (`--font-serif`) para títulos e cabeçalhos, Humanista Sans (`--font-sans`) para controles de interface e Monoespaçada Tabular (`--font-mono`) para páginas, porcentagens, tamanhos e caminhos.
+  - Suporte completo a `:focus-visible` para navegação por teclado e `@media (prefers-reduced-motion: reduce)`.
+- **Sistema de Capas em 3 Camadas (`covers_service.py`, `database.py` Schema V5, `main.py`)**:
+  - **Prioridade 1 (Capa Real do PDF + Cache)**: Extração sob demanda de imagens da primeira página do PDF (`/DCTDecode` JPEG e `/FlateDecode` RGB/Gray convertidos para PNG puro em Python) e endpoint `POST /api/books/{book_id}/cover/cache` para cachear miniaturas da 1ª página renderizadas pelo PDF.js no cliente. Cache persistido em `data/covers/` (ignorado pelo Git) e invalidado automaticamente quando o `file_hash` do PDF muda.
+  - **Prioridade 2 (Capa Personalizada)**: Endpoints `POST /api/books/{book_id}/cover` e `DELETE /api/books/{book_id}/cover` com validação estrita de assinatura binária (*magic bytes* para PNG, JPEG e WebP), verificação de dimensões mínimas/máximas, bloqueio de HTML/SVG/scripts e limite de 5 MB (`HTTP 413`).
+  - **Prioridade 3 (Capa Substituta Editorial Determinística)**: Geração determinística de capa SVG editorial (`generate_editorial_svg_cover`) baseada no hash SHA-256 do livro para PDFs sem capa extraível, corrompidos ou protegidos por senha.
+- **Seleção Visual de Diretórios (`directory_picker_service.py`, `main.py`, `static/js/app.js`)**:
+  - **Navegador Visual de Diretórios pelo Backend (`GET /api/sources/browse`)**: Permite a administradores explorar pastas autorizadas no servidor tanto localmente quanto pela rede doméstica, exibindo atalhos rápidos, contagem de arquivos `.pdf` por pasta e bloqueando diretórios reservados do sistema, pastas internas (`data/`, `backups/`, `data/covers/`, `.venv/`, `.git/`), links simbólicos e tentativas de *path traversal* (`..`).
+  - **Seletor Nativo do Sistema Operacional (`POST /api/sources/pick-native`)**: Aciona `zenity` ou `kdialog` com `shell=False` e timeout exclusivamente quando a requisição parte de `localhost`/`127.0.0.1` e há sessão gráfica ativa (`DISPLAY`/`WAYLAND_DISPLAY`), bloqueando com `403 Forbidden` qualquer tentativa de abertura remota.
+- **Testes Automatizados (`tests/test_iteration8.py`)**:
+  - 11 novos testes abrangendo todos os cenários de extração/cache/invalidação/upload/remoção de capas e navegação/seleção/segurança de diretórios (total da suíte: 72 testes aprovados).
+
+---
+
 ## [1.1.1] - 2026-11-01
 
 ### Segurança e Auditoria

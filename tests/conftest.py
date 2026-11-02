@@ -51,6 +51,8 @@ def test_env():
     config.LIBRARY_DIR = test_lib
     config.DATA_DIR = test_data
     config.DB_PATH = test_data / "lectoria.db"
+    config.COVERS_DIR = test_data / "covers"
+    config.COVERS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Cria tabelas no banco de teste
     database.init_db()

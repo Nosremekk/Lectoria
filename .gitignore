@@ -32,7 +32,10 @@ books/*
 # Backups manuais locais (não versionar backups do banco)
 backups/
 
-# IMPORTANTE: Preservar e versionar dados persistentes da aplicação
+# IMPORTANTE: Preservar e versionar dados persistentes da aplicação, exceto cache binário de capas
 !data/
 !data/**
+data/covers/
+data/covers/**
+cache/
 

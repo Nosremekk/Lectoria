@@ -35,17 +35,18 @@ def _extract_pdf_metadata(file_path: Path) -> Dict[str, Any]:
     page_count = 0
 
     try:
-        # pypdf.PdfReader lê em modo streaming sob demanda (apenas XREF e metadados)
-        reader = pypdf.PdfReader(str(file_path), strict=False)
-        page_count = len(reader.pages)
-        if reader.metadata:
-            raw_title = reader.metadata.get("/Title")
-            if raw_title and isinstance(raw_title, str) and raw_title.strip():
-                title = raw_title.strip()
+        # Passa o descritor de arquivo aberto para o pypdf operar via seek sem copiar o PDF inteiro para BytesIO
+        with open(file_path, "rb") as fh:
+            reader = pypdf.PdfReader(fh, strict=False)
+            page_count = len(reader.pages)
+            if reader.metadata:
+                raw_title = reader.metadata.get("/Title")
+                if raw_title and isinstance(raw_title, str) and raw_title.strip():
+                    title = raw_title.strip()
 
-            raw_author = reader.metadata.get("/Author")
-            if raw_author and isinstance(raw_author, str) and raw_author.strip():
-                author = raw_author.strip()
+                raw_author = reader.metadata.get("/Author")
+                if raw_author and isinstance(raw_author, str) and raw_author.strip():
+                    author = raw_author.strip()
     except Exception:
         # Se o PDF tiver metadados corrompidos ou proteção de leitura,
         # não interrompe o scanner.
@@ -110,7 +111,7 @@ def scan_library(source_id: Optional[int] = None) -> Dict[str, int]:
 
             # Mapeia livros existentes desta fonte por rel_path
             cursor.execute(
-                "SELECT id, rel_path, filesize, file_hash, is_missing FROM books WHERE source_id = ?",
+                "SELECT id, rel_path, filesize, file_hash, is_missing, cover_type FROM books WHERE source_id = ?",
                 (src_id,),
             )
             existing_books = {row["rel_path"]: dict(row) for row in cursor.fetchall()}
@@ -164,23 +165,51 @@ def scan_library(source_id: Optional[int] = None) -> Dict[str, int]:
 
                         # Arquivo foi alterado
                         meta = _extract_pdf_metadata(full_path)
-                        cursor.execute(
-                            """
-                            UPDATE books
-                            SET title = ?, author = ?, filename = ?, filesize = ?,
-                                page_count = ?, file_hash = ?, is_missing = 0, updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                            """,
-                            (
-                                meta["title"],
-                                meta["author"],
-                                filename,
-                                current_size,
-                                meta["page_count"],
-                                current_hash,
-                                existing["id"],
-                            ),
-                        )
+                        if existing.get("cover_type") != "custom":
+                            # Invalida cache de capa extraída quando o PDF original foi alterado
+                            if config.COVERS_DIR.exists():
+                                for cov_file in config.COVERS_DIR.glob(f"{existing['id']}_extracted*"):
+                                    try:
+                                        cov_file.unlink()
+                                    except OSError:
+                                        pass
+                            cursor.execute(
+                                """
+                                UPDATE books
+                                SET title = ?, author = ?, filename = ?, filesize = ?,
+                                    page_count = ?, file_hash = ?, is_missing = 0,
+                                    cover_type = 'none', cover_path = NULL, cover_source_hash = NULL,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                                """,
+                                (
+                                    meta["title"],
+                                    meta["author"],
+                                    filename,
+                                    current_size,
+                                    meta["page_count"],
+                                    current_hash,
+                                    existing["id"],
+                                ),
+                            )
+                        else:
+                            cursor.execute(
+                                """
+                                UPDATE books
+                                SET title = ?, author = ?, filename = ?, filesize = ?,
+                                    page_count = ?, file_hash = ?, is_missing = 0, updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                                """,
+                                (
+                                    meta["title"],
+                                    meta["author"],
+                                    filename,
+                                    current_size,
+                                    meta["page_count"],
+                                    current_hash,
+                                    existing["id"],
+                                ),
+                            )
                         stats["updated"] += 1
                     else:
                         # Novo livro encontrado nesta fonte
@@ -250,6 +279,9 @@ def get_books(
                 b.filename,
                 b.filesize,
                 b.page_count,
+                b.cover_type,
+                b.cover_path,
+                b.cover_updated_at,
                 b.created_at,
                 s.name as source_name,
                 p.current_page,
@@ -315,6 +347,13 @@ def get_books(
         rows = cursor.fetchall()
         books = [dict(r) for r in rows]
 
+        for b in books:
+            ctype = b.get("cover_type") or "none"
+            b["cover_type"] = ctype
+            b["has_custom_cover"] = ctype == "custom"
+            ver = b.get("cover_updated_at") or ""
+            b["cover_url"] = f"/api/books/{b['id']}/cover?v={ver}" if ver else f"/api/books/{b['id']}/cover"
+
         # Anexa as coleções de cada livro de maneira eficiente
         if books:
             book_ids = [b["id"] for b in books]
@@ -356,6 +395,9 @@ def get_book(book_id: str, user_id: int = 1) -> Dict[str, Any]:
                 b.filename,
                 b.filesize,
                 b.page_count,
+                b.cover_type,
+                b.cover_path,
+                b.cover_updated_at,
                 b.is_missing,
                 b.created_at,
                 s.name as source_name,
@@ -392,6 +434,11 @@ def get_book(book_id: str, user_id: int = 1) -> Dict[str, Any]:
             (book_id, user_id),
         )
         data["collections"] = [dict(c) for c in cursor.fetchall()]
+        ctype = data.get("cover_type") or "none"
+        data["cover_type"] = ctype
+        data["has_custom_cover"] = ctype == "custom"
+        ver = data.get("cover_updated_at") or ""
+        data["cover_url"] = f"/api/books/{data['id']}/cover?v={ver}" if ver else f"/api/books/{data['id']}/cover"
         return data
 
 

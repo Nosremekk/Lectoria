@@ -6,11 +6,15 @@ O **Lectoria** é um servidor pessoal de leitura focado em documentos PDF, proje
 
 ## 1. Principais Recursos da Versão 1.1
 
-- **Biblioteca Pessoal sem Telemetria e com Múltiplas Fontes**:
-  - Suporte a **múltiplas fontes e diretórios locais configuráveis**, permitindo organizar acervos em diferentes discos ou pastas.
+- **Biblioteca Pessoal Editorial com Múltiplas Fontes**:
+  - **Identidade Visual Editorial Própria**: Paleta inspirada em encadernações e papelaria clássica nos temas Claro (Papel Marfim `#F6F3EC` e Tinta Carvão `#1C1B18` com acento Terracota `#9E3B24`) e Escuro (Obsidiana Quente `#141311` e Pergaminho `#EAE5DC`), usando pilhas tipográficas locais (Serifada Editorial para títulos, Sans-serif para controles e Monoespaçada Tabular para métricas).
+  - Suporte a **múltiplas fontes e diretórios locais configuráveis**, com **Seletor Visual de Diretórios** integrado (navegador visual seguro pelo navegador web para acesso local ou em rede doméstica + integração com seletor nativo do sistema via Zenity/KDialog quando utilizado diretamente na máquina do servidor).
   - Varredura sob demanda (*on-demand scanner*) com extração rápida de metadados (`pypdf`), sem modificação dos arquivos originais.
   - Garantia estrita de preservação: remoção ou desativação de fontes **nunca apaga arquivos físicos do disco**.
-  - Capas editoriais procedurais em CSS/SVG com tipografia adaptativa baseada no título.
+  - **Sistema de Capas em 3 Camadas (`covers_service.py`)**:
+    1. **Extração e Cache da Capa Real do PDF**: Extração automática sob demanda da imagem da primeira página do PDF (`JPEG`/`PNG`) ou cache da miniatura renderizada pelo PDF.js em `data/covers/` (ignorado pelo Git), com invalidação automática se o arquivo PDF mudar.
+    2. **Capas Personalizadas**: Upload manual de capa (`PNG`, `JPEG`, `WebP` até 5 MB) com validação estrita de assinatura binária (*magic bytes*), substituição e restauração da capa automática a qualquer momento.
+    3. **Capa Editorial Substituta Determinística (SVG)**: Geração vetorial determinística baseada em hash SHA-256 do livro quando o PDF não contém imagem de capa identificável.
   - Busca instantânea por título e autor, filtros por estado de leitura e ordenação multicritério.
   - Gestão de Coleções personalizadas com atribuição de livros em lote.
 - **Download Direto de Documentos**:
@@ -151,6 +155,8 @@ Caso seja necessário restaurar os dados a partir de um backup anterior, siga es
   - **Schema V1**: tabelas `users`, `books` e `reading_progress`.
   - **Schema V2**: tabelas `collections` e `collection_books`.
   - **Schema V3**: tabelas `highlights`, `notes` e `page_drawings`.
+  - **Schema V4**: tabelas `library_sources`, `sessions` e isolamento multiusuário (`user_id`, `role`, `password_hash`).
+  - **Schema V5**: metadados de capas em `books` (`cover_type`, `cover_path`, `cover_source_hash`, `cover_updated_at`).
 - **Frontend**: HTML5 semântico, CSS3 enxuto e JavaScript Vanilla (ES6). Zero frameworks pesados (sem React, Vue, Angular ou Node.js).
 - **Leitor PDF**: Baseado em **PDF.js** estático local (`static/vendor/pdfjs/`). A renderização ocorre integralmente no navegador do cliente, sem requisições a CDNs externas e sem telemetria.
 - **Streaming de Arquivos**: Suporte nativo a **HTTP Range Requests (206 Partial Content)**. O servidor serve blocos sob demanda, permitindo abrir documentos grandes sem carregar o arquivo PDF inteiro na memória RAM do servidor.
@@ -166,7 +172,11 @@ Caso seja necessário restaurar os dados a partir de um backup anterior, siga es
 ├── .gitignore                  # Regras do Git (inclui data/ e ignora books/*.pdf e backups/)
 ├── .venv/                      # Ambiente virtual Python
 ├── config.py                   # Configurações centralizadas (diretórios, porta, host)
-├── database.py                 # Conexão SQLite (WAL mode) e migrações V1, V2 e V3
+├── database.py                 # Conexão SQLite (WAL mode) e migrações V1 a V5
+├── auth_service.py             # Autenticação scrypt, sessões SHA-256 e controle de papéis
+├── sources_service.py          # Gestão de múltiplas fontes e validação canônica de caminhos
+├── directory_picker_service.py # Navegador visual de diretórios e seletor nativo local (Zenity/KDialog)
+├── covers_service.py           # Extração de capas de PDF, capas personalizadas e SVG editorial
 ├── collections_service.py      # Serviço de coleções (CRUD e associações de livros)
 ├── annotations_service.py      # Serviço de marcações, anotações e desenhos livres
 ├── export_service.py           # Serviço de exportação (.md, .json) e importação segura
@@ -186,18 +196,18 @@ Caso seja necessário restaurar os dados a partir de um backup anterior, siga es
 │   └── manage_users.py         # Utilitário CLI para gestão de usuários, senhas e papéis
 ├── backups/                    # Armazenamento de backups manuais do banco (ignorado no Git)
 ├── books/                      # Diretório local padrão para arquivos PDF (mantido intacto)
-├── data/                       # Banco de dados persistente versionado (lectoria.db)
+├── data/                       # Banco de dados persistente versionado (lectoria.db) e cache local data/covers/ (ignorado no Git)
 ├── static/                     # Frontend estático
-│   ├── index.html              # Interface da Biblioteca (autenticação, fontes, usuários)
+│   ├── index.html              # Interface da Biblioteca (acervo, capas, seletor de pastas, fontes, usuários)
 │   ├── reader.html             # Interface do Leitor (PDF.js, Estudos, Miniaturas, Download)
 │   ├── css/
-│   │   └── style.css           # Estilos e temas claro/escuro
+│   │   └── style.css           # Design system editorial e temas claro/escuro
 │   ├── js/
-│   │   ├── app.js              # Lógica da biblioteca, autenticação e painéis de administração
-│   │   └── reader.js           # Lógica do leitor e anotações
+│   │   ├── app.js              # Lógica da biblioteca, capas, seletor de diretórios e administração
+│   │   └── reader.js           # Lógica do leitor, cache de miniatura da 1ª página e anotações
 │   └── vendor/
 │       └── pdfjs/              # PDF.js e worker embutidos offline
-└── tests/                      # Suíte de testes automatizados (52 testes)
+└── tests/                      # Suíte de testes automatizados (72 testes)
     ├── conftest.py             # Fixtures e isolamento de ambiente
     ├── test_annotations.py     # Testes de destaques, notas e desenhos vetoriais
     ├── test_collections.py     # Testes de CRUD e associação de coleções
@@ -206,6 +216,8 @@ Caso seja necessário restaurar os dados a partir de um backup anterior, siga es
     ├── test_iteration4.py      # Testes de exportação MD/JSON e backups
     ├── test_iteration5.py      # Testes de limites DoS, concorrência e segurança
     ├── test_iteration6.py      # Testes de downloads, múltiplas fontes, auth e isolamento
+    ├── test_iteration7.py      # Testes de auditoria de segurança, CSRF, IDOR e sessões
+    ├── test_iteration8.py      # Testes de capas de livros e seleção visual de diretórios
     ├── test_library.py         # Testes de catálogo e busca
     ├── test_progress.py        # Testes de progresso de leitura e beacon
     └── test_security.py        # Testes de Range requests, path traversal e integridade
@@ -261,11 +273,12 @@ python3 scripts/manage_users.py --create-admin --username admin --display-name "
 
 O Lectoria permite cadastrar múltiplos diretórios locais no servidor (ex: `/home/vini/Livros_Tecnicos`, `/mnt/storage/ebooks` ou a pasta padrão `books/`).
 
-### 6.1 Adicionando e Gerenciando Fontes
+### 6.1 Adicionando e Gerenciando Fontes (Seletor Visual de Diretórios)
 Pela interface web (acessível no menu **Fontes**, restrito a administradores):
-1. Informe um rótulo amigável (ex: *Literatura Geral*) e o caminho absoluto ou relativo no servidor.
-2. O sistema realiza varredura recursiva sob demanda à procura de arquivos `.pdf`.
-3. É possível ativar, desativar temporariamente ou escanear fontes individualmente.
+1. Clique em **Selecionar pasta…** para abrir o navegador visual de diretórios do servidor (`GET /api/sources/browse`), que exibe atalhos rápidos (Pasta Pessoal, Biblioteca Padrão, `/media`, `/mnt`), subpastas legíveis e a contagem de arquivos `.pdf` em cada pasta — funcionando tanto localmente quanto a partir de qualquer dispositivo da rede doméstica.
+2. Caso esteja acessando o Lectoria diretamente no navegador da própria máquina do servidor com interface gráfica ativa (`DISPLAY`/`WAYLAND_DISPLAY`), o botão **Janela do Sistema** (`POST /api/sources/pick-native`) também estará disponível para abrir o seletor nativo do Linux (`zenity` / `kdialog`). Por segurança, requisições vindas de outros dispositivos na rede jamais podem abrir janelas gráficas no servidor.
+3. Também continua sendo possível digitar ou editar manualmente o caminho no campo de texto antes de clicar em **Adicionar**.
+4. O sistema realiza varredura recursiva sob demanda à procura de arquivos `.pdf`. É possível ativar, desativar temporariamente ou escanear fontes individualmente.
 
 > [!IMPORTANT]
 > **Preservação de Arquivos Físicos**:
@@ -279,9 +292,16 @@ Para proteção total do sistema operacional hospedeiro:
 
 ---
 
-## 7. Download Direto de Documentos PDF
+## 7. Sistema de Capas e Download Direto de Documentos PDF
 
-- **Na Biblioteca**: Cada card de livro (nas visualizações em Grade e em Lista) conta com a ação **Baixar**, iniciando o download direto do arquivo original no dispositivo do usuário.
+### 7.1 Funcionamento do Sistema de Capas (`data/covers/`)
+O Lectoria exibe capas reais para os livros em três níveis de prioridade, sem alterar os arquivos PDF originais:
+1. **Capa Personalizada (`custom`)**: Qualquer volume pode receber uma capa enviada pelo usuário clicando no botão **Capa** sobre o livro (`POST /api/books/{id}/cover`). O servidor valida a assinatura binária real (*magic bytes* de `PNG`, `JPEG` ou `WebP`, até 5 MB) e rejeita arquivos executáveis, HTML ou SVG. Para voltar à capa automática, basta clicar em **Restaurar Capa Automática** (`DELETE /api/books/{id}/cover`).
+2. **Capa Extraída ou Renderizada da 1ª Página (`extracted`)**: Quando o livro não possui capa personalizada, o Lectoria extrai sob demanda a imagem incorporada na primeira página do PDF (ou armazena a miniatura renderizada pelo PDF.js ao abrir o livro) e grava em cache em `data/covers/` (diretório ignorado pelo Git). Se o PDF original for atualizado no disco (`file_hash` alterado), o cache é invalidado e regenerado automaticamente.
+3. **Capa Editorial Substituta Determinística (`fallback`)**: Caso o PDF não possua imagem de capa extraível ainda, o servidor gera uma capa vetorial SVG editorial com paleta clássica, moldura tipográfica e ornamento determinístico calculado a partir do hash SHA-256 do livro.
+
+### 7.2 Download Direto de Documentos PDF
+- **Na Biblioteca**: Cada card de livro (nas visualizações em Grade e em Lista) conta com a ação **PDF**, iniciando o download direto do arquivo original no dispositivo do usuário.
 - **No Leitor**: O cabeçalho superior inclui o botão **Baixar PDF Original** para baixar o arquivo que está sendo lido.
 - **Streaming Seguro**: Os arquivos são servidos via streaming HTTP em chunks com o cabeçalho `Content-Disposition: attachment; filename="..."`, sem carregar o arquivo na memória RAM do Celeron 847.
 
@@ -440,7 +460,7 @@ source .venv/bin/activate
 pytest -v tests/
 ```
 
-Resultado atual: **61 testes aprovados (100% de sucesso)** cobrindo:
+Resultado atual: **72 testes aprovados (100% de sucesso)** cobrindo:
 - Catálogo, scanner e metadados (`test_library.py`).
 - Coleções e associações em lote (`test_collections.py`, `test_iteration2_features.py`).
 - Filtros de estado de leitura, busca e ordenação (`test_filters_and_sorting.py`).
@@ -451,6 +471,7 @@ Resultado atual: **61 testes aprovados (100% de sucesso)** cobrindo:
 - Limites de DoS na importação, validação de profundidade JSON, concorrência de backups e retenção (`test_iteration5.py`).
 - Download de PDFs originais, gerenciamento de fontes, symlinks, scrypt, rate limiting, controle de papéis e isolamento de dados por usuário (`test_iteration6.py`).
 - Hashing de sessões, invalidação de sessões, CSRF Double Submit, Origin check, IDOR em anotações, probing de coleções, proteção de fontes (.venv, .git) e integridade em restauração multiusuário (`test_iteration7.py`).
+- Extração de capas de PDF, cache em disco, invalidação por hash, upload/substituição/remoção de capas personalizadas, bloqueio de uploads maliciosos/acima do limite, fallback SVG editorial, navegador visual de diretórios e seletor nativo local (`test_iteration8.py`).
 
 ---
 

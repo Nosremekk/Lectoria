@@ -35,6 +35,7 @@ from auth_service import (
     update_user,
 )
 from sources_service import (
+    InvalidSourceError,
     SourceError,
     SourceNotFoundError,
     add_library_source,
@@ -42,6 +43,22 @@ from sources_service import (
     get_library_source,
     list_library_sources,
     set_source_active,
+)
+from directory_picker_service import (
+    NativePickerUnavailableError,
+    RemoteNativePickerForbiddenError,
+    browse_server_directories,
+    pick_directory_native,
+)
+from covers_service import (
+    CoverError,
+    CoverTooLargeError,
+    CoverValidationError,
+    delete_custom_cover,
+    extract_uploaded_image_from_request,
+    get_or_create_book_cover,
+    save_custom_cover,
+    save_rendered_cover_cache,
 )
 from library import (
     BookNotFoundError,
@@ -226,6 +243,10 @@ class SourceCreatePayload(BaseModel):
 
 class SourceActivePayload(BaseModel):
     is_active: bool
+
+
+class NativePickerPayload(BaseModel):
+    initial_dir: Optional[str] = None
 
 
 class ProgressPayload(BaseModel):
@@ -533,6 +554,44 @@ async def list_sources_endpoint(request: Request):
     return {"sources": list_library_sources()}
 
 
+@app.get("/api/sources/browse")
+async def browse_sources_directories_endpoint(request: Request, path: Optional[str] = None):
+    """
+    Navegador visual seguro de diretórios do servidor (administrador apenas).
+    Permite explorar pastas autorizadas sem digitar caminhos manualmente.
+    """
+    require_admin(request)
+    forwarded_for = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    client_host = forwarded_for or (request.client.host if request.client else None)
+    try:
+        return browse_server_directories(raw_path=path, client_host=client_host)
+    except InvalidSourceError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/api/sources/pick-native")
+async def pick_native_directory_endpoint(
+    request: Request,
+    payload: Optional[NativePickerPayload] = None,
+):
+    """
+    Aciona o seletor nativo de diretórios do sistema operacional no servidor local.
+    Bloqueado para acessos remotos ou ambientes sem sessão gráfica.
+    """
+    require_admin(request)
+    forwarded_for = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    client_host = forwarded_for or (request.client.host if request.client else None)
+    initial_dir = payload.initial_dir if payload else None
+    try:
+        return pick_directory_native(client_host=client_host, initial_dir=initial_dir)
+    except RemoteNativePickerForbiddenError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except NativePickerUnavailableError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+    except InvalidSourceError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
 @app.post("/api/sources", status_code=status.HTTP_201_CREATED)
 async def add_source_endpoint(payload: SourceCreatePayload, request: Request):
     """Cadastra um novo diretório como fonte de livros."""
@@ -678,6 +737,99 @@ async def download_book_file(book_id: str, request: Request):
         filename=clean_title,
         content_disposition_type="attachment",
     )
+
+
+@app.get("/api/books/{book_id}/cover")
+async def get_book_cover_endpoint(book_id: str, request: Request):
+    """
+    Entrega a capa do livro (capa personalizada, capa extraída em cache ou capa editorial SVG).
+    """
+    require_user(request)
+    try:
+        cover = get_or_create_book_cover(book_id)
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, max-age=3600",
+        "X-Cover-Type": cover["type"],
+    }
+    if cover["file_path"] is not None:
+        return FileResponse(
+            path=cover["file_path"],
+            media_type=cover["media_type"],
+            headers=headers,
+        )
+
+    headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'"
+    return Response(
+        content=cover["content"],
+        media_type=cover["media_type"],
+        headers=headers,
+    )
+
+
+@app.post("/api/books/{book_id}/cover")
+async def upload_custom_book_cover_endpoint(book_id: str, request: Request):
+    """
+    Define ou substitui uma capa personalizada (PNG, JPEG ou WebP) para um livro.
+    """
+    require_user(request)
+    body = await request.body()
+    content_type = request.headers.get("content-type", "")
+    try:
+        image_bytes = extract_uploaded_image_from_request(body, content_type)
+        result = save_custom_cover(book_id, image_bytes)
+        return {"status": "success", **result}
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except CoverTooLargeError as e:
+        raise HTTPException(status_code=413, detail=str(e))
+    except (CoverValidationError, CoverError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.delete("/api/books/{book_id}/cover")
+async def remove_custom_book_cover_endpoint(book_id: str, request: Request):
+    """
+    Remove a capa personalizada de um livro e restaura a capa automática (extraída ou editorial).
+    """
+    require_user(request)
+    try:
+        result = delete_custom_cover(book_id)
+        return {"status": "success", **result}
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@app.post("/api/books/{book_id}/cover/cache")
+async def cache_rendered_book_cover_endpoint(book_id: str, request: Request):
+    """
+    Armazena em cache a miniatura da primeira página renderizada pelo PDF.js no cliente,
+    quando o PDF não possui imagem embutida direta e ainda não tem capa personalizada.
+    """
+    require_user(request)
+    body = await request.body()
+    content_type = request.headers.get("content-type", "")
+    try:
+        image_bytes = extract_uploaded_image_from_request(body, content_type)
+        result = save_rendered_cover_cache(book_id, image_bytes)
+        return {"status": "success", **result}
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except CoverTooLargeError as e:
+        raise HTTPException(status_code=413, detail=str(e))
+    except (CoverValidationError, CoverError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @app.post("/api/scan")

@@ -335,29 +335,40 @@ document.addEventListener("DOMContentLoaded", () => {
         const hasProgress = book.current_page && book.current_page > 1 && !isCompleted;
         const total = book.page_count || book.progress_total_pages || 1;
         const page = book.current_page || 1;
-        const coverBgClass = getCoverGradientClass(book.title);
+        const coverUrl = book.cover_url || `/api/books/${encodeURIComponent(book.id)}/cover`;
 
         const collectionsChipsHtml = (book.collections || []).map(c => `
           <span class="collection-chip">${escapeHtml(c.name)}</span>
         `).join("");
 
         return `
-          <div class="book-card" data-id="${book.id}">
-            <a href="/reader/${book.id}" class="book-cover ${coverBgClass}" title="Ler ${escapeHtml(book.title)}">
-              <div class="book-cover-decor"></div>
-              <div class="book-cover-top">
-                <svg class="book-cover-icon" viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>
+          <article class="book-card" data-id="${book.id}">
+            <div class="book-cover-wrapper">
+              <a href="/reader/${book.id}" class="book-cover" title="Ler ${escapeHtml(book.title)}">
+                <img
+                  class="book-cover-img"
+                  src="${escapeHtml(coverUrl)}"
+                  alt="Capa de ${escapeHtml(book.title)}"
+                  loading="lazy"
+                >
                 <div class="book-cover-badges">
                   ${isCompleted ? '<span class="tag-badge tag-completed">Concluído</span>' : ''}
                   ${hasProgress ? '<span class="tag-badge tag-in-progress">Lendo</span>' : ''}
                 </div>
-              </div>
-
-              <div class="book-cover-center">
-                <svg class="book-cover-motif" viewBox="0 0 24 24"><path d="M21 5c-1.11-.35-2.33-.5-3.5-.5-1.95 0-4.05.4-5.5 1.5-1.45-1.1-3.55-1.5-5.5-1.5S2.45 4.65 1 5.75v14.4c0 .35.26.65.6.65.1 0 .2-.03.3-.08 1.4-1.07 3.5-1.72 5.1-1.72 1.65 0 3.8.65 5.2 1.72.75-.45 1.7-.72 2.8-.72 1.6 0 3.7.65 5.1 1.72.1.05.2.08.3.08.34 0 .6-.3.6-.65V5.75c-.45-.4-1.05-.6-1.7-.75zM19 18c-1.22 0-2.67-.32-3.5-.82V7.12c.83.5 2.28.88 3.5.88V18z"/></svg>
-                <div class="book-cover-title-preview">${escapeHtml(book.title)}</div>
-              </div>
-            </a>
+              </a>
+              <button
+                type="button"
+                class="btn-cover-customize btn-edit-book-cover"
+                data-id="${book.id}"
+                data-title="${escapeHtml(book.title)}"
+                data-cover-url="${escapeHtml(coverUrl)}"
+                data-cover-type="${escapeHtml(book.cover_type || "none")}"
+                title="Alterar ou restaurar capa"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+                <span>Capa</span>
+              </button>
+            </div>
 
             <div class="book-info">
               <a href="/reader/${book.id}" style="text-decoration: none; color: inherit;">
@@ -385,15 +396,15 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
 
             <div class="card-actions-bar">
-              <button class="btn-card-menu btn-edit-book-col" data-id="${book.id}" data-title="${escapeHtml(book.title)}" title="Gerenciar Coleções">
-                Coleções &bull;&bull;&bull;
+              <button type="button" class="btn-card-menu btn-edit-book-col" data-id="${book.id}" data-title="${escapeHtml(book.title)}" title="Gerenciar Coleções">
+                Coleções
               </button>
               <a href="/api/books/${encodeURIComponent(book.id)}/download" class="btn-card-menu btn-download-book" title="Baixar PDF Original">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-                <span>Baixar</span>
+                <span>PDF</span>
               </a>
             </div>
-          </div>
+          </article>
         `;
       }).join("");
     } else {
@@ -403,13 +414,18 @@ document.addEventListener("DOMContentLoaded", () => {
         const hasProgress = book.current_page && book.current_page > 1 && !isCompleted;
         const total = book.page_count || book.progress_total_pages || 1;
         const page = book.current_page || 1;
+        const coverUrl = book.cover_url || `/api/books/${encodeURIComponent(book.id)}/cover`;
 
         const collectionsChipsHtml = (book.collections || []).map(c => `
           <span class="collection-chip">${escapeHtml(c.name)}</span>
         `).join(" ");
 
         return `
-          <div class="list-item">
+          <div class="list-item" data-id="${book.id}">
+            <a href="/reader/${book.id}" class="list-cover-link" title="Ler ${escapeHtml(book.title)}">
+              <img class="list-cover-thumb" src="${escapeHtml(coverUrl)}" alt="Capa de ${escapeHtml(book.title)}" loading="lazy">
+            </a>
+
             <a href="/reader/${book.id}" class="list-info" style="text-decoration: none; color: inherit;">
               <div class="list-title">${escapeHtml(book.title)}</div>
               <div class="list-author">${escapeHtml(book.author || "Autor não informado")}</div>
@@ -431,18 +447,43 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
 
             <div class="list-actions">
+              <button
+                type="button"
+                class="btn btn-icon btn-edit-book-cover"
+                data-id="${book.id}"
+                data-title="${escapeHtml(book.title)}"
+                data-cover-url="${escapeHtml(coverUrl)}"
+                data-cover-type="${escapeHtml(book.cover_type || "none")}"
+                title="Alterar ou restaurar capa"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+              </button>
               <a href="/api/books/${encodeURIComponent(book.id)}/download" class="btn btn-icon btn-download-book" title="Baixar PDF Original">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
               </a>
-              <button class="btn btn-icon btn-edit-book-col" data-id="${book.id}" data-title="${escapeHtml(book.title)}" title="Gerenciar Coleções">
+              <button type="button" class="btn btn-icon btn-edit-book-col" data-id="${book.id}" data-title="${escapeHtml(book.title)}" title="Gerenciar Coleções">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
               </button>
-              <a href="/reader/${book.id}" class="btn btn-primary" style="padding: 0.35rem 0.65rem;">Ler</a>
+              <a href="/reader/${book.id}" class="btn btn-primary" style="padding: 0.35rem 0.7rem;">Ler</a>
             </div>
           </div>
         `;
       }).join("");
     }
+
+    // Vincula botões de personalização de capa
+    document.querySelectorAll(".btn-edit-book-cover").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openBookCoverModal(
+          btn.getAttribute("data-id"),
+          btn.getAttribute("data-title"),
+          btn.getAttribute("data-cover-url"),
+          btn.getAttribute("data-cover-type")
+        );
+      });
+    });
 
     // Vincula botões de atribuição de coleções
     document.querySelectorAll(".btn-edit-book-col").forEach(btn => {
@@ -807,17 +848,17 @@ document.addEventListener("DOMContentLoaded", () => {
         <div class="source-item" data-id="${s.id}">
           <div class="source-item-info">
             <div style="display: flex; align-items: center; gap: 0.4rem;">
-              <strong style="font-size: 0.9rem;">${escapeHtml(s.label || s.path)}</strong>
+              <strong style="font-size: 0.9rem;">${escapeHtml(s.name || s.label || s.path)}</strong>
               <span class="source-badge ${badgeClass}">${statusText}</span>
             </div>
-            <code style="font-size: 0.78rem; color: var(--text-muted);">${escapeHtml(s.path)}</code>
+            <code style="font-size: 0.78rem; color: var(--text-muted); font-family: var(--font-mono);">${escapeHtml(s.path)}</code>
             <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.15rem;">
               ${s.book_count || 0} livros no catálogo &bull; Última varredura: ${s.last_scanned_at ? formatDate(s.last_scanned_at) : "Nunca"}
-              ${s.last_error ? `<span style="color: #ef4444; display: block;">Erro: ${escapeHtml(s.last_error)}</span>` : ""}
+              ${s.last_error ? `<span style="color: var(--danger); display: block;">Erro: ${escapeHtml(s.last_error)}</span>` : ""}
             </div>
           </div>
           <div style="display: flex; gap: 0.35rem; align-items: center;">
-            <button class="btn btn-icon btn-toggle-source" data-id="${s.id}" title="${isActive ? "Desativar Fonte" : "Ativar Fonte"}">
+            <button class="btn btn-icon btn-toggle-source" data-id="${s.id}" data-active="${isActive ? "1" : "0"}" title="${isActive ? "Desativar Fonte" : "Ativar Fonte"}">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                 ${isActive ? '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>' : '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z"/>'}
               </svg>
@@ -825,7 +866,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <button class="btn btn-icon btn-scan-source" data-id="${s.id}" title="Escanear esta fonte agora">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
             </button>
-            <button class="btn btn-icon btn-danger btn-delete-source" data-id="${s.id}" data-label="${escapeHtml(s.label || s.path)}" title="Remover Fonte">
+            <button class="btn btn-icon btn-danger btn-delete-source" data-id="${s.id}" data-label="${escapeHtml(s.name || s.label || s.path)}" title="Remover Fonte">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
             </button>
           </div>
@@ -836,8 +877,13 @@ document.addEventListener("DOMContentLoaded", () => {
     sourcesListEl.querySelectorAll(".btn-toggle-source").forEach(btn => {
       btn.addEventListener("click", async () => {
         const id = btn.getAttribute("data-id");
+        const currentlyActive = btn.getAttribute("data-active") === "1";
         try {
-          const res = await fetch(`/api/sources/${id}/toggle`, { method: "PUT" });
+          const res = await fetch(`/api/sources/${id}/active`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ is_active: !currentlyActive }),
+          });
           if (res.ok) {
             await loadSources();
             loadBooks();
@@ -856,7 +902,7 @@ document.addEventListener("DOMContentLoaded", () => {
           const res = await fetch(`/api/sources/${id}/scan`, { method: "POST" });
           if (res.ok) {
             const data = await res.json();
-            alert(`Varredura concluída!\nNovos livros: ${data.stats.added}\nRemovidos: ${data.stats.removed}\nTotal ativo: ${data.stats.total_active}`);
+            alert(`Varredura concluída!\nNovos livros: ${data.stats.added}\nAtualizados: ${data.stats.updated}\nTotal ativo: ${data.stats.total}`);
             await loadSources();
             loadBooks();
           } else {
@@ -980,7 +1026,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <button class="btn btn-icon btn-user-pass" data-id="${u.id}" data-name="${escapeHtml(u.username)}" title="Redefinir Senha">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>
             </button>
-            <button class="btn btn-icon btn-user-status" data-id="${u.id}" title="${isActive ? "Desativar Conta" : "Ativar Conta"}" ${isSelf ? "disabled" : ""}>
+            <button class="btn btn-icon btn-user-status" data-id="${u.id}" data-active="${isActive ? "1" : "0"}" title="${isActive ? "Desativar Conta" : "Ativar Conta"}" ${isSelf ? "disabled" : ""}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                 ${isActive ? '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>' : '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z"/>'}
               </svg>
@@ -996,7 +1042,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const currentRole = btn.getAttribute("data-role");
         const newRole = currentRole === "admin" ? "reader" : "admin";
         try {
-          const res = await fetch(`/api/users/${id}/role`, {
+          const res = await fetch(`/api/users/${id}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ role: newRole }),
@@ -1019,7 +1065,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const newPassword = prompt(`Digite a nova senha para o usuário @${name}:`);
         if (newPassword && newPassword.trim()) {
           try {
-            const res = await fetch(`/api/users/${id}/password`, {
+            const res = await fetch(`/api/users/${id}`, {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ new_password: newPassword.trim() }),
@@ -1039,8 +1085,13 @@ document.addEventListener("DOMContentLoaded", () => {
     usersListEl.querySelectorAll(".btn-user-status").forEach(btn => {
       btn.addEventListener("click", async () => {
         const id = btn.getAttribute("data-id");
+        const currentlyActive = btn.getAttribute("data-active") === "1";
         try {
-          const res = await fetch(`/api/users/${id}/status`, { method: "PUT" });
+          const res = await fetch(`/api/users/${id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ is_active: !currentlyActive }),
+          });
           if (res.ok) await loadUsers();
           else {
             const err = await res.json();
@@ -1096,14 +1147,334 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // --- Seletor Visual de Diretórios (Admin) ---
+  const btnOpenDirPicker = document.getElementById("btn-open-dir-picker");
+  const modalDirPicker = document.getElementById("modal-dir-picker");
+  const btnCloseDirPicker = document.getElementById("btn-close-dir-picker");
+  const btnCancelDirPicker = document.getElementById("btn-cancel-dir-picker");
+  const btnConfirmDirPicker = document.getElementById("btn-confirm-dir-picker");
+  const btnDirUp = document.getElementById("btn-dir-up");
+  const btnNativeDirPicker = document.getElementById("btn-native-dir-picker");
+  const dirPickerRootsEl = document.getElementById("dir-picker-roots");
+  const dirPickerCurrentPathEl = document.getElementById("dir-picker-current-path");
+  const dirPickerPdfCountEl = document.getElementById("dir-picker-pdf-count");
+  const dirPickerErrorEl = document.getElementById("dir-picker-error");
+  const dirPickerListEl = document.getElementById("dir-picker-list");
+  const dirPickerStatusHint = document.getElementById("dir-picker-status-hint");
+
+  let currentBrowsedPath = "";
+  let currentBrowsedParent = null;
+  let currentBrowsedName = "";
+
+  async function browseServerDirectory(targetPath = "") {
+    if (!modalDirPicker) return;
+    dirPickerErrorEl.style.display = "none";
+    dirPickerErrorEl.textContent = "";
+
+    const url = targetPath
+      ? `/api/sources/browse?path=${encodeURIComponent(targetPath)}`
+      : "/api/sources/browse";
+
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Não foi possível abrir o diretório.");
+      }
+
+      currentBrowsedPath = data.current_path || "";
+      currentBrowsedParent = data.parent_path || null;
+      currentBrowsedName = data.current_name || "";
+
+      dirPickerCurrentPathEl.textContent = currentBrowsedPath;
+      const pdfCount = data.current_pdf_count || 0;
+      dirPickerPdfCountEl.textContent = `${pdfCount} ${pdfCount === 1 ? "PDF" : "PDFs"}`;
+      btnDirUp.disabled = !currentBrowsedParent;
+      btnConfirmDirPicker.disabled = !data.can_select_current;
+
+      if (!data.can_select_current && data.current_error) {
+        dirPickerStatusHint.textContent = data.current_error;
+        dirPickerStatusHint.style.color = "var(--warning)";
+      } else {
+        dirPickerStatusHint.textContent = "Clique em uma subpasta para abrir ou selecione a pasta atual.";
+        dirPickerStatusHint.style.color = "var(--text-muted)";
+      }
+
+      // Botão de janela nativa do sistema (Zenity/KDialog) quando disponível localmente
+      if (data.native_picker && data.native_picker.available) {
+        btnNativeDirPicker.style.display = "inline-flex";
+      } else {
+        btnNativeDirPicker.style.display = "none";
+      }
+
+      // Renderiza atalhos de raízes
+      const roots = data.roots || [];
+      dirPickerRootsEl.innerHTML = roots.map(r => `
+        <button type="button" class="dir-root-chip" data-path="${escapeHtml(r.path)}">
+          ${escapeHtml(r.label)}
+        </button>
+      `).join("");
+
+      dirPickerRootsEl.querySelectorAll(".dir-root-chip").forEach(chip => {
+        chip.addEventListener("click", () => {
+          browseServerDirectory(chip.getAttribute("data-path"));
+        });
+      });
+
+      // Renderiza subpastas
+      const dirs = data.directories || [];
+      if (dirs.length === 0) {
+        dirPickerListEl.innerHTML = `
+          <div style="padding: 2rem 1rem; text-align: center; color: var(--text-faint); font-size: 0.84rem;">
+            Nenhuma subpasta disponível neste diretório.
+          </div>
+        `;
+      } else {
+        dirPickerListEl.innerHTML = dirs.map(d => {
+          const isDisabled = !d.readable || d.is_symlink;
+          const subPdfs = d.pdf_count || 0;
+          return `
+            <button
+              type="button"
+              class="dir-entry-row ${isDisabled ? "disabled" : ""}"
+              data-path="${escapeHtml(d.path)}"
+              ${isDisabled ? "disabled" : ""}
+              title="${escapeHtml(d.reason || d.path)}"
+            >
+              <div class="dir-entry-main">
+                <svg class="dir-entry-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+                </svg>
+                <span class="dir-entry-name">${escapeHtml(d.name)}</span>
+              </div>
+              <div class="dir-entry-meta">
+                ${subPdfs > 0 ? `<span class="dir-pdf-badge">${subPdfs} PDF${subPdfs > 1 ? "s" : ""}</span>` : ""}
+                ${d.reason && isDisabled ? `<span style="color: var(--danger);">${escapeHtml(d.reason)}</span>` : ""}
+              </div>
+            </button>
+          `;
+        }).join("");
+
+        dirPickerListEl.querySelectorAll(".dir-entry-row:not(.disabled)").forEach(row => {
+          row.addEventListener("click", () => {
+            browseServerDirectory(row.getAttribute("data-path"));
+          });
+        });
+      }
+    } catch (err) {
+      dirPickerErrorEl.textContent = err.message;
+      dirPickerErrorEl.style.display = "block";
+    }
+  }
+
+  if (btnOpenDirPicker) {
+    btnOpenDirPicker.addEventListener("click", async () => {
+      modalDirPicker.classList.add("active");
+      const initialPath = newSourcePathInput.value.trim();
+      await browseServerDirectory(initialPath);
+    });
+  }
+
+  if (btnDirUp) {
+    btnDirUp.addEventListener("click", () => {
+      if (currentBrowsedParent) {
+        browseServerDirectory(currentBrowsedParent);
+      }
+    });
+  }
+
+  if (btnConfirmDirPicker) {
+    btnConfirmDirPicker.addEventListener("click", () => {
+      if (!currentBrowsedPath) return;
+      newSourcePathInput.value = currentBrowsedPath;
+      if (!newSourceLabelInput.value.trim() && currentBrowsedName) {
+        newSourceLabelInput.value = currentBrowsedName;
+      }
+      sourceErrorEl.style.display = "none";
+      modalDirPicker.classList.remove("active");
+    });
+  }
+
+  if (btnNativeDirPicker) {
+    btnNativeDirPicker.addEventListener("click", async () => {
+      btnNativeDirPicker.disabled = true;
+      dirPickerErrorEl.style.display = "none";
+      try {
+        const res = await fetch("/api/sources/pick-native", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initial_dir: currentBrowsedPath || null }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || "Não foi possível abrir o seletor do sistema.");
+        }
+        if (data.status === "selected" && data.path) {
+          newSourcePathInput.value = data.path;
+          if (!newSourceLabelInput.value.trim() && data.name_suggestion) {
+            newSourceLabelInput.value = data.name_suggestion;
+          }
+          sourceErrorEl.style.display = "none";
+          modalDirPicker.classList.remove("active");
+        }
+      } catch (err) {
+        dirPickerErrorEl.textContent = err.message;
+        dirPickerErrorEl.style.display = "block";
+      } finally {
+        btnNativeDirPicker.disabled = false;
+      }
+    });
+  }
+
+  if (btnCloseDirPicker) btnCloseDirPicker.addEventListener("click", () => modalDirPicker.classList.remove("active"));
+  if (btnCancelDirPicker) btnCancelDirPicker.addEventListener("click", () => modalDirPicker.classList.remove("active"));
+
+  // --- Modal de Personalização de Capa do Livro ---
+  const modalBookCover = document.getElementById("modal-book-cover");
+  const btnCloseCoverModal = document.getElementById("btn-close-cover-modal");
+  const btnDoneCoverModal = document.getElementById("btn-done-cover-modal");
+  const coverModalPreviewImg = document.getElementById("cover-modal-preview-img");
+  const coverModalBookTitle = document.getElementById("cover-modal-book-title");
+  const coverModalTypeBadge = document.getElementById("cover-modal-type-badge");
+  const coverDropzone = document.getElementById("cover-dropzone");
+  const coverFileInput = document.getElementById("cover-file-input");
+  const btnRemoveCustomCover = document.getElementById("btn-remove-custom-cover");
+  const coverModalError = document.getElementById("cover-modal-error");
+
+  let selectedBookForCover = null;
+
+  function updateCoverTypeBadge(coverType) {
+    if (!coverModalTypeBadge) return;
+    if (coverType === "custom") {
+      coverModalTypeBadge.textContent = "Capa Personalizada";
+      coverModalTypeBadge.className = "source-badge source-badge-active";
+      if (btnRemoveCustomCover) btnRemoveCustomCover.style.display = "inline-flex";
+    } else if (coverType === "extracted") {
+      coverModalTypeBadge.textContent = "Extraída do PDF";
+      coverModalTypeBadge.className = "source-badge source-badge-inactive";
+      if (btnRemoveCustomCover) btnRemoveCustomCover.style.display = "none";
+    } else {
+      coverModalTypeBadge.textContent = "Capa Editorial Automática";
+      coverModalTypeBadge.className = "source-badge source-badge-inactive";
+      if (btnRemoveCustomCover) btnRemoveCustomCover.style.display = "none";
+    }
+  }
+
+  function openBookCoverModal(bookId, bookTitle, coverUrl, coverType) {
+    if (!modalBookCover) return;
+    selectedBookForCover = bookId;
+    coverModalBookTitle.textContent = bookTitle;
+    coverModalPreviewImg.src = coverUrl;
+    coverModalError.style.display = "none";
+    coverModalError.textContent = "";
+    updateCoverTypeBadge(coverType);
+    modalBookCover.classList.add("active");
+  }
+
+  async function uploadCustomCoverFile(file) {
+    if (!selectedBookForCover || !file) return;
+    coverModalError.style.display = "none";
+    coverModalError.textContent = "";
+
+    if (file.size > 5 * 1024 * 1024) {
+      coverModalError.textContent = "A imagem excede o tamanho máximo permitido de 5 MB.";
+      coverModalError.style.display = "block";
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`/api/books/${encodeURIComponent(selectedBookForCover)}/cover`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Falha ao enviar capa personalizada.");
+      }
+
+      const newUrl = data.cover_url || `/api/books/${encodeURIComponent(selectedBookForCover)}/cover?v=${Date.now()}`;
+      coverModalPreviewImg.src = newUrl;
+      updateCoverTypeBadge("custom");
+      loadBooks();
+    } catch (err) {
+      coverModalError.textContent = err.message;
+      coverModalError.style.display = "block";
+    } finally {
+      if (coverFileInput) coverFileInput.value = "";
+    }
+  }
+
+  if (coverDropzone && coverFileInput) {
+    coverDropzone.addEventListener("click", () => coverFileInput.click());
+    coverDropzone.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        coverFileInput.click();
+      }
+    });
+    coverFileInput.addEventListener("change", () => {
+      if (coverFileInput.files && coverFileInput.files[0]) {
+        uploadCustomCoverFile(coverFileInput.files[0]);
+      }
+    });
+    coverDropzone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      coverDropzone.classList.add("dragover");
+    });
+    coverDropzone.addEventListener("dragleave", () => {
+      coverDropzone.classList.remove("dragover");
+    });
+    coverDropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      coverDropzone.classList.remove("dragover");
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+        uploadCustomCoverFile(e.dataTransfer.files[0]);
+      }
+    });
+  }
+
+  if (btnRemoveCustomCover) {
+    btnRemoveCustomCover.addEventListener("click", async () => {
+      if (!selectedBookForCover) return;
+      coverModalError.style.display = "none";
+      try {
+        const res = await fetch(`/api/books/${encodeURIComponent(selectedBookForCover)}/cover`, {
+          method: "DELETE",
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || "Erro ao remover capa personalizada.");
+        }
+        const newUrl = data.cover_url || `/api/books/${encodeURIComponent(selectedBookForCover)}/cover?v=${Date.now()}`;
+        coverModalPreviewImg.src = newUrl;
+        updateCoverTypeBadge(data.cover_type || "none");
+        loadBooks();
+      } catch (err) {
+        coverModalError.textContent = err.message;
+        coverModalError.style.display = "block";
+      }
+    });
+  }
+
+  if (btnCloseCoverModal) btnCloseCoverModal.addEventListener("click", () => modalBookCover.classList.remove("active"));
+  if (btnDoneCoverModal) btnDoneCoverModal.addEventListener("click", () => modalBookCover.classList.remove("active"));
+
   // Fecha modais com tecla ESC
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       modalCollections.classList.remove("active");
       modalBookCol.classList.remove("active");
       if (!isSetupRequired) modalAuth.classList.remove("active");
+      if (modalDirPicker && modalDirPicker.classList.contains("active")) {
+        modalDirPicker.classList.remove("active");
+        return;
+      }
       modalSources.classList.remove("active");
       modalUsers.classList.remove("active");
+      if (modalBookCover) modalBookCover.classList.remove("active");
     }
   });
 

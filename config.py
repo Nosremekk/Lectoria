@@ -26,6 +26,11 @@ DATA_DIR = Path(
 # Caminho do banco SQLite
 DB_PATH = DATA_DIR / "lectoria.db"
 
+# Diretório para cache de capas extraídas e capas personalizadas
+COVERS_DIR = Path(
+    os.getenv("LECTORIA_COVERS_DIR", DATA_DIR / "covers")
+).resolve()
+
 # Diretório para backups manuais do banco de dados (ignorado pelo Git)
 BACKUPS_DIR = Path(
     os.getenv("LECTORIA_BACKUPS_DIR", BASE_DIR / "backups")
@@ -39,5 +44,6 @@ PORT = int(os.getenv("LECTORIA_PORT", "8765"))
 # Garante a existência dos diretórios locais essenciais
 LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+COVERS_DIR.mkdir(parents=True, exist_ok=True)
 BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
 

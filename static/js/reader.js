@@ -1823,6 +1823,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     bookTitleEl.textContent = bookData.title;
     document.title = `${bookData.title} — Lectoria`;
 
+    const bookCoverMini = document.getElementById("reader-book-cover");
+    if (bookCoverMini) {
+      bookCoverMini.src = bookData.cover_url || `/api/books/${encodeURIComponent(bookId)}/cover`;
+      bookCoverMini.style.display = "block";
+    }
+
     const progRes = await fetch(`/api/books/${bookId}/progress`);
     let initialPage = 1;
     if (progRes.ok) {
@@ -1848,6 +1854,50 @@ document.addEventListener("DOMContentLoaded", async () => {
     const firstVp = firstPage.getViewport({ scale: 1.0 });
     basePageWidth = firstVp.width;
     basePageHeight = firstVp.height;
+
+    // Se o livro ainda não possui capa extraída ou personalizada, gera miniatura leve da 1ª página em segundo plano
+    if (!bookData.cover_type || bookData.cover_type === "none" || bookData.cover_type === "fallback") {
+      setTimeout(async () => {
+        try {
+          const thumbScale = Math.min(340 / firstVp.width, 1.0);
+          const thumbVp = firstPage.getViewport({ scale: thumbScale });
+          const offCanvas = document.createElement("canvas");
+          offCanvas.width = Math.max(1, Math.floor(thumbVp.width));
+          offCanvas.height = Math.max(1, Math.floor(thumbVp.height));
+          const offCtx = offCanvas.getContext("2d");
+          offCtx.fillStyle = "#ffffff";
+          offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
+          await firstPage.render({ canvasContext: offCtx, viewport: thumbVp }).promise;
+
+          // Verifica se a página renderizada não está completamente em branco
+          const imgData = offCtx.getImageData(0, 0, offCanvas.width, offCanvas.height).data;
+          let nonWhitePixels = 0;
+          for (let i = 0; i < imgData.length; i += 16) {
+            if (imgData[i] < 245 || imgData[i + 1] < 245 || imgData[i + 2] < 245) {
+              nonWhitePixels++;
+              if (nonWhitePixels > 25) break;
+            }
+          }
+
+          if (nonWhitePixels > 25) {
+            offCanvas.toBlob(async (blob) => {
+              if (!blob) return;
+              const formData = new FormData();
+              formData.append("file", blob, "cover.jpg");
+              const cacheRes = await fetch(`/api/books/${encodeURIComponent(bookId)}/cover/cache`, {
+                method: "POST",
+                body: formData,
+              });
+              if (cacheRes.ok && bookCoverMini) {
+                bookCoverMini.src = `/api/books/${encodeURIComponent(bookId)}/cover?v=${Date.now()}`;
+              }
+            }, "image/jpeg", 0.85);
+          }
+        } catch (e) {
+          // Falha silenciosa: mantém a capa editorial substituta
+        }
+      }, 600);
+    }
 
     await reloadBookAnnotations();
 

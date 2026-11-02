@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Generator, Optional
 import config
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -74,6 +74,10 @@ def init_db(db_path: Optional[Path] = None) -> None:
         if current_version < 4:
             _apply_migration_v4(cursor)
             cursor.execute("INSERT INTO schema_migrations (version) VALUES (4);")
+
+        if current_version < 5:
+            _apply_migration_v5(cursor)
+            cursor.execute("INSERT INTO schema_migrations (version) VALUES (5);")
 
 
 def _apply_migration_v1(cursor: sqlite3.Cursor) -> None:
@@ -405,6 +409,25 @@ def _apply_migration_v4(cursor: sqlite3.Cursor) -> None:
         cursor.execute("DROP TABLE page_drawings;")
         cursor.execute("ALTER TABLE page_drawings_v4 RENAME TO page_drawings;")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_drawings_book_page_user ON page_drawings(book_id, page, user_id);")
+
+
+def _apply_migration_v5(cursor: sqlite3.Cursor) -> None:
+    """
+    Schema V5:
+    - Suporte a capas reais (extraídas do PDF), capas personalizadas e cache inteligente na tabela books.
+    """
+    cursor.execute("PRAGMA table_info(books);")
+    book_cols = [r["name"] for r in cursor.fetchall()]
+
+    if "cover_type" not in book_cols:
+        cursor.execute("ALTER TABLE books ADD COLUMN cover_type TEXT NOT NULL DEFAULT 'none';")
+    if "cover_path" not in book_cols:
+        cursor.execute("ALTER TABLE books ADD COLUMN cover_path TEXT;")
+    if "cover_source_hash" not in book_cols:
+        cursor.execute("ALTER TABLE books ADD COLUMN cover_source_hash TEXT;")
+    if "cover_updated_at" not in book_cols:
+        cursor.execute("ALTER TABLE books ADD COLUMN cover_updated_at TIMESTAMP;")
+
 
 
 

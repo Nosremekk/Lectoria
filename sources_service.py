@@ -54,7 +54,15 @@ def validate_and_canonicalize_path(raw_path: str) -> Path:
         raise InvalidSourceError("O caminho do diretório não pode ser vazio.")
 
     clean_str = raw_path.strip()
+    if "\x00" in clean_str:
+        raise InvalidSourceError("O caminho contém caracteres nulos inválidos.")
+
     target_path = Path(clean_str).expanduser()
+    if ".." in target_path.parts:
+        raise InvalidSourceError("Tentativa de travessia de diretório ('..') bloqueada por segurança.")
+
+    if target_path.is_symlink():
+        raise InvalidSourceError("Links simbólicos não podem ser cadastrados como fontes de biblioteca.")
 
     try:
         resolved = target_path.resolve()
@@ -77,19 +85,23 @@ def validate_and_canonicalize_path(raw_path: str) -> Path:
         if resolved == forbidden or forbidden in resolved.parents:
             raise InvalidSourceError(f"Acesso negado: '{resolved}' é um diretório reservado do sistema operacional.")
 
-    # 2. Bloqueio de diretórios internos da aplicação (dados, backups, .venv, .git e raiz do código-fonte)
+    # 2. Bloqueio de diretórios internos da aplicação (dados, backups, covers, .venv, .git e raiz do código-fonte)
     data_dir = config.DATA_DIR.resolve()
     backups_dir = config.BACKUPS_DIR.resolve()
+    covers_dir = config.COVERS_DIR.resolve()
     base_dir = config.BASE_DIR.resolve()
     venv_dir = (base_dir / ".venv").resolve()
     git_dir = (base_dir / ".git").resolve()
 
-    # O diretório padrão de livros books/ é permitido, mas a raiz da aplicação base_dir, data_dir, backups_dir, .venv e .git são proibidos
+    # O diretório padrão de livros books/ é permitido, mas a raiz da aplicação base_dir, data_dir, backups_dir, covers_dir, .venv e .git são proibidos
     if resolved == base_dir:
         raise InvalidSourceError("A raiz do projeto Lectoria não pode ser cadastrada como fonte de biblioteca.")
 
     if resolved == data_dir or data_dir in resolved.parents:
         raise InvalidSourceError("O diretório de banco de dados e dados internos da aplicação não pode ser uma fonte.")
+
+    if resolved == covers_dir or covers_dir in resolved.parents:
+        raise InvalidSourceError("O diretório de cache de capas da aplicação não pode ser cadastrado como fonte.")
 
     if resolved == backups_dir or backups_dir in resolved.parents:
         raise InvalidSourceError("O diretório de backups da aplicação não pode ser cadastrado como fonte de biblioteca.")
@@ -229,6 +241,17 @@ def delete_library_source(source_id: int) -> bool:
         row = cursor.fetchone()
         if not row:
             raise SourceNotFoundError(f"Fonte #{source_id} não encontrada.")
+
+        # Remove arquivos de cache de capas associados aos livros desta fonte
+        cursor.execute("SELECT id FROM books WHERE source_id = ?", (source_id,))
+        book_ids = [r["id"] for r in cursor.fetchall()]
+        if book_ids and config.COVERS_DIR.exists():
+            for bid in book_ids:
+                for cov_file in config.COVERS_DIR.glob(f"{bid}_*"):
+                    try:
+                        cov_file.unlink()
+                    except OSError:
+                        pass
 
         # Remove os livros associados a essa fonte do catálogo (arquivos físicos permanecem intactos)
         cursor.execute("DELETE FROM books WHERE source_id = ?", (source_id,))
