@@ -169,10 +169,11 @@ Caso seja necessário restaurar os dados a partir de um backup anterior, siga es
 
 ```text
 /home/vini/Jellyfin livros/
-├── .gitignore                  # Regras do Git (inclui data/ e ignora books/*.pdf e backups/)
+├── .gitignore                  # Regras do Git (inclui data/ e .env.example; ignora .env, books/*.pdf e backups/)
+├── .env.example                # Modelo documentado de variáveis de ambiente para deploy
 ├── .venv/                      # Ambiente virtual Python
-├── config.py                   # Configurações centralizadas (diretórios, porta, host)
-├── database.py                 # Conexão SQLite (WAL mode) e migrações V1 a V5
+├── config.py                   # Configurações centralizadas com carregamento nativo de .env
+├── database.py                 # Conexão SQLite (WAL mode), migrações seguras V1..V5 e reconciliação de caminhos
 ├── auth_service.py             # Autenticação scrypt, sessões SHA-256 e controle de papéis
 ├── sources_service.py          # Gestão de múltiplas fontes e validação canônica de caminhos
 ├── directory_picker_service.py # Navegador visual de diretórios e seletor nativo local (Zenity/KDialog)
@@ -180,7 +181,7 @@ Caso seja necessário restaurar os dados a partir de um backup anterior, siga es
 ├── collections_service.py      # Serviço de coleções (CRUD e associações de livros)
 ├── annotations_service.py      # Serviço de marcações, anotações e desenhos livres
 ├── export_service.py           # Serviço de exportação (.md, .json) e importação segura
-├── backup_service.py           # Serviço de backup SQLite com Lock e integridade
+├── backup_service.py           # Serviço de backup SQLite + capas personalizadas com Lock e integridade
 ├── library.py                  # Scanner leve (pypdf), filtros, busca, ordenação e segurança
 ├── progress.py                 # Persistência e restauração do progresso de leitura
 ├── main.py                     # API FastAPI, rotas estáticas e streaming com Range
@@ -188,13 +189,21 @@ Caso seja necessário restaurar os dados a partir de um backup anterior, siga es
 ├── requirements.txt            # Dependências Python mínimas fixadas
 ├── CHANGELOG.md                # Histórico de alterações e versões
 ├── README.md                   # Documentação completa do projeto
-├── deployment/                 # Arquivos de implantação em produção
-│   ├── lectoria.service        # Unidade systemd com sandboxing e limites cgroup
-│   └── README.md               # Guia de implantação systemd
+├── deployment/                 # Scripts de implantação, manutenção e serviço systemd
+│   ├── install.sh              # Instalação idempotente para Linux Mint XFCE / Ubuntu / Debian
+│   ├── configure.sh            # Configuração interativa ou via flags de .env e lectoria.service
+│   ├── update.sh               # Atualização segura com backup prévio obrigatório e migração de schema
+│   ├── backup.sh               # Atalho para backup consistente (SQLite + capas personalizadas)
+│   ├── restore.sh              # Atalho para restauração segura de backup e capas
+│   ├── uninstall.sh            # Desinstalação do serviço preservando todos os dados do usuário
+│   ├── diagnose.sh             # Atalho para diagnóstico completo do ambiente e desempenho
+│   ├── lectoria.service        # Unidade systemd com sandboxing e limites cgroup (512 MB RAM)
+│   └── README.md               # Guia operacional de implantação systemd
 ├── scripts/
 │   ├── backup.py               # Utilitário CLI para backup, restauração e retenção
+│   ├── diagnose.py             # Utilitário CLI de diagnóstico de ambiente, SQLite WAL e latência/RAM
 │   └── manage_users.py         # Utilitário CLI para gestão de usuários, senhas e papéis
-├── backups/                    # Armazenamento de backups manuais do banco (ignorado no Git)
+├── backups/                    # Armazenamento de backups do banco e capas customizadas (ignorado no Git)
 ├── books/                      # Diretório local padrão para arquivos PDF (mantido intacto)
 ├── data/                       # Banco de dados persistente versionado (lectoria.db) e cache local data/covers/ (ignorado no Git)
 ├── static/                     # Frontend estático
@@ -207,7 +216,7 @@ Caso seja necessário restaurar os dados a partir de um backup anterior, siga es
 │   │   └── reader.js           # Lógica do leitor, cache de miniatura da 1ª página e anotações
 │   └── vendor/
 │       └── pdfjs/              # PDF.js e worker embutidos offline
-└── tests/                      # Suíte de testes automatizados (72 testes)
+└── tests/                      # Suíte de testes automatizados (77 testes)
     ├── conftest.py             # Fixtures e isolamento de ambiente
     ├── test_annotations.py     # Testes de destaques, notas e desenhos vetoriais
     ├── test_collections.py     # Testes de CRUD e associação de coleções
@@ -218,6 +227,7 @@ Caso seja necessário restaurar os dados a partir de um backup anterior, siga es
     ├── test_iteration6.py      # Testes de downloads, múltiplas fontes, auth e isolamento
     ├── test_iteration7.py      # Testes de auditoria de segurança, CSRF, IDOR e sessões
     ├── test_iteration8.py      # Testes de capas de livros e seleção visual de diretórios
+    ├── test_iteration9.py      # Testes de portabilidade (.env), migração segura e scripts de deploy
     ├── test_library.py         # Testes de catálogo e busca
     ├── test_progress.py        # Testes de progresso de leitura e beacon
     └── test_security.py        # Testes de Range requests, path traversal e integridade
@@ -330,35 +340,151 @@ O servidor iniciará escutando em `http://0.0.0.0:8765`.
 
 ---
 
-## 9. Implantação em Produção com systemd (Linux Mint / Debian)
+## 9. Deploy no Positivo C1260 — Linux Mint XFCE
 
-Para garantir que o Lectoria inicialize automaticamente junto com o computador e se recupere caso ocorra qualquer imprevisto, configure o serviço systemd:
+Esta seção descreve o procedimento completo de instalação, configuração, operação e homologação no servidor doméstico **Positivo C1260** (Intel Celeron 847 1.5 GHz, 8 GB DDR3L, SSD, Linux Mint XFCE com Jellyfin em execução).
 
-1. **Copiar o arquivo de serviço para o diretório do systemd**:
+### 9.1 Pré-requisitos do Linux Mint
+Abra o terminal no Linux Mint XFCE e garanta que os pacotes básicos do sistema estejam instalados:
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip sqlite3 zenity git
+```
+
+### 9.2 Instalação (`./deployment/install.sh`)
+Copie ou clone a pasta do projeto para o Positivo C1260 (por exemplo, `/home/seu_usuario/lectoria`) e execute o instalador idempotente **com o seu usuário comum** (não use `sudo` nesta etapa):
+
+```bash
+cd /caminho/para/lectoria
+./deployment/install.sh
+```
+
+O script `install.sh` executa automaticamente:
+1. Verificação do Python 3, `venv`, `sqlite3` e `zenity`.
+2. Criação (ou recriação automática, caso a pasta `.venv` tenha vindo de outra máquina) do ambiente virtual isolado `.venv/`.
+3. Instalação das dependências fixadas em `requirements.txt` (`FastAPI`, `Uvicorn`, `pypdf`).
+4. Geração do arquivo `.env` e ajuste automático dos caminhos e do usuário no arquivo `deployment/lectoria.service`.
+5. Inicialização/migração segura do banco `data/lectoria.db` (Schema V5), reconciliação automática do caminho da `Biblioteca Principal` (`id=1`) para a nova máquina e verificação `PRAGMA integrity_check`.
+
+### 9.3 Configuração (`./deployment/configure.sh`)
+Para personalizar a porta HTTP, endereço de escuta ou caminhos de diretórios de forma interativa:
+
+```bash
+./deployment/configure.sh
+```
+
+Ou de forma não interativa via linha de comando:
+
+```bash
+./deployment/configure.sh --non-interactive \
+  --port 8765 \
+  --host 0.0.0.0 \
+  --library-dir "/home/seu_usuario/Livros"
+```
+
+Todas as configurações ficam centralizadas no arquivo `.env` (baseado em `.env.example`) e são refletidas automaticamente em `deployment/lectoria.service`.
+
+### 9.4 Diretórios Persistentes
+Os dados do usuário são estritamente desacoplados do código e nunca são sobrescritos em atualizações:
+- **`books/`** (ou `LECTORIA_LIBRARY_DIR`): Diretório padrão de arquivos PDF originais (somente leitura pela aplicação).
+- **`data/lectoria.db`**: Banco de dados SQLite em modo WAL com livros, usuários, sessões, coleções, progresso, destaques, notas e desenhos.
+- **`data/covers/`**: Cache de capas extraídas dos PDFs e capas personalizadas (`*_custom.*`).
+- **`backups/`**: Cópias de segurança consistentes do banco SQLite e das capas personalizadas.
+
+### 9.5 Inicialização Automática (`systemd`)
+Após executar `./deployment/install.sh`, instale e ative o serviço para iniciar automaticamente no boot do Linux Mint:
+
+```bash
+sudo cp deployment/lectoria.service /etc/systemd/system/lectoria.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now lectoria.service
+```
+
+Comandos úteis de gerenciamento do serviço:
+```bash
+# Verificar status e consumo de memória/CPU no cgroup
+sudo systemctl status lectoria.service
+
+# Acompanhar logs em tempo real
+sudo journalctl -u lectoria.service -f
+
+# Reiniciar ou parar o serviço
+sudo systemctl restart lectoria.service
+sudo systemctl stop lectoria.service
+```
+
+### 9.6 Atualização (`./deployment/update.sh`)
+Para atualizar o código do Lectoria no Positivo C1260 preservando integralmente o banco de dados, usuários, anotações, capas e coleções:
+
+```bash
+./deployment/update.sh
+sudo systemctl restart lectoria.service
+```
+*(Caso tenha atualizado os arquivos via cópia local/rsync sem Git remoto, utilize `./deployment/update.sh --skip-git`).*
+
+### 9.7 Backup (`./deployment/backup.sh`)
+Cria um backup online consistente do SQLite (`data/lectoria.db`) junto com todas as capas personalizadas (`data/covers/*_custom.*`) em `backups/`:
+
+```bash
+./deployment/backup.sh
+```
+
+Para listar os backups existentes ou limpar backups antigos mantendo os `N` mais recentes:
+```bash
+./deployment/backup.sh --list
+./deployment/backup.sh --prune 5
+```
+
+### 9.8 Restauração (`./deployment/restore.sh`)
+Para restaurar um backup anterior com validação prévia de integridade, cópia de salvaguarda (`data/lectoria_pre_restore.db.bak`), atualização automática de schema e recuperação das capas personalizadas:
+
+```bash
+sudo systemctl stop lectoria.service
+./deployment/restore.sh --list
+./deployment/restore.sh lectoria_backup_AAAAMMDD_HHMMSS.db
+sudo systemctl start lectoria.service
+```
+
+### 9.9 Diagnóstico (`./deployment/diagnose.sh`)
+Executa uma bateria de verificações no servidor (SO, CPU, RAM disponível, dependências Python, permissões `R/W` dos diretórios, integridade e modo WAL do SQLite, existência das pastas das fontes cadastradas, disponibilidade da porta `8765`, URL na rede local, consumo real de memória RSS e latência de consulta):
+
+```bash
+./deployment/diagnose.sh
+# Ou em formato JSON estruturado:
+./deployment/diagnose.sh --json
+```
+
+### 9.10 Desinstalação (`./deployment/uninstall.sh`)
+Para remover o serviço automático do `systemd` **preservando integralmente** `data/`, `backups/`, `books/` e `.env`:
+
+```bash
+sudo ./deployment/uninstall.sh
+# Opcional: para remover também a pasta .venv:
+./deployment/uninstall.sh --remove-venv
+```
+
+### 9.11 Acesso pela Rede Local (LAN)
+1. Execute `./deployment/diagnose.sh` para visualizar a linha `URL na Rede Local (LAN): http://192.168.X.X:8765` (ou execute `hostname -I`).
+2. Caso o firewall do Linux Mint (`ufw`) esteja ativo, libere a porta `8765` apenas para a rede local:
    ```bash
-   sudo cp deployment/lectoria.service /etc/systemd/system/lectoria.service
+   sudo ufw allow 8765/tcp comment "Lectoria PDF Server"
    ```
+3. Em qualquer computador, celular ou tablet conectado ao mesmo Wi-Fi/rede cabeada, abra o navegador e acesse `http://<IP-DO-POSITIVO-C1260>:8765`.
 
-2. **Recarregar a configuração do systemd**:
-   ```bash
-   sudo systemctl daemon-reload
-   ```
+### 9.12 Checklist de Homologação no Positivo C1260
+Quando o projeto for transferido para o Positivo C1260, siga este roteiro passo a passo para homologar a instalação:
 
-3. **Habilitar a inicialização automática no boot do sistema**:
-   ```bash
-   sudo systemctl enable lectoria.service
-   ```
-
-4. **Iniciar o serviço imediatamente**:
-   ```bash
-   sudo systemctl start lectoria.service
-   ```
-
-5. **Verificar o status e logs**:
-   ```bash
-   sudo systemctl status lectoria.service
-   sudo journalctl -u lectoria.service -f
-   ```
+- [ ] **1. Instalação inicial**: Executar `./deployment/install.sh` e confirmar a mensagem `Instalação concluída com sucesso!`.
+- [ ] **2. Diagnóstico de prontidão**: Executar `./deployment/diagnose.sh` e verificar `RESULTADO GLOBAL: APROVADO (OK)`.
+- [ ] **3. Ativação do serviço systemd**: Copiar `deployment/lectoria.service` para `/etc/systemd/system/`, executar `sudo systemctl daemon-reload && sudo systemctl enable --now lectoria.service` e confirmar `active (running)` em `sudo systemctl status lectoria.service`.
+- [ ] **4. Coexistência com o Jellyfin**: Verificar que o Jellyfin (`http://localhost:8096`) e o Lectoria (`http://localhost:8765`) respondem simultaneamente e que o consumo de RAM do Lectoria permanece abaixo de `100 MB` em `systemctl status lectoria.service`.
+- [ ] **5. Autenticação e perfis**: Acessar `http://localhost:8765`, fazer login com o perfil `admin` e testar a criação/acesso de um perfil `reader`.
+- [ ] **6. Fontes de biblioteca e Seletor de Diretórios**: No modal **Fontes**, clicar em **Selecionar pasta…**, navegar até uma pasta com PDFs (ou testar o botão **Janela do Sistema** localmente no XFCE), adicionar a fonte e clicar em **Escanear**.
+- [ ] **7. Sistema de Capas**: Confirmar a exibição das capas na biblioteca, testar o envio de uma capa personalizada no botão **Capa** de um livro e depois testar a restauração da capa automática.
+- [ ] **8. Leitura, Progresso e Estudos**: Abrir um PDF no leitor, navegar por páginas em Página Única e Rolagem Contínua, criar um destaque colorido, uma nota e um traço de desenho livre, apagar o traço com a borracha, fechar o leitor e reabrir para confirmar que a página atual e as anotações foram preservadas.
+- [ ] **9. Download e Exportação**: Testar o botão de download do PDF original e a exportação do caderno de estudos em Markdown (`.md`) e JSON (`.json`).
+- [ ] **10. Backup, Restauração e Reinício (Reboot)**: Executar `./deployment/backup.sh`, reiniciar o Positivo C1260 (`sudo reboot`) e, após o boot, acessar `http://<IP-LAN>:8765` a partir de outro dispositivo da casa para confirmar que o Lectoria subiu sozinho com todos os dados intactos.
 
 ---
 
@@ -460,7 +586,7 @@ source .venv/bin/activate
 pytest -v tests/
 ```
 
-Resultado atual: **72 testes aprovados (100% de sucesso)** cobrindo:
+Resultado atual: **77 testes aprovados (100% de sucesso)** cobrindo:
 - Catálogo, scanner e metadados (`test_library.py`).
 - Coleções e associações em lote (`test_collections.py`, `test_iteration2_features.py`).
 - Filtros de estado de leitura, busca e ordenação (`test_filters_and_sorting.py`).
@@ -472,15 +598,17 @@ Resultado atual: **72 testes aprovados (100% de sucesso)** cobrindo:
 - Download de PDFs originais, gerenciamento de fontes, symlinks, scrypt, rate limiting, controle de papéis e isolamento de dados por usuário (`test_iteration6.py`).
 - Hashing de sessões, invalidação de sessões, CSRF Double Submit, Origin check, IDOR em anotações, probing de coleções, proteção de fontes (.venv, .git) e integridade em restauração multiusuário (`test_iteration7.py`).
 - Extração de capas de PDF, cache em disco, invalidação por hash, upload/substituição/remoção de capas personalizadas, bloqueio de uploads maliciosos/acima do limite, fallback SVG editorial, navegador visual de diretórios e seletor nativo local (`test_iteration8.py`).
+- Carregamento e precedência de `.env`, reconciliação automática do caminho da biblioteca principal entre máquinas, backup preventivo e preservação total de dados na migração de schema V3->V5, preservação de capas personalizadas no backup/restauração e validação dos scripts de deploy e diagnóstico (`test_iteration9.py`).
 
 ---
 
-## 14. Desempenho Real e Limitações Conhecidas
+## 14. Desempenho e Limitações Conhecidas
 
-### 14.1 Medições Reais no Hardware Alvo (Intel Celeron 847 1.5 GHz / 8 GB RAM / SSD)
-- **Consumo de Memória RAM**: **~58 MB a 62 MB** (RSS total em repouso).
-- **Consumo de CPU em Repouso**: **0.0%**.
-- **Impacto no Jellyfin**: Desprezível. O streaming por chunks sob demanda (HTTP Range) evita picos de leitura e o descarregamento dinâmico de páginas fora do viewport na rolagem contínua previne saturação do navegador do cliente.
+### 14.1 Medições Reais e Perfil de Consumo
+- **Consumo de Memória RAM (RSS medido via `scripts/diagnose.py`)**: **~54.5 MB a 62 MB** em processo único Uvicorn/FastAPI.
+- **Latência de Listagem SQLite (WAL)**: **~0.5 ms**.
+- **Consumo de CPU em Repouso**: **0.0%** (zero file watchers ou tarefas em background).
+- **Coexistência com o Jellyfin no Positivo C1260 (Intel Celeron 847 1.5 GHz / 8 GB RAM / SSD)**: O limite `MemoryMax=512M` e `CPUWeight=100` no `systemd`, somado ao streaming por chunks sob demanda (HTTP Range) e à leitura parcial do cabeçalho PDF no scanner/extrator de capas, protege o servidor contra picos de memória e I/O. Para aferir os números exatos no Positivo C1260 após o deploy, basta executar `./deployment/diagnose.sh`.
 
 ### 14.2 Limitações Conhecidas da Versão 1.1.1
 - **Suporte Exclusivo a PDFs**: Formatos como EPUB, MOBI ou CBZ não são suportados nativamente nesta versão.

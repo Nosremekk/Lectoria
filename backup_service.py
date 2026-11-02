@@ -13,6 +13,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 import config
+import database
 
 # Trava de concorrência para garantir que apenas uma operação de backup ou restauração ocorra por vez
 _backup_lock = threading.Lock()
@@ -82,6 +83,23 @@ def create_backup(custom_name: Optional[str] = None) -> Dict[str, Any]:
                 target_path.unlink()
             raise BackupError("A cópia de backup gerada falhou na verificação de integridade.")
 
+        # Cópia de segurança das capas personalizadas (*_custom.*) associadas
+        custom_covers_count = 0
+        if config.COVERS_DIR.exists():
+            custom_files = [
+                f for f in config.COVERS_DIR.glob("*_custom.*")
+                if f.is_file()
+            ]
+            if custom_files:
+                covers_backup_dir = config.BACKUPS_DIR / f"{target_path.stem}_covers"
+                covers_backup_dir.mkdir(parents=True, exist_ok=True)
+                for cf in custom_files:
+                    try:
+                        shutil.copy2(cf, covers_backup_dir / cf.name)
+                        custom_covers_count += 1
+                    except Exception:
+                        pass
+
         stat = target_path.stat()
         return {
             "filename": backup_filename,
@@ -89,6 +107,7 @@ def create_backup(custom_name: Optional[str] = None) -> Dict[str, Any]:
             "size_bytes": stat.st_size,
             "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             "integrity": "ok",
+            "custom_covers_count": custom_covers_count,
         }
 
 
@@ -176,6 +195,24 @@ def restore_backup(backup_filename: str) -> Dict[str, Any]:
                     shutil.copy2(safety_backup_path, config.DB_PATH)
                 raise BackupError("O banco restaurado falhou no teste de integridade pós-substituição. Base original recuperada.")
 
+            # 6. Garante atualização de schema caso o backup seja de uma versão anterior
+            database.init_db(config.DB_PATH)
+
+            # 7. Restaura capas personalizadas associadas ao backup (se existirem)
+            restored_covers_count = 0
+            covers_backup_dir = config.BACKUPS_DIR / f"{backup_path.stem}_covers"
+            if covers_backup_dir.exists() and covers_backup_dir.is_dir():
+                config.COVERS_DIR.mkdir(parents=True, exist_ok=True)
+                for cf in covers_backup_dir.glob("*_custom.*"):
+                    if cf.is_file():
+                        try:
+                            shutil.copy2(cf, config.COVERS_DIR / cf.name)
+                            restored_covers_count += 1
+                        except Exception:
+                            pass
+
+        except BackupError:
+            raise
         except Exception as e:
             # Se ocorrer erro no replace, reverte para a cópia de proteção
             if has_original_db and safety_backup_path.exists():
@@ -195,6 +232,7 @@ def restore_backup(backup_filename: str) -> Dict[str, Any]:
             "safety_backup": str(safety_backup_path) if safety_backup_path.exists() else None,
             "size_bytes": stat.st_size,
             "verified_integrity": True,
+            "restored_covers_count": restored_covers_count,
         }
 
 
@@ -218,6 +256,9 @@ def prune_backups(keep_count: int) -> int:
             b_path = config.BACKUPS_DIR / b["filename"]
             if b_path.exists() and b_path.is_file():
                 try:
+                    covers_dir = config.BACKUPS_DIR / f"{b_path.stem}_covers"
+                    if covers_dir.exists() and covers_dir.is_dir():
+                        shutil.rmtree(covers_dir, ignore_errors=True)
                     b_path.unlink()
                     removed_count += 1
                 except Exception:

@@ -1,31 +1,44 @@
+# Arquivo de unidade systemd para o Lectoria (Linux Mint XFCE / Ubuntu / Debian)
+# Nota: Execute ./deployment/configure.sh ou ./deployment/install.sh no servidor de destino
+# para ajustar automaticamente User, Group, WorkingDirectory, ExecStart e ReadWritePaths.
+
 [Unit]
 Description=Lectoria — Servidor Pessoal de Livros Digitais
 Documentation=https://github.com/vini/lectoria
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=vini
 Group=vini
 WorkingDirectory=/home/vini/Jellyfin livros
-ExecStart=/home/vini/Jellyfin livros/.venv/bin/python3 main.py
+EnvironmentFile=-/home/vini/Jellyfin livros/.env
+ExecStart="/home/vini/Jellyfin livros/.venv/bin/python3" main.py
 
-# Reinicialização automática em caso de falha transitória
+# Reinicialização automática controlada em caso de falha transitória
 Restart=on-failure
 RestartSec=5
 
-# Variáveis de ambiente
+# Variáveis de ambiente padrão (podem ser sobrescritas no arquivo .env)
 Environment=PYTHONUNBUFFERED=1
+Environment=LECTORIA_HOST=0.0.0.0
+Environment=LECTORIA_PORT=8765
 Environment=PORT=8765
 
-# Diretivas de isolamento e segurança para hardware modesto (Positivo C1260)
+# Logs integrados ao systemd journal (journalctl -u lectoria.service)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lectoria
+
+# Diretivas de isolamento e segurança para hardware doméstico (Positivo C1260)
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
 ReadWritePaths="/home/vini/Jellyfin livros/data" "/home/vini/Jellyfin livros/backups"
 
-# Limites de recursos para proteger a execução concorrente com o Jellyfin
+# Limites de recursos para proteger a coexistência com o Jellyfin (Intel Celeron 847 / 8 GB RAM)
 MemoryMax=512M
 CPUWeight=100
 

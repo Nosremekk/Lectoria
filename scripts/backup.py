@@ -76,6 +76,7 @@ def main():
             print(f"     Tamanho: {res['size_bytes']} bytes")
             print(f"     Localização: {res['path']}")
             print(f"     Integridade: {res['integrity']}")
+            print(f"     Capas personalizadas incluídas: {res.get('custom_covers_count', 0)}")
         except BackupError as e:
             print(f"[ERRO] {e}", file=sys.stderr)
             sys.exit(1)
@@ -138,6 +139,7 @@ def main():
             print(f"     Origem: {res['restored_from']}")
             print(f"     Destino: {res['target_path']}")
             print(f"     Integridade pós-restauração verificada: {res['verified_integrity']}")
+            print(f"     Capas personalizadas restauradas: {res.get('restored_covers_count', 0)}")
         except BackupError as e:
             print(f"[ERRO na Restauração] {e}", file=sys.stderr)
             sys.exit(1)

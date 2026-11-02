@@ -3,6 +3,7 @@ Módulo de banco de dados SQLite para o Lectoria.
 Gerencia conexão, modo WAL, chaves estrangeiras e controle de migrações de schema.
 """
 
+import shutil
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -42,8 +43,15 @@ def get_db(db_path: Optional[Path] = None) -> Generator[sqlite3.Connection, None
 
 
 def init_db(db_path: Optional[Path] = None) -> None:
-    """Inicializa as tabelas do banco de dados e executa migrações necessárias."""
-    with get_db(db_path) as conn:
+    """
+    Inicializa as tabelas do banco de dados e executa migrações necessárias.
+    Quando há migrações pendentes em um banco preexistente, gera automaticamente
+    uma cópia de segurança pré-migração e valida a integridade antes e depois.
+    """
+    target_db = Path(db_path or config.DB_PATH).resolve()
+    target_db.parent.mkdir(parents=True, exist_ok=True)
+
+    with get_db(target_db) as conn:
         cursor = conn.cursor()
 
         # Tabela de controle de versão de migrações
@@ -58,26 +66,104 @@ def init_db(db_path: Optional[Path] = None) -> None:
 
         cursor.execute("SELECT MAX(version) FROM schema_migrations;")
         current_version = cursor.fetchone()[0] or 0
+        conn.commit()
 
-        if current_version < 1:
-            _apply_migration_v1(cursor)
-            cursor.execute("INSERT INTO schema_migrations (version) VALUES (1);")
+        # Se o banco já possui dados (current_version > 0) e precisa migrar para versão superior,
+        # cria um backup automático pré-migração e verifica integridade
+        pre_migration_bak: Optional[Path] = None
+        if 0 < current_version < SCHEMA_VERSION and target_db.exists():
+            cursor.execute("PRAGMA integrity_check;")
+            chk = cursor.fetchone()
+            if not chk or chk[0] != "ok":
+                raise sqlite3.DatabaseError(
+                    f"Banco de dados '{target_db}' falhou na verificação de integridade antes da migração."
+                )
 
-        if current_version < 2:
-            _apply_migration_v2(cursor)
-            cursor.execute("INSERT INTO schema_migrations (version) VALUES (2);")
+            pre_migration_bak = target_db.with_name(
+                f"lectoria_pre_migration_v{current_version}_to_v{SCHEMA_VERSION}.db.bak"
+            )
+            bak_conn = sqlite3.connect(str(pre_migration_bak))
+            try:
+                conn.backup(bak_conn)
+            finally:
+                bak_conn.close()
 
-        if current_version < 3:
-            _apply_migration_v3(cursor)
-            cursor.execute("INSERT INTO schema_migrations (version) VALUES (3);")
+        if current_version < SCHEMA_VERSION:
+            # Desativa temporariamente PRAGMA foreign_keys fora de transação durante
+            # reconstruções de tabelas (ex: books -> books_v4) para evitar que DROP TABLE books
+            # dispare ON DELETE CASCADE nas tabelas filhas (reading_progress, highlights, notes, etc.)
+            conn.commit()
+            conn.execute("PRAGMA foreign_keys=OFF;")
 
-        if current_version < 4:
-            _apply_migration_v4(cursor)
-            cursor.execute("INSERT INTO schema_migrations (version) VALUES (4);")
+        try:
+            if current_version < 1:
+                _apply_migration_v1(cursor)
+                cursor.execute("INSERT INTO schema_migrations (version) VALUES (1);")
 
-        if current_version < 5:
-            _apply_migration_v5(cursor)
-            cursor.execute("INSERT INTO schema_migrations (version) VALUES (5);")
+            if current_version < 2:
+                _apply_migration_v2(cursor)
+                cursor.execute("INSERT INTO schema_migrations (version) VALUES (2);")
+
+            if current_version < 3:
+                _apply_migration_v3(cursor)
+                cursor.execute("INSERT INTO schema_migrations (version) VALUES (3);")
+
+            if current_version < 4:
+                _apply_migration_v4(cursor)
+                cursor.execute("INSERT INTO schema_migrations (version) VALUES (4);")
+
+            if current_version < 5:
+                _apply_migration_v5(cursor)
+                cursor.execute("INSERT INTO schema_migrations (version) VALUES (5);")
+
+            conn.commit()
+        finally:
+            conn.execute("PRAGMA foreign_keys=ON;")
+
+        # Reconcilia o caminho da fonte padrão #1 ('Biblioteca Principal') caso o projeto
+        # tenha sido transferido para outro diretório ou computador (ex: deploy no Positivo C1260)
+        _reconcile_default_library_source(cursor)
+
+        if pre_migration_bak is not None:
+            cursor.execute("PRAGMA integrity_check;")
+            post_chk = cursor.fetchone()
+            if not post_chk or post_chk[0] != "ok":
+                raise sqlite3.DatabaseError(
+                    "Falha de integridade detectada após aplicar migração de schema."
+                )
+
+
+def _reconcile_default_library_source(cursor: sqlite3.Cursor) -> None:
+    """
+    Se a fonte inicial #1 ('Biblioteca Principal') apontar para uma pasta 'books'
+    de outro computador/caminho que não existe no host atual, atualiza-a para config.LIBRARY_DIR.
+    """
+    try:
+        cursor.execute(
+            "SELECT id, name, path FROM library_sources WHERE id = 1;"
+        )
+        row = cursor.fetchone()
+        if not row:
+            return
+        stored_path = Path(row["path"])
+        current_lib_dir = config.LIBRARY_DIR.resolve()
+        if (
+            row["name"] == "Biblioteca Principal"
+            and not stored_path.exists()
+            and stored_path.name == "books"
+            and current_lib_dir.exists()
+        ):
+            cursor.execute(
+                "SELECT id FROM library_sources WHERE path = ? AND id != 1;",
+                (str(current_lib_dir),),
+            )
+            if not cursor.fetchone():
+                cursor.execute(
+                    "UPDATE library_sources SET path = ?, last_error = NULL WHERE id = 1;",
+                    (str(current_lib_dir),),
+                )
+    except sqlite3.Error:
+        pass
 
 
 def _apply_migration_v1(cursor: sqlite3.Cursor) -> None:

@@ -28,6 +28,7 @@ books/*
 # Segredos e variáveis de ambiente
 .env
 .env.*
+!.env.example
 
 # Backups manuais locais (não versionar backups do banco)
 backups/

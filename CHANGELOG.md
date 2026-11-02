@@ -7,6 +7,38 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [Iteração 9 — Preparação para Deploy e Homologação no Positivo C1260] - 2026-11-02
+
+### Adicionado
+- **Configuração Portável e Suporte a `.env` (`config.py`, `.env.example`)**:
+  - Carregador nativo `load_env_file()` sem dependências externas, permitindo configurar `LECTORIA_HOST`, `LECTORIA_PORT`, `LECTORIA_LIBRARY_DIR`, `LECTORIA_DATA_DIR`, `LECTORIA_COVERS_DIR`, `LECTORIA_DB_PATH` e `LECTORIA_BACKUPS_DIR` via arquivo `.env` ou variáveis de ambiente do sistema.
+  - Função `ensure_runtime_directories()` para inicialização automática dos diretórios persistentes.
+- **Portabilidade Automática de Banco entre Máquinas (`database.py`)**:
+  - Reconciliação automática (`_reconcile_default_library_source`) durante `init_db()`: quando o banco SQLite é transferido para outro computador/caminho onde a pasta `books` anterior da fonte inicial `id=1` (`Biblioteca Principal`) não existe mais, o caminho é atualizado automaticamente para o `config.LIBRARY_DIR` da nova máquina.
+  - Backup preventivo automático pré-migração (`lectoria_pre_migration_vX_to_vY.db.bak`) via SQLite Online Backup API e verificação `PRAGMA integrity_check` antes e depois de qualquer migração de schema.
+- **Preservação de Capas Personalizadas no Backup e Restauração (`backup_service.py`, `scripts/backup.py`)**:
+  - `create_backup()` agora copia automaticamente todas as capas personalizadas (`data/covers/*_custom.*`) para um diretório complementar `backups/<nome_do_backup>_covers/`.
+  - `restore_backup()` executa `database.init_db()` após a restauração (garantindo migração automática caso um backup antigo seja restaurado) e recupera as capas personalizadas associadas.
+  - `prune_backups()` remove também os diretórios de capas associados aos backups antigos descartados.
+- **Scripts de Implantação, Manutenção e Diagnóstico (`deployment/` e `scripts/diagnose.py`)**:
+  - `deployment/install.sh`: instalador idempotente para Linux Mint XFCE / Ubuntu / Debian com detecção e recriação automática de `.venv` migrado de outra máquina.
+  - `deployment/configure.sh`: configuração interativa ou não interativa (`--non-interactive`) de `.env` e geração automática de `deployment/lectoria.service` com caminhos entre aspas e usuário/grupo reais do hospedeiro.
+  - `deployment/update.sh`: atualização segura com backup prévio obrigatório, reconciliação de configuração e migração de schema sem tocar nos dados do usuário.
+  - `deployment/backup.sh`, `deployment/restore.sh` e `deployment/uninstall.sh` (desinstalação segura que preserva `data/`, `backups/`, `books/` e `.env`).
+  - `scripts/diagnose.py` e `deployment/diagnose.sh`: diagnóstico completo de hardware, dependências, permissões `R/W`, modo WAL, integridade SQLite, fontes de biblioteca, rede/LAN, memória RSS e latência de consulta, com suporte a saída `--json`.
+- **Documentação de Deploy e Checklist de Homologação (`README.md`, `deployment/README.md`)**:
+  - Nova seção dedicada `Deploy no Positivo C1260 — Linux Mint XFCE` e checklist completo de homologação em 10 etapas.
+- **Testes Automatizados (`tests/test_iteration9.py`)**:
+  - 5 novos testes cobrindo `.env`, reconciliação de caminhos entre máquinas, migração V3->V5 com backup automático e preservação integral de dados, backup/restauração de capas personalizadas e execução dos scripts de deploy/diagnóstico (total da suíte: 77 testes aprovados).
+
+### Corrigido
+- **Proteção contra `ON DELETE CASCADE` Acidental em Reconstrução de Tabela (`database.py`)**:
+  - Desativação temporária controlada de `PRAGMA foreign_keys=OFF` fora de transação durante migrações de schema (`init_db`), impedindo que o `DROP TABLE books` na reconstrução `books -> books_v4` apague registros filhos em `reading_progress`, `collection_books`, `highlights`, `notes` e `page_drawings`.
+- **Caminhos com Espaços no `systemd` (`deployment/lectoria.service`)**:
+  - Aspas explícitas no binário `ExecStart`, adição de `EnvironmentFile=-.../.env`, `LECTORIA_HOST=0.0.0.0`, `LECTORIA_PORT=8765` e integração com `journalctl` (`SyslogIdentifier=lectoria`).
+
+---
+
 ## [Iteração 8 — Redesign Editorial, Capas e Seletor de Diretórios] - 2026-11-02
 
 ### Adicionado
