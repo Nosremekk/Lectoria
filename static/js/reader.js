@@ -219,7 +219,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   function showSavedIndicator() {
     saveIndicator.classList.add("visible");
-    setTimeout(() => saveIndicator.classList.remove("visible"), 2000);
+    const mobileSaveIndicator = document.getElementById("mobile-save-indicator");
+    if (mobileSaveIndicator) mobileSaveIndicator.classList.add("visible");
+    setTimeout(() => {
+      saveIndicator.classList.remove("visible");
+      if (mobileSaveIndicator) mobileSaveIndicator.classList.remove("visible");
+    }, 2000);
   }
 
   // --- Progresso ---
@@ -256,10 +261,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("beforeunload", emergencySave);
   window.addEventListener("pagehide", emergencySave);
 
-  // --- Escala (Zoom) ---
+  // --- Escala (Zoom) Otimizada para Telas Móveis e Desktop ---
   function calculateScaleForPage(unscaledViewport) {
-    const availableWidth = viewportEl.clientWidth - 48;
-    const availableHeight = viewportEl.clientHeight - 48;
+    const isMobile = window.innerWidth <= 768;
+    const hPadding = isMobile ? 8 : 48;
+    const vPadding = isMobile ? 12 : 48;
+    const availableWidth = Math.max(viewportEl.clientWidth - hPadding, 100);
+    const availableHeight = Math.max(viewportEl.clientHeight - vPadding, 100);
     if (zoomMode === "width") {
       let s = availableWidth / unscaledViewport.width;
       return s > 0 ? s : 1.0;
@@ -337,6 +345,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       btnPrevPage.disabled = num <= 1;
       btnNextPage.disabled = num >= totalPages;
       updateReadingProgressBar();
+      updateMobilePageControls();
       if (thumbnailsInitialized) highlightActiveThumbnail();
       queueSaveProgress();
     } catch (err) {
@@ -352,7 +361,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     renderedSlots.clear();
     if (continuousObserver) continuousObserver.disconnect();
 
-    const availableWidth = viewportEl.clientWidth - 48;
+    const isMobile = window.innerWidth <= 768;
+    const hPadding = isMobile ? 8 : 48;
+    const availableWidth = Math.max(viewportEl.clientWidth - hPadding, 100);
     const scale = zoomMode === "width" ? (availableWidth / basePageWidth) : currentScale;
     const slotWidth = Math.round(basePageWidth * scale);
     const slotHeight = Math.round(basePageHeight * scale);
@@ -394,7 +405,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       let scale = currentScale;
       if (zoomMode === "width") {
-        scale = (viewportEl.clientWidth - 48) / unscaledViewport.width;
+        const isMobile = window.innerWidth <= 768;
+        const hPadding = isMobile ? 8 : 48;
+        scale = Math.max(viewportEl.clientWidth - hPadding, 100) / unscaledViewport.width;
       }
 
       const pixelRatio = window.devicePixelRatio || 1;
@@ -480,6 +493,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         pageNumInput.value = currentPage;
         btnPrevPage.disabled = currentPage <= 1;
         btnNextPage.disabled = currentPage >= totalPages;
+        updateMobilePageControls();
         queueSaveProgress();
       }
     }, 100);
@@ -1614,6 +1628,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     btnToolHighlight.classList.toggle("active", mode === "highlight");
     btnToolDraw.classList.toggle("active", mode === "draw");
 
+    const btnMobileToolRead = document.getElementById("btn-mobile-tool-read");
+    const btnMobileToolHighlight = document.getElementById("btn-mobile-tool-highlight");
+    const btnMobileToolDraw = document.getElementById("btn-mobile-tool-draw");
+    if (btnMobileToolRead) btnMobileToolRead.classList.toggle("active", mode === "read");
+    if (btnMobileToolHighlight) btnMobileToolHighlight.classList.toggle("active", mode === "highlight");
+    if (btnMobileToolDraw) btnMobileToolDraw.classList.toggle("active", mode === "draw");
+
     drawingToolbar.classList.toggle("active", mode === "draw");
     hideSelectionToolbar();
 
@@ -1637,6 +1658,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   function setViewMode(mode) {
     viewMode = mode;
     localStorage.setItem("lectoria_reader_mode", mode);
+
+    const iconMobileModeSingle = document.getElementById("icon-mobile-mode-single");
+    const iconMobileModeContinuous = document.getElementById("icon-mobile-mode-continuous");
+    if (iconMobileModeSingle && iconMobileModeContinuous) {
+      iconMobileModeSingle.style.display = mode === "single" ? "block" : "none";
+      iconMobileModeContinuous.style.display = mode === "continuous" ? "block" : "none";
+    }
 
     if (mode === "continuous") {
       btnModeContinuous.classList.add("active");
@@ -1671,6 +1699,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     currentPage = target;
     updateReadingProgressBar();
+    updateMobilePageControls();
     if (thumbnailsInitialized) highlightActiveThumbnail();
 
     if (viewMode === "single") {
@@ -1778,6 +1807,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (modalShortcutsHelp) modalShortcutsHelp.classList.remove("active");
       if (annotationsDrawer) annotationsDrawer.classList.remove("active");
       closeThumbnailsDrawer();
+      if (typeof closeMobileSheet === "function") closeMobileSheet();
+      if (typeof closeMobileJumpModal === "function") closeMobileJumpModal();
     }
   });
 
@@ -1805,6 +1836,362 @@ document.addEventListener("DOMContentLoaded", async () => {
       else setupContinuousView();
     }, 150);
   });
+
+  // =========================================
+  // GESTOS TOUCH E CONTROLES MÓVEIS (Iteração 11)
+  // =========================================
+
+  function updateMobilePageControls() {
+    const mobilePageCurrent = document.getElementById("mobile-page-current");
+    const mobilePageTotal = document.getElementById("mobile-page-total");
+    const mobileJumpMax = document.getElementById("mobile-jump-max");
+    const btnPrevPageMobile = document.getElementById("btn-prev-page-mobile");
+    const btnNextPageMobile = document.getElementById("btn-next-page-mobile");
+    const mobilePageInputDirect = document.getElementById("mobile-page-input-direct");
+
+    if (mobilePageCurrent) mobilePageCurrent.textContent = currentPage;
+    if (mobilePageTotal) mobilePageTotal.textContent = totalPages || "--";
+    if (mobileJumpMax) mobileJumpMax.textContent = totalPages || "--";
+    if (btnPrevPageMobile) btnPrevPageMobile.disabled = currentPage <= 1;
+    if (btnNextPageMobile) btnNextPageMobile.disabled = currentPage >= totalPages;
+    if (mobilePageInputDirect) {
+      mobilePageInputDirect.value = currentPage;
+      if (totalPages) mobilePageInputDirect.max = totalPages;
+    }
+  }
+
+  // --- Gestos de Toque: Deslize (Swipe), Duplo Toque e Pinça (Pinch-to-Zoom) ---
+  let touchStartX = 0;
+  let touchStartY = 0;
+  let touchStartTime = 0;
+  let isPinching = false;
+  let initialPinchDistance = null;
+  let initialPinchScale = 1.0;
+  let lastPinchRatio = 1.0;
+  let lastTapTime = 0;
+
+  function getTouchDistance(t1, t2) {
+    const dx = t1.clientX - t2.clientX;
+    const dy = t1.clientY - t2.clientY;
+    return Math.hypot(dx, dy);
+  }
+
+  viewportEl.addEventListener("touchstart", (e) => {
+    if (currentTool === "draw") return; // Desenho vetorial gerencia seus próprios eventos de toque
+
+    if (e.touches.length === 2) {
+      isPinching = true;
+      initialPinchDistance = getTouchDistance(e.touches[0], e.touches[1]);
+      initialPinchScale = currentScale;
+      lastPinchRatio = 1.0;
+    } else if (e.touches.length === 1) {
+      isPinching = false;
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      touchStartTime = Date.now();
+    }
+  }, { passive: true });
+
+  viewportEl.addEventListener("touchmove", (e) => {
+    if (currentTool === "draw") return;
+
+    if (isPinching && e.touches.length === 2 && initialPinchDistance) {
+      const currentDist = getTouchDistance(e.touches[0], e.touches[1]);
+      lastPinchRatio = currentDist / initialPinchDistance;
+    }
+  }, { passive: true });
+
+  viewportEl.addEventListener("touchend", (e) => {
+    if (currentTool === "draw") return;
+
+    if (isPinching) {
+      if (e.touches.length < 2) {
+        isPinching = false;
+        if (initialPinchDistance && Math.abs(lastPinchRatio - 1.0) > 0.12) {
+          zoomMode = "custom";
+          currentScale = Math.min(Math.max(initialPinchScale * lastPinchRatio, 0.45), 3.5);
+          if (viewMode === "single") renderSinglePage(currentPage);
+          else setupContinuousView();
+        }
+        initialPinchDistance = null;
+        lastPinchRatio = 1.0;
+      }
+      return;
+    }
+
+    if (e.changedTouches.length === 1) {
+      const touchEndX = e.changedTouches[0].clientX;
+      const touchEndY = e.changedTouches[0].clientY;
+      const deltaX = touchEndX - touchStartX;
+      const deltaY = touchEndY - touchStartY;
+      const elapsedTime = Date.now() - touchStartTime;
+
+      // Duplo Toque para Zoom Rápido (Alterna entre largura da tela e zoom ampliado)
+      const now = Date.now();
+      const isQuickTap = elapsedTime < 250 && Math.abs(deltaX) < 15 && Math.abs(deltaY) < 15;
+      if (isQuickTap && (now - lastTapTime < 320)) {
+        lastTapTime = 0;
+        if (zoomMode === "width" && currentScale < 1.35) {
+          zoomMode = "custom";
+          currentScale = 1.75;
+        } else {
+          zoomMode = "width";
+        }
+        if (viewMode === "single") renderSinglePage(currentPage);
+        else setupContinuousView();
+        return;
+      }
+      if (isQuickTap) {
+        lastTapTime = now;
+      }
+
+      // Deslize Horizontal (Swipe) para Avançar / Voltar Página no modo Página Única
+      // Apenas aciona se não estiver em zoom muito ampliado (para permitir pan horizontal suave)
+      if (viewMode === "single" && (zoomMode === "width" || zoomMode === "page" || currentScale <= 1.2)) {
+        if (elapsedTime < 500 && Math.abs(deltaX) > 48 && Math.abs(deltaX) > 1.5 * Math.abs(deltaY)) {
+          if (deltaX < -48 && currentPage < totalPages) {
+            goToPage(currentPage + 1);
+          } else if (deltaX > 48 && currentPage > 1) {
+            goToPage(currentPage - 1);
+          }
+        }
+      }
+    }
+  }, { passive: true });
+
+  // --- Rotação de Tela (Landscape / Portrait) ---
+  window.addEventListener("orientationchange", () => {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(() => {
+      if (viewMode === "single") renderSinglePage(currentPage);
+      else setupContinuousView();
+    }, 180);
+  });
+
+  // --- Barra de Navegação Inferior Móvel ---
+  const btnPrevPageMobile = document.getElementById("btn-prev-page-mobile");
+  const btnNextPageMobile = document.getElementById("btn-next-page-mobile");
+  const btnMobilePageIndicator = document.getElementById("btn-mobile-page-indicator");
+  const btnMobileToggleMode = document.getElementById("btn-mobile-toggle-mode");
+  const btnMobileDrawer = document.getElementById("btn-mobile-drawer");
+  const btnMobileMenu = document.getElementById("btn-mobile-menu");
+  const btnReaderThemeMobile = document.getElementById("btn-reader-theme-mobile");
+
+  if (btnPrevPageMobile) {
+    btnPrevPageMobile.addEventListener("click", () => {
+      if (currentPage > 1) goToPage(currentPage - 1);
+    });
+  }
+
+  if (btnNextPageMobile) {
+    btnNextPageMobile.addEventListener("click", () => {
+      if (currentPage < totalPages) goToPage(currentPage + 1);
+    });
+  }
+
+  if (btnMobileToggleMode) {
+    btnMobileToggleMode.addEventListener("click", () => {
+      setViewMode(viewMode === "single" ? "continuous" : "single");
+    });
+  }
+
+  if (btnMobileDrawer) {
+    btnMobileDrawer.addEventListener("click", () => {
+      if (annotationsDrawer) {
+        const isActive = annotationsDrawer.classList.contains("active");
+        if (isActive) {
+          annotationsDrawer.classList.remove("active");
+        } else {
+          annotationsDrawer.classList.add("active");
+          if (thumbnailsDrawer) closeThumbnailsDrawer();
+          closeMobileSheet();
+        }
+      }
+    });
+  }
+
+  if (btnReaderThemeMobile) {
+    btnReaderThemeMobile.addEventListener("click", () => {
+      applyTheme(currentTheme === "dark" ? "light" : "dark");
+    });
+  }
+
+  // --- Bottom Sheet de Mais Opções ---
+  const sheetMobileMenu = document.getElementById("sheet-mobile-menu");
+  const btnCloseMobileSheet = document.getElementById("btn-close-mobile-sheet");
+
+  function openMobileSheet() {
+    if (sheetMobileMenu) sheetMobileMenu.classList.add("active");
+  }
+
+  function closeMobileSheet() {
+    if (sheetMobileMenu) sheetMobileMenu.classList.remove("active");
+  }
+
+  if (btnMobileMenu) {
+    btnMobileMenu.addEventListener("click", openMobileSheet);
+  }
+
+  if (btnCloseMobileSheet) {
+    btnCloseMobileSheet.addEventListener("click", closeMobileSheet);
+  }
+
+  if (sheetMobileMenu) {
+    sheetMobileMenu.addEventListener("click", (e) => {
+      if (e.target === sheetMobileMenu) closeMobileSheet();
+    });
+  }
+
+  // Ações do Bottom Sheet
+  const btnMobileToolRead = document.getElementById("btn-mobile-tool-read");
+  const btnMobileToolHighlight = document.getElementById("btn-mobile-tool-highlight");
+  const btnMobileToolDraw = document.getElementById("btn-mobile-tool-draw");
+  const btnMobileFitWidth = document.getElementById("btn-mobile-fit-width");
+  const btnMobileFitPage = document.getElementById("btn-mobile-fit-page");
+  const btnMobileZoomIn = document.getElementById("btn-mobile-zoom-in");
+  const btnMobileZoomOut = document.getElementById("btn-mobile-zoom-out");
+  const btnMobileSheetThumbnails = document.getElementById("btn-mobile-sheet-thumbnails");
+  const btnMobileSheetDownload = document.getElementById("btn-mobile-sheet-download");
+  const btnMobileSheetShortcuts = document.getElementById("btn-mobile-sheet-shortcuts");
+
+  if (btnMobileToolRead) {
+    btnMobileToolRead.addEventListener("click", () => {
+      setToolMode("read");
+      closeMobileSheet();
+    });
+  }
+
+  if (btnMobileToolHighlight) {
+    btnMobileToolHighlight.addEventListener("click", () => {
+      setToolMode("highlight");
+      closeMobileSheet();
+    });
+  }
+
+  if (btnMobileToolDraw) {
+    btnMobileToolDraw.addEventListener("click", () => {
+      setToolMode("draw");
+      closeMobileSheet();
+    });
+  }
+
+  if (btnMobileFitWidth) {
+    btnMobileFitWidth.addEventListener("click", () => {
+      btnFitWidth.click();
+      closeMobileSheet();
+    });
+  }
+
+  if (btnMobileFitPage) {
+    btnMobileFitPage.addEventListener("click", () => {
+      btnFitPage.click();
+      closeMobileSheet();
+    });
+  }
+
+  if (btnMobileZoomIn) {
+    btnMobileZoomIn.addEventListener("click", () => {
+      btnZoomIn.click();
+      closeMobileSheet();
+    });
+  }
+
+  if (btnMobileZoomOut) {
+    btnMobileZoomOut.addEventListener("click", () => {
+      btnZoomOut.click();
+      closeMobileSheet();
+    });
+  }
+
+  if (btnMobileSheetThumbnails) {
+    btnMobileSheetThumbnails.addEventListener("click", () => {
+      closeMobileSheet();
+      openThumbnailsDrawer();
+    });
+  }
+
+  if (btnMobileSheetDownload) {
+    btnMobileSheetDownload.addEventListener("click", () => {
+      closeMobileSheet();
+      if (btnDownloadPdf) btnDownloadPdf.click();
+    });
+  }
+
+  if (btnMobileSheetShortcuts) {
+    btnMobileSheetShortcuts.addEventListener("click", () => {
+      closeMobileSheet();
+      if (modalShortcutsHelp) modalShortcutsHelp.classList.add("active");
+    });
+  }
+
+  // --- Modal de Pulo Direto de Página para Mobile ---
+  const modalMobilePageJump = document.getElementById("modal-mobile-page-jump");
+  const btnCloseModalJump = document.getElementById("btn-close-modal-jump");
+  const btnCancelModalJump = document.getElementById("btn-cancel-modal-jump");
+  const btnConfirmModalJump = document.getElementById("btn-confirm-modal-jump");
+  const mobilePageInputDirect = document.getElementById("mobile-page-input-direct");
+  const btnMobileJumpFirst = document.getElementById("btn-mobile-jump-first");
+  const btnMobileJumpLast = document.getElementById("btn-mobile-jump-last");
+
+  function openMobileJumpModal() {
+    if (!modalMobilePageJump) return;
+    if (mobilePageInputDirect) {
+      mobilePageInputDirect.value = currentPage;
+      mobilePageInputDirect.max = totalPages;
+    }
+    modalMobilePageJump.classList.add("active");
+    setTimeout(() => {
+      if (mobilePageInputDirect) {
+        mobilePageInputDirect.focus();
+        mobilePageInputDirect.select();
+      }
+    }, 100);
+  }
+
+  function closeMobileJumpModal() {
+    if (modalMobilePageJump) modalMobilePageJump.classList.remove("active");
+  }
+
+  if (btnMobilePageIndicator) {
+    btnMobilePageIndicator.addEventListener("click", openMobileJumpModal);
+  }
+
+  if (btnCloseModalJump) btnCloseModalJump.addEventListener("click", closeMobileJumpModal);
+  if (btnCancelModalJump) btnCancelModalJump.addEventListener("click", closeMobileJumpModal);
+
+  if (btnConfirmModalJump) {
+    btnConfirmModalJump.addEventListener("click", () => {
+      const val = parseInt(mobilePageInputDirect.value, 10);
+      if (!isNaN(val)) {
+        goToPage(val);
+      }
+      closeMobileJumpModal();
+    });
+  }
+
+  if (mobilePageInputDirect) {
+    mobilePageInputDirect.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const val = parseInt(mobilePageInputDirect.value, 10);
+        if (!isNaN(val)) goToPage(val);
+        closeMobileJumpModal();
+      }
+    });
+  }
+
+  if (btnMobileJumpFirst) {
+    btnMobileJumpFirst.addEventListener("click", () => {
+      goToPage(1);
+      closeMobileJumpModal();
+    });
+  }
+
+  if (btnMobileJumpLast) {
+    btnMobileJumpLast.addEventListener("click", () => {
+      goToPage(totalPages);
+      closeMobileJumpModal();
+    });
+  }
 
   function escapeHtml(str) {
     if (!str) return "";
@@ -1849,6 +2236,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     totalPages = pdfDoc.numPages;
     pageCountDisplay.textContent = totalPages;
     pageNumInput.max = totalPages;
+    updateMobilePageControls();
 
     const firstPage = await pdfDoc.getPage(1);
     const firstVp = firstPage.getViewport({ scale: 1.0 });
@@ -1902,6 +2290,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     await reloadBookAnnotations();
 
     currentPage = Math.min(initialPage, totalPages);
+    updateMobilePageControls();
     setViewMode(viewMode);
   } catch (err) {
     console.error("Falha ao abrir documento:", err);

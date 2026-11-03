@@ -122,6 +122,16 @@
         </svg>
       </button>
     </div>
+
+    <!-- Ações Compactas do Cabeçalho para Dispositivos Móveis -->
+    <div class="reader-mobile-header-actions">
+      <span id="mobile-save-indicator" class="save-indicator">Salvo</span>
+      <button id="btn-reader-theme-mobile" class="btn btn-icon btn-mobile-icon" title="Alternar Tema Claro / Escuro">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0s-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0s-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41s-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41s-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
+        </svg>
+      </button>
+    </div>
   </header>
 
   <!-- Barra de Progresso de Leitura Visual -->
@@ -391,6 +401,150 @@
       </div>
     </div>
   </div>
+
+  <!-- Modal: Pular para Página (Otimizado para Dispositivos Móveis) -->
+  <div id="modal-mobile-page-jump" class="modal-overlay">
+    <div class="modal-content" style="max-width: 360px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Navegar para Página</h3>
+        <button id="btn-close-modal-jump" class="btn btn-icon">&times;</button>
+      </div>
+      <div class="modal-body" style="text-align: center;">
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.8rem;">
+          Digite o número da página (1 a <span id="mobile-jump-max">--</span>):
+        </p>
+        <div style="display: flex; justify-content: center; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+          <input type="number" id="mobile-page-input-direct" class="form-input" min="1" value="1" style="width: 100px; text-align: center; font-size: 1.25rem; font-family: var(--font-mono); font-weight: 600; padding: 0.5rem;" inputmode="numeric" pattern="[0-9]*">
+        </div>
+        <div style="display: flex; justify-content: space-between; gap: 0.5rem;">
+          <button id="btn-mobile-jump-first" class="btn btn-sm btn-outline" style="flex: 1;">Primeira (1)</button>
+          <button id="btn-mobile-jump-last" class="btn btn-sm btn-outline" style="flex: 1;">Última</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-modal-jump" class="btn">Cancelar</button>
+        <button id="btn-confirm-modal-jump" class="btn btn-primary">Ir para a Página</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Sheet: Mais Opções e Ferramentas Móveis -->
+  <div id="sheet-mobile-menu" class="mobile-sheet-overlay">
+    <div class="mobile-sheet-content">
+      <div class="mobile-sheet-header">
+        <span class="mobile-sheet-drag-handle"></span>
+        <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+          <h3 class="mobile-sheet-title">Opções do Leitor</h3>
+          <button id="btn-close-mobile-sheet" class="btn btn-icon btn-sm" aria-label="Fechar opções">&times;</button>
+        </div>
+      </div>
+
+      <div class="mobile-sheet-body">
+        <!-- Seção: Modos de Leitura e Estudo -->
+        <div class="mobile-sheet-section">
+          <div class="mobile-sheet-section-label">Modo de Interação</div>
+          <div class="mobile-sheet-button-grid">
+            <button id="btn-mobile-tool-read" class="mobile-action-card active">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5-2.24 5-5-2.24 5-5-5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+              <span>Leitura Padrão</span>
+            </button>
+            <button id="btn-mobile-tool-highlight" class="mobile-action-card">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="m15.24 3.37 5.39 5.39-8.49 8.49H6.75v-5.39l8.49-8.49zm2.55-2.55c-.78-.78-2.05-.78-2.83 0l-1.42 1.41 5.39 5.39 1.41-1.42c.78-.78.78-2.05 0-2.83l-2.55-2.55zM2 22h20v2H2v-2z"/></svg>
+              <span>Marca-texto</span>
+            </button>
+            <button id="btn-mobile-tool-draw" class="mobile-action-card">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+              <span>Desenho Livre</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Seção: Navegação e Visualização -->
+        <div class="mobile-sheet-section">
+          <div class="mobile-sheet-section-label">Exibição e Zoom</div>
+          <div class="mobile-sheet-button-grid">
+            <button id="btn-mobile-fit-width" class="mobile-action-card">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M4 11h16v2H4zm-2 2L6 9v3h12V9l4 4-4 4v-3H6v3z"/></svg>
+              <span>Ajustar Largura</span>
+            </button>
+            <button id="btn-mobile-fit-page" class="mobile-action-card">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16v16H4zm2 2v12h12V6z"/></svg>
+              <span>Ajustar Página</span>
+            </button>
+            <button id="btn-mobile-zoom-in" class="mobile-action-card">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+              <span>Ampliar Zoom</span>
+            </button>
+            <button id="btn-mobile-zoom-out" class="mobile-action-card">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13H5v-2h14v2z"/></svg>
+              <span>Reduzir Zoom</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Seção: Painéis e Ferramentas Adicionais -->
+        <div class="mobile-sheet-section">
+          <div class="mobile-sheet-section-label">Mais Ações</div>
+          <div class="mobile-sheet-list">
+            <button id="btn-mobile-sheet-thumbnails" class="mobile-sheet-list-item">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z"/></svg>
+              <span>Ver Miniaturas das Páginas</span>
+            </button>
+            <button id="btn-mobile-sheet-download" class="mobile-sheet-list-item">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+              <span>Baixar Arquivo PDF Original</span>
+            </button>
+            <button id="btn-mobile-sheet-shortcuts" class="mobile-sheet-list-item">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 16h-2v-2h2v2zm1.07-7.75l-.9.92C12.45 11.9 12 12.5 12 14h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.75z"/></svg>
+              <span>Ajuda e Atalhos</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Barra de Navegação Inferior Fixa para Dispositivos Móveis -->
+  <nav id="reader-mobile-bottom-bar" class="reader-mobile-bottom-bar" aria-label="Navegação móvel">
+    <button id="btn-prev-page-mobile" class="btn btn-icon btn-mobile-nav" title="Página Anterior" aria-label="Página Anterior">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
+      </svg>
+    </button>
+
+    <button id="btn-mobile-page-indicator" class="mobile-page-pill" title="Toque para navegar até outra página" aria-label="Página atual">
+      <span id="mobile-page-current">1</span> / <span id="mobile-page-total">--</span>
+    </button>
+
+    <button id="btn-next-page-mobile" class="btn btn-icon btn-mobile-nav" title="Próxima Página" aria-label="Próxima Página">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+      </svg>
+    </button>
+
+    <div class="mobile-nav-divider"></div>
+
+    <button id="btn-mobile-toggle-mode" class="btn btn-icon btn-mobile-nav" title="Alternar Modo (Página / Rolagem)" aria-label="Modo de Exibição">
+      <svg id="icon-mobile-mode-single" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/>
+      </svg>
+      <svg id="icon-mobile-mode-continuous" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display:none;">
+        <path d="M3 5h18v2H3zm0 6h18v2H3zm0 6h18v2H3z"/>
+      </svg>
+    </button>
+
+    <button id="btn-mobile-drawer" class="btn btn-icon btn-mobile-nav" title="Caderno de Estudos" aria-label="Anotações e Estudos">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+      </svg>
+    </button>
+
+    <button id="btn-mobile-menu" class="btn btn-icon btn-mobile-nav" title="Mais Ferramentas" aria-label="Mais Opções">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+      </svg>
+    </button>
+  </nav>
 
   <script src="/static/vendor/pdfjs/pdf.min.js"></script>
   <script src="/static/js/reader.js"></script>
