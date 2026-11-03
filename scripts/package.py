@@ -9,6 +9,7 @@ Gera:
   5. SHA256SUMS e manifest.json para ambos os pacotes.
 """
 
+import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -23,14 +24,11 @@ import tarfile
 import zipfile
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_BASE_DIR = Path("/home/vini")
+DEFAULT_OUTPUT_BASE_DIR = PROJECT_ROOT / "dist"
 
 PACKAGE_VERSION = "1.1.2"
 TARGET_NAME = f"Lectoria-{PACKAGE_VERSION}-linux-x86_64"
 MIGRATION_NAME = f"Lectoria-{PACKAGE_VERSION}-migration-bundle"
-
-PACKAGE_DIR = OUTPUT_BASE_DIR / TARGET_NAME
-MIGRATION_DIR = OUTPUT_BASE_DIR / MIGRATION_NAME
 
 
 def get_git_info() -> dict:
@@ -45,8 +43,8 @@ def get_git_info() -> dict:
             text=True
         ).strip()
     except Exception:
-        commit = "5562d94"
-        branch = "feat/iteracao-9"
+        commit = "unknown"
+        branch = "main"
     return {"commit": commit, "branch": branch}
 
 
@@ -248,10 +246,10 @@ def create_documentation_files(pkg_root: Path, git_info: dict):
         f"       cd {TARGET_NAME}\n\n"
         "3. ONDE COLOCAR O PROJETO NO POSITIVO C1260?\n"
         "   Recomenda-se colocar na sua pasta pessoal de usuário, por exemplo:\n"
-        "       /home/vini/lectoria\n"
+        "       ~/lectoria (ou /opt/lectoria)\n"
         "   (Qualquer pasta sob sua home é válida; o instalador se ajusta dinamicamente).\n\n"
         "4. COMO PRESERVAR A PASTA DE LIVROS PDF EXISTENTE?\n"
-        "   • Opção 1: Se você já tem uma pasta com PDFs no Positivo (ex: /home/vini/Livros),\n"
+        "   • Opção 1: Se você já tem uma pasta com PDFs no Positivo (ex: ~/Livros),\n"
         "     você NÃO precisa movê-los. Após instalar, acesse a interface web do Lectoria,\n"
         "     abra o menu 'Fontes' e selecione sua pasta existente.\n"
         "   • Opção 2: Se preferir manter tudo dentro do pacote, basta copiar os PDFs para\n"
@@ -354,7 +352,7 @@ def generate_manifest_and_sha256(target_dir: Path, is_migration: bool = False, g
     return manifest
 
 
-def build_migration_bundle(mig_dir: Path):
+def build_migration_bundle(mig_dir: Path) -> bool:
     """
     Constrói a Modalidade B:
     - Exporta data/lectoria.db usando SQLite Online Backup API.
@@ -362,8 +360,12 @@ def build_migration_bundle(mig_dir: Path):
     - Copia capas personalizadas e extraídas.
     - Adiciona README e manifesto.
     """
-    mig_dir.mkdir(parents=True, exist_ok=True)
     source_db_path = PROJECT_ROOT / "data" / "lectoria.db"
+    if not source_db_path.exists():
+        print("[!] Modalidade B ignorada: data/lectoria.db não encontrado.")
+        return False
+
+    mig_dir.mkdir(parents=True, exist_ok=True)
     target_db_path = mig_dir / "lectoria.db"
 
     print("[*] Modalidade B: Gerando cópia consistente do banco via SQLite Online Backup API...")
@@ -438,6 +440,7 @@ def build_migration_bundle(mig_dir: Path):
 
     generate_manifest_and_sha256(mig_dir, is_migration=True)
     print(f"[OK] Modalidade B concluída: {mig_dir} ({book_count} livros, {user_count} usuários)")
+    return True
 
 
 def make_tar_gz(source_dir: Path, archive_path: Path):
@@ -464,48 +467,79 @@ def make_zip(source_dir: Path, archive_path: Path):
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Utilitário de Empacotamento do Lectoria para Distribuição e Transferência."
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_BASE_DIR,
+        help=f"Diretório base de saída dos pacotes (padrão: {DEFAULT_OUTPUT_BASE_DIR})"
+    )
+    parser.add_argument(
+        "--skip-migration",
+        action="store_true",
+        help="Ignora a geração do pacote de migração (Modalidade B)"
+    )
+    args = parser.parse_args()
+
+    output_base_dir = args.output_dir.resolve()
+    output_base_dir.mkdir(parents=True, exist_ok=True)
+
+    package_dir = output_base_dir / TARGET_NAME
+    migration_dir = output_base_dir / MIGRATION_NAME
+
     print("============================================================")
-    print(" Lectoria — Gerador de Pacote de Transferência (Iteração 10)")
+    print(" Lectoria — Gerador de Pacote de Transferência")
     print("============================================================")
 
     git_info = get_git_info()
     print(f"[*] Versão alvo: {PACKAGE_VERSION}")
     print(f"[*] Commit base: {git_info['commit']} (branch {git_info['branch']})")
+    print(f"[*] Diretório de saída: {output_base_dir}")
 
     # Limpeza prévia de diretórios temporários se existirem
-    for d in (PACKAGE_DIR, MIGRATION_DIR):
+    for d in (package_dir, migration_dir):
         if d.exists():
             shutil.rmtree(d)
 
     # 1. Constrói Modalidade A (Pacote de Distribuição Limpo)
-    print(f"\n[1/4] Montando estrutura do pacote limpo em {PACKAGE_DIR}...")
-    copy_app_tree(PACKAGE_DIR / "app")
-    create_readme_files(PACKAGE_DIR)
-    create_root_scripts(PACKAGE_DIR)
-    create_documentation_files(PACKAGE_DIR, git_info)
-    manifest_a = generate_manifest_and_sha256(PACKAGE_DIR, is_migration=False, git_info=git_info)
+    print(f"\n[1/4] Montando estrutura do pacote limpo em {package_dir}...")
+    copy_app_tree(package_dir / "app")
+    create_readme_files(package_dir)
+    create_root_scripts(package_dir)
+    create_documentation_files(package_dir, git_info)
+    manifest_a = generate_manifest_and_sha256(package_dir, is_migration=False, git_info=git_info)
     print(f"[OK] Modalidade A pronta: {len(manifest_a['files'])} arquivos mapeados.")
 
     # 2. Constrói Modalidade B (Pacote de Migração da Biblioteca)
-    print(f"\n[2/4] Montando pacote de migração em {MIGRATION_DIR}...")
-    build_migration_bundle(MIGRATION_DIR)
+    has_migration = False
+    if not args.skip_migration:
+        print(f"\n[2/4] Montando pacote de migração em {migration_dir}...")
+        has_migration = build_migration_bundle(migration_dir)
+    else:
+        print("\n[2/4] Modalidade B pulada por flag (--skip-migration).")
 
     # 3. Compactação dos pacotes (.tar.gz e .zip)
     print("\n[3/4] Compactando arquivos para distribuição...")
-    tar_pkg = OUTPUT_BASE_DIR / f"{TARGET_NAME}.tar.gz"
-    zip_pkg = OUTPUT_BASE_DIR / f"{TARGET_NAME}.zip"
-    make_tar_gz(PACKAGE_DIR, tar_pkg)
-    make_zip(PACKAGE_DIR, zip_pkg)
+    archives = []
+    tar_pkg = output_base_dir / f"{TARGET_NAME}.tar.gz"
+    zip_pkg = output_base_dir / f"{TARGET_NAME}.zip"
+    make_tar_gz(package_dir, tar_pkg)
+    make_zip(package_dir, zip_pkg)
+    archives.extend([tar_pkg, zip_pkg])
 
-    tar_mig = OUTPUT_BASE_DIR / f"{MIGRATION_NAME}.tar.gz"
-    zip_mig = OUTPUT_BASE_DIR / f"{MIGRATION_NAME}.zip"
-    make_tar_gz(MIGRATION_DIR, tar_mig)
-    make_zip(MIGRATION_DIR, zip_mig)
+    if has_migration:
+        tar_mig = output_base_dir / f"{MIGRATION_NAME}.tar.gz"
+        zip_mig = output_base_dir / f"{MIGRATION_NAME}.zip"
+        make_tar_gz(migration_dir, tar_mig)
+        make_zip(migration_dir, zip_mig)
+        archives.extend([tar_mig, zip_mig])
 
     # 4. Hashes dos arquivos compactados
     print("\n[4/4] Calculando somas de verificação dos arquivos compactados...")
     checksums = []
-    for arch in (tar_pkg, zip_pkg, tar_mig, zip_mig):
+    for arch in archives:
         sha = compute_sha256(arch)
         size_mb = round(arch.stat().st_size / (1024 * 1024), 2)
         checksums.append(f"{sha}  {arch.name} ({size_mb} MB)")

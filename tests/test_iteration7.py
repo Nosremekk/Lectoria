@@ -31,7 +31,7 @@ def test_health_check_information_disclosure(client):
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "healthy"
-    assert data["version"] == "1.1.1"
+    assert data["version"] == config.APP_VERSION
     assert "data_dir" not in data
     assert "library_dir" not in data
 

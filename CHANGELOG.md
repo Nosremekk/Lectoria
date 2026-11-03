@@ -7,6 +7,26 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.1.2] - 2026-11-03
+
+### Adicionado
+- **Aprimoramentos de Leitura em Dispositivos Móveis (Iteração 11)**:
+  - Otimizações de renderização, suporte a gestos de toque, zoom responsivo e barra de ferramentas adaptativa para smartphones e tablets no leitor de PDF.
+  - Suíte de testes dedicada para funcionalidades móveis (`tests/test_iteration11.py`).
+- **Higienização Completa de Histórico Git (Iteração 13)**:
+  - Expurgado banco de dados SQLite real do histórico Git em todos os commits anteriores via `git-filter-repo`.
+  - `.gitignore` atualizado para exclusão permanente de bancos (`data/`, `*.db`, `*.sqlite*`, `backups/`, `dist/`).
+- **Portabilidade e Preparação para Publicação Aberta (Iteração 14)**:
+  - Parametrização completa do empacotador (`scripts/package.py --output-dir`) com padrão em `./dist` e remoção de caminhos absolutos locais.
+  - Separação de dependências: `requirements.txt` enxuto para produção (`fastapi`, `uvicorn`, `pypdf`) e `requirements-dev.txt` para desenvolvimento e testes (`pytest`, `httpx`).
+  - Licenciamento explícito: Licença MIT formalizada para o projeto (`LICENSE`) e Licença Apache 2.0 atribuída ao Mozilla PDF.js (`static/vendor/pdfjs/LICENSE`).
+  - Integração Contínua (CI) com GitHub Actions (`.github/workflows/ci.yml`) testando em Python 3.12 e 3.13.
+  - Documentação comunitária: `CONTRIBUTING.md` e `SECURITY.md`.
+  - Isolamento de backups de teste em diretório temporário (`tests/conftest.py`).
+  - Atualização do serviço systemd (`deployment/lectoria.service`) para caminho padrão `/opt/lectoria` e usuário `lectoria`.
+
+---
+
 ## [Iteração 10 — Empacotamento e Preparação para Transferência] - 2026-11-02
 
 ### Adicionado

@@ -196,7 +196,7 @@ cat > "${SERVICE_FILE}" <<EOF
 
 [Unit]
 Description=Lectoria — Servidor Pessoal de Livros Digitais
-Documentation=https://github.com/vini/lectoria
+Documentation=https://github.com/Nosremekk/Lectoria
 After=network-online.target
 Wants=network-online.target
 

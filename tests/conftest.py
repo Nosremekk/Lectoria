@@ -53,6 +53,9 @@ def test_env():
     config.DB_PATH = test_data / "lectoria.db"
     config.COVERS_DIR = test_data / "covers"
     config.COVERS_DIR.mkdir(parents=True, exist_ok=True)
+    test_backups = tmp_path / "backups"
+    test_backups.mkdir(parents=True, exist_ok=True)
+    config.BACKUPS_DIR = test_backups
 
     # Cria tabelas no banco de teste
     database.init_db()
@@ -70,6 +73,7 @@ def test_env():
         "library_dir": test_lib,
         "data_dir": test_data,
         "db_path": config.DB_PATH,
+        "backups_dir": test_backups,
     }
 
     shutil.rmtree(tmp_path, ignore_errors=True)

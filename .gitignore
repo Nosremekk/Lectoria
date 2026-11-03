@@ -7,13 +7,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Testes e Cache
+# Testes e Cobertura
 .pytest_cache/
 .coverage
 htmlcov/
 *.log
 
-# Editores e Sistema
+# Editores e Sistema Operacional
 .vscode/
 .idea/
 *.swp
@@ -21,7 +21,7 @@ htmlcov/
 *~
 .DS_Store
 
-# PDFs da biblioteca (permanecem apenas no sistema de arquivos local)
+# PDFs da biblioteca local (permanecem apenas no armazenamento local)
 books/*
 !books/.gitkeep
 
@@ -30,13 +30,25 @@ books/*
 .env.*
 !.env.example
 
-# Backups manuais locais (não versionar backups do banco)
+# Dados persistentes da aplicação e bancos SQLite
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.wal
+*.shm
+*.db.bak
+*.bak
+
+# Backups locais, caches e artefatos de empacotamento
 backups/
-
-# IMPORTANTE: Preservar e versionar dados persistentes da aplicação, exceto cache binário de capas
-!data/
-!data/**
-data/covers/
-data/covers/**
 cache/
-
+dist/
+build/
+*.tar.gz
+*.zip
+*.sha256

@@ -123,7 +123,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=config.APP_NAME,
     description="Servidor pessoal de livros digitais em PDF",
-    version="1.1.1",
+    version=config.APP_VERSION,
     lifespan=lifespan,
 )
 
@@ -649,7 +649,7 @@ async def health_check():
     return {
         "status": "healthy",
         "app_name": config.APP_NAME,
-        "version": "1.1.1",
+        "version": config.APP_VERSION,
     }
 
 
