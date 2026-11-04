@@ -202,7 +202,10 @@ def e2e_server():
 def browser_instance():
     """Instancia o Chromium Playwright em modo headless para a suíte."""
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        try:
+            browser = p.chromium.launch(headless=True)
+        except Exception as exc:
+            pytest.skip(f"Chromium não disponível no ambiente (execute 'playwright install chromium'): {exc}")
         yield browser
         browser.close()
 
