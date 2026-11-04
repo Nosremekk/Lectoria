@@ -52,6 +52,26 @@
         </svg>
       </button>
 
+      <!-- Ferramentas Específicas do EPUB (Fontes e Índice) -->
+      <div id="epub-header-tools" class="epub-header-tools" style="display: none; align-items: center; gap: 0.35rem;">
+        <button id="btn-epub-toc" class="btn btn-icon" title="Índice de Capítulos (TOC)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9h14V7H3v2zm0 4h14v-2H3v2zm0 4h14v-2H3v2zm16 0h2v-2h-2v2zm0-10v2h2V7h-2zm0 6h2v-2h-2v2z"/></svg>
+        </button>
+        <button id="btn-epub-font-smaller" class="btn btn-icon" title="Diminuir Fonte (A-)">
+          <span style="font-size: 0.78rem; font-weight: 700;">A-</span>
+        </button>
+        <span id="epub-font-size-label" style="font-size: 0.75rem; color: var(--text-muted); min-width: 24px; text-align: center;">100%</span>
+        <button id="btn-epub-font-larger" class="btn btn-icon" title="Aumentar Fonte (A+)">
+          <span style="font-size: 0.95rem; font-weight: 700;">A+</span>
+        </button>
+        <button id="btn-epub-font-family" class="btn btn-icon" title="Alternar Fonte (Serif / Sans)">
+          <span style="font-family: serif; font-size: 0.88rem; font-weight: 700;">F</span>
+        </button>
+        <button id="btn-epub-theme-sepia" class="btn btn-icon" title="Tema Sépia">
+          <span style="display: inline-block; width: 14px; height: 14px; border-radius: 50%; background-color: #e8d8be; border: 1px solid #c2a878;"></span>
+        </button>
+      </div>
+
       <!-- Grupo de Modos de Interação (Leitura, Marca-texto, Desenho) -->
       <div class="tool-mode-group" title="Modo de interação">
         <button id="btn-tool-read" class="tool-mode-btn active" title="Modo Leitura (Navegação padrão)">
@@ -153,6 +173,11 @@
     <div id="continuous-wrapper" class="continuous-container" style="display: none;">
       <!-- Slots de página renderizados sob demanda -->
     </div>
+
+    <!-- Modo Leitura EPUB Nativo -->
+    <div id="epub-wrapper" class="epub-container" style="display: none;">
+      <div id="epub-viewer" class="epub-viewer"></div>
+    </div>
   </main>
 
   <!-- Barra Flutuante de Seleção de Texto (Popover) -->
@@ -204,6 +229,17 @@
     </div>
     <div id="thumbnails-list" class="thumbnails-list">
       <!-- Miniaturas geradas sob demanda com lazy rendering -->
+    </div>
+  </aside>
+
+  <!-- Painel Lateral de Índice do EPUB (TOC Drawer) -->
+  <aside id="toc-drawer" class="thumbnails-drawer">
+    <div class="drawer-header">
+      <h3 class="drawer-title">Índice de Capítulos</h3>
+      <button id="btn-close-toc" class="btn btn-icon" title="Fechar índice">&times;</button>
+    </div>
+    <div id="toc-list" class="toc-list" style="padding: 0.75rem; overflow-y: auto; flex: 1;">
+      <!-- Capítulos carregados dinamicamente via EPUB.js -->
     </div>
   </aside>
 
@@ -482,17 +518,44 @@
           </div>
         </div>
 
+        <!-- Seção: Leitura EPUB (quando ativo) -->
+        <div id="mobile-sheet-epub-section" class="mobile-sheet-section" style="display: none;">
+          <div class="mobile-sheet-section-label">Ajustes do EPUB</div>
+          <div class="mobile-sheet-button-grid">
+            <button id="btn-mobile-epub-smaller" class="mobile-action-card">
+              <span style="font-size: 1.1rem; font-weight: 700;">A-</span>
+              <span>Fonte Menor</span>
+            </button>
+            <button id="btn-mobile-epub-larger" class="mobile-action-card">
+              <span style="font-size: 1.3rem; font-weight: 700;">A+</span>
+              <span>Fonte Maior</span>
+            </button>
+            <button id="btn-mobile-epub-font" class="mobile-action-card">
+              <span style="font-family: serif; font-size: 1.2rem; font-weight: 700;">Serif</span>
+              <span>Tipografia</span>
+            </button>
+            <button id="btn-mobile-epub-sepia" class="mobile-action-card">
+              <span style="display: inline-block; width: 18px; height: 18px; border-radius: 50%; background-color: #e8d8be; border: 1px solid #c2a878;"></span>
+              <span>Tema Sépia</span>
+            </button>
+          </div>
+        </div>
+
         <!-- Seção: Painéis e Ferramentas Adicionais -->
         <div class="mobile-sheet-section">
           <div class="mobile-sheet-section-label">Mais Ações</div>
           <div class="mobile-sheet-list">
+            <button id="btn-mobile-sheet-toc" class="mobile-sheet-list-item" style="display: none;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9h14V7H3v2zm0 4h14v-2H3v2zm0 4h14v-2H3v2zm16 0h2v-2h-2v2zm0-10v2h2V7h-2zm0 6h2v-2h-2v2z"/></svg>
+              <span>Índice de Capítulos (TOC)</span>
+            </button>
             <button id="btn-mobile-sheet-thumbnails" class="mobile-sheet-list-item">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z"/></svg>
               <span>Ver Miniaturas das Páginas</span>
             </button>
             <button id="btn-mobile-sheet-download" class="mobile-sheet-list-item">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-              <span>Baixar Arquivo PDF Original</span>
+              <span id="label-download-format">Baixar Arquivo Original</span>
             </button>
             <button id="btn-mobile-sheet-shortcuts" class="mobile-sheet-list-item">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 16h-2v-2h2v2zm1.07-7.75l-.9.92C12.45 11.9 12 12.5 12 14h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.75z"/></svg>
@@ -503,6 +566,73 @@
       </div>
     </div>
   </div>
+
+  <!-- Barra Flutuante Acoplável para Tablets (Fase 2) -->
+  <aside id="tablet-dock-toolbar" class="tablet-dock-toolbar dock-right" aria-label="Controles rápidos para tablet">
+    <div class="tablet-dock-header">
+      <button id="btn-tablet-dock-side" class="btn-dock-icon" title="Mudar lado da barra (Esquerda / Direita)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/></svg>
+      </button>
+      <span id="tablet-mode-badge" class="tablet-mode-badge">Ler</span>
+    </div>
+
+    <div class="tablet-dock-body">
+      <div class="tablet-dock-group">
+        <button id="btn-tablet-prev" class="tablet-dock-btn" title="Página / Seção Anterior">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+        </button>
+        <div id="tablet-page-pill" class="tablet-page-pill" title="Posição atual">1</div>
+        <button id="btn-tablet-next" class="tablet-dock-btn" title="Próxima Página / Seção">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+        </button>
+      </div>
+
+      <div class="tablet-dock-divider"></div>
+
+      <!-- Modos de Interação (PDF) -->
+      <div id="tablet-pdf-tools" class="tablet-dock-group">
+        <button id="btn-tablet-tool-read" class="tablet-dock-btn active" title="Modo Leitura">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5-2.24 5-5-2.24 5-5-5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+        </button>
+        <button id="btn-tablet-tool-highlight" class="tablet-dock-btn" title="Modo Marca-texto">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="m15.24 3.37 5.39 5.39-8.49 8.49H6.75v-5.39l8.49-8.49zm2.55-2.55c-.78-.78-2.05-.78-2.83 0l-1.42 1.41 5.39 5.39 1.41-1.42c.78-.78.78-2.05 0-2.83l-2.55-2.55zM2 22h20v2H2v-2z"/></svg>
+        </button>
+        <button id="btn-tablet-tool-draw" class="tablet-dock-btn" title="Modo Desenho">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+        </button>
+        <button id="btn-tablet-tool-eraser" class="tablet-dock-btn" title="Modo Borracha">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15.14 3c-.4 0-.8.15-1.11.45l-9.58 9.58c-.62.62-.62 1.61 0 2.23l5.29 5.29c.62.62 1.61.62 2.23 0l9.58-9.58c.62-.62.62-1.61 0-2.23l-5.29-5.29c-.31-.3-.72-.45-1.12-.45zm-3.17 11.02L8.5 10.55l5.52-5.52 3.47 3.47-5.52 5.52zM2 22h20v2H2v-2z"/></svg>
+        </button>
+      </div>
+
+      <!-- Controles Específicos para EPUB no Tablet -->
+      <div id="tablet-epub-tools" class="tablet-dock-group" style="display: none;">
+        <button id="btn-tablet-font-smaller" class="tablet-dock-btn" title="Diminuir Fonte (A-)">
+          <span style="font-size: 0.8rem; font-weight: 700;">A-</span>
+        </button>
+        <button id="btn-tablet-font-larger" class="tablet-dock-btn" title="Aumentar Fonte (A+)">
+          <span style="font-size: 1.05rem; font-weight: 700;">A+</span>
+        </button>
+        <button id="btn-tablet-font-family" class="tablet-dock-btn" title="Alternar Tipografia (Serif / Sans)">
+          <span style="font-family: serif; font-size: 0.95rem; font-weight: 700;">F</span>
+        </button>
+        <button id="btn-tablet-toc" class="tablet-dock-btn" title="Índice de Capítulos (TOC)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9h14V7H3v2zm0 4h14v-2H3v2zm0 4h14v-2H3v2zm16 0h2v-2h-2v2zm0-10v2h2V7h-2zm0 6h2v-2h-2v2z"/></svg>
+        </button>
+      </div>
+
+      <div class="tablet-dock-divider"></div>
+
+      <div class="tablet-dock-group">
+        <button id="btn-tablet-drawer" class="tablet-dock-btn" title="Caderno de Anotações">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+        </button>
+        <button id="btn-tablet-theme" class="tablet-dock-btn" title="Alternar Tema (Claro / Sépia / Escuro)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1z"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
 
   <!-- Barra de Navegação Inferior Fixa para Dispositivos Móveis -->
   <nav id="reader-mobile-bottom-bar" class="reader-mobile-bottom-bar" aria-label="Navegação móvel">
