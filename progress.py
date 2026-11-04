@@ -12,10 +12,12 @@ def save_progress(
     current_page: int,
     total_pages: int,
     user_id: int = 1,
+    progress_locator: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Salva ou atualiza o progresso de leitura para um usuário e livro específicos.
     Ajusta limites para garantir integridade matemática.
+    Suporta opcionalmente localizador de progresso (CFI) para livros EPUB.
     """
     if current_page < 1:
         current_page = 1
@@ -38,20 +40,21 @@ def save_progress(
 
         cursor.execute(
             """
-            INSERT INTO reading_progress (user_id, book_id, current_page, total_pages, percentage, updated_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO reading_progress (user_id, book_id, current_page, total_pages, percentage, progress_locator, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(user_id, book_id) DO UPDATE SET
                 current_page = excluded.current_page,
                 total_pages = excluded.total_pages,
                 percentage = excluded.percentage,
+                progress_locator = COALESCE(excluded.progress_locator, reading_progress.progress_locator),
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (user_id, book_id, current_page, total_pages, percentage),
+            (user_id, book_id, current_page, total_pages, percentage, progress_locator),
         )
 
         cursor.execute(
             """
-            SELECT user_id, book_id, current_page, total_pages, percentage, updated_at
+            SELECT user_id, book_id, current_page, total_pages, percentage, progress_locator, updated_at
             FROM reading_progress
             WHERE user_id = ? AND book_id = ?
             """,
@@ -67,7 +70,7 @@ def get_progress(book_id: str, user_id: int = 1) -> Optional[Dict[str, Any]]:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT user_id, book_id, current_page, total_pages, percentage, updated_at
+            SELECT user_id, book_id, current_page, total_pages, percentage, progress_locator, updated_at
             FROM reading_progress
             WHERE user_id = ? AND book_id = ?
             """,

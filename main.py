@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
@@ -176,7 +176,12 @@ async def csrf_and_security_middleware(request: Request, call_next):
 
     response = await call_next(request)
 
-    # 3. Emissão transparente do cookie CSRF em navegação de páginas HTML (fora de /api/)
+    # 3. Cabeçalhos fundamentais de proteção contra MIME sniffing, clickjacking e vazamento de referer
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+
+    # 4. Emissão transparente do cookie CSRF em navegação de páginas HTML (fora de /api/)
     is_html_page = (
         request.method in SAFE_HTTP_METHODS
         and not request.url.path.startswith("/api/")
@@ -361,6 +366,14 @@ async def serve_reader_page(book_id: str, request: Request):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Livro não encontrado ou arquivo indisponível.",
         )
+    return FileResponse(static_path / "reader.html")
+
+
+@app.get("/reader.html")
+async def serve_reader_page_html_alias(request: Request, id: Optional[str] = None):
+    """Redireciona links com parâmetro ?id=... para o caminho oficial /reader/{id}."""
+    if id:
+        return RedirectResponse(url=f"/reader/{id}", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
     return FileResponse(static_path / "reader.html")
 
 
@@ -661,6 +674,7 @@ async def list_books(
     order: str = "asc",
     status: Optional[str] = None,
     collection_id: Optional[int] = None,
+    format: Optional[str] = None,
 ):
     """Lista todos os livros disponíveis com filtros, coleções e ordenação para o usuário autenticado."""
     user = require_user(request)
@@ -670,6 +684,7 @@ async def list_books(
         order=order,
         status_filter=status,
         collection_id=collection_id,
+        format_filter=format,
         user_id=user["id"],
     )
     return {"books": books, "count": len(books)}
@@ -703,9 +718,11 @@ async def stream_book_file(book_id: str, request: Request):
     except BookNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
+    ext = file_path.suffix.lower()
+    media_type = "application/epub+zip" if ext == ".epub" else "application/pdf"
     return FileResponse(
         path=file_path,
-        media_type="application/pdf",
+        media_type=media_type,
         filename=file_path.name,
     )
 
@@ -713,8 +730,8 @@ async def stream_book_file(book_id: str, request: Request):
 @app.get("/api/books/{book_id}/download")
 async def download_book_file(book_id: str, request: Request):
     """
-    Entrega o arquivo original do PDF para download direto no dispositivo do leitor.
-    Utiliza streaming de arquivo sem carregar o PDF na memória.
+    Entrega o arquivo original do PDF ou EPUB para download direto no dispositivo do leitor.
+    Utiliza streaming de arquivo sem carregar o documento na memória.
     """
     user = require_user(request)
     try:
@@ -725,15 +742,20 @@ async def download_book_file(book_id: str, request: Request):
     except BookNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
+    ext = file_path.suffix.lower()
+    is_epub = ext == ".epub"
+    media_type = "application/epub+zip" if is_epub else "application/pdf"
+    default_ext = ".epub" if is_epub else ".pdf"
+
     # Sanitiza o nome do arquivo para o cabeçalho Content-Disposition
     raw_name = book.get("title") or file_path.stem
     clean_title = "".join(c for c in raw_name if c.isalnum() or c in (" ", "-", "_", ".")).strip()
-    if not clean_title.lower().endswith(".pdf"):
-        clean_title += ".pdf"
+    if not clean_title.lower().endswith(default_ext):
+        clean_title += default_ext
 
     return FileResponse(
         path=file_path,
-        media_type="application/pdf",
+        media_type=media_type,
         filename=clean_title,
         content_disposition_type="attachment",
     )
@@ -1145,6 +1167,7 @@ async def update_progress(book_id: str, request: Request):
 
     current_page = 1
     total_pages = book.get("page_count") or 1
+    progress_locator = None
 
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
@@ -1152,6 +1175,7 @@ async def update_progress(book_id: str, request: Request):
         current_page = int(body.get("current_page", 1))
         if body.get("total_pages"):
             total_pages = int(body["total_pages"])
+        progress_locator = body.get("progress_locator")
     else:
         raw_body = await request.body()
         if raw_body:
@@ -1161,6 +1185,7 @@ async def update_progress(book_id: str, request: Request):
                 current_page = int(data.get("current_page", 1))
                 if data.get("total_pages"):
                     total_pages = int(data["total_pages"])
+                progress_locator = data.get("progress_locator")
             except Exception:
                 pass
 
@@ -1169,6 +1194,7 @@ async def update_progress(book_id: str, request: Request):
         current_page=current_page,
         total_pages=total_pages,
         user_id=user["id"],
+        progress_locator=progress_locator,
     )
     return {"status": "success", "progress": updated}
 

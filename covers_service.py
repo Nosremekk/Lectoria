@@ -504,8 +504,12 @@ def get_or_create_book_cover(book_id: str) -> Dict[str, Any]:
             "content": svg_str.encode("utf-8"),
         }
 
-    # 3. Tenta extrair imagem real da primeira página do PDF sob demanda
-    extracted = _extract_cover_from_pdf_file(pdf_path)
+    # 3. Tenta extrair imagem real de capa (PDF ou EPUB) sob demanda
+    if pdf_path.suffix.lower() == ".epub":
+        from epub_service import extract_epub_cover_bytes
+        extracted = extract_epub_cover_bytes(pdf_path)
+    else:
+        extracted = _extract_cover_from_pdf_file(pdf_path)
     now_iso = datetime.now().isoformat()
 
     if extracted is not None:

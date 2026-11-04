@@ -40,6 +40,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const searchInput = document.getElementById("search-input");
   const sortSelect = document.getElementById("sort-select");
   const collectionSelect = document.getElementById("collection-select");
+  const formatSelect = document.getElementById("format-select");
   const btnScan = document.getElementById("btn-scan");
   const scanText = document.getElementById("scan-text");
   const btnBackup = document.getElementById("btn-backup");
@@ -113,6 +114,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentTheme = localStorage.getItem("lectoria_theme") || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
   let currentStatus = "all";
   let currentCollectionId = "";
+  let currentFormat = "";
   let searchTimeout = null;
   let allCollections = [];
   let selectedBookForCol = null;
@@ -289,6 +291,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (order) params.set("order", order);
     if (currentStatus && currentStatus !== "all") params.set("status", currentStatus);
     if (currentCollectionId) params.set("collection_id", currentCollectionId);
+    if (currentFormat) params.set("format", currentFormat);
 
     try {
       booksCountEl.textContent = "Carregando acervo...";
@@ -336,6 +339,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const total = book.page_count || book.progress_total_pages || 1;
         const page = book.current_page || 1;
         const coverUrl = book.cover_url || `/api/books/${encodeURIComponent(book.id)}/cover`;
+        const bookFormat = (book.format || (book.filename && book.filename.toLowerCase().endsWith(".epub") ? "epub" : "pdf")).toUpperCase();
 
         const collectionsChipsHtml = (book.collections || []).map(c => `
           <span class="collection-chip">${escapeHtml(c.name)}</span>
@@ -352,6 +356,7 @@ document.addEventListener("DOMContentLoaded", () => {
                   loading="lazy"
                 >
                 <div class="book-cover-badges">
+                  <span class="tag-badge tag-format tag-format-${bookFormat.toLowerCase()}">${bookFormat}</span>
                   ${isCompleted ? '<span class="tag-badge tag-completed">Concluído</span>' : ''}
                   ${hasProgress ? '<span class="tag-badge tag-in-progress">Lendo</span>' : ''}
                 </div>
@@ -377,7 +382,7 @@ document.addEventListener("DOMContentLoaded", () => {
               <div class="book-author">${escapeHtml(book.author || "Autor não informado")}</div>
 
               <div class="book-meta-details">
-                <span>${total} págs.</span>
+                <span>${bookFormat === "EPUB" ? `${total} cap.` : `${total} págs.`}</span>
                 <span>&bull;</span>
                 <span>${formatBytes(book.filesize)}</span>
               </div>
@@ -389,7 +394,7 @@ document.addEventListener("DOMContentLoaded", () => {
                   <div class="progress-bar-fill ${isCompleted ? "completed" : ""}" style="width: ${percentage}%"></div>
                 </div>
                 <div class="progress-label">
-                  <span>${isCompleted ? "Concluído" : hasProgress ? `Pág. ${page} de ${total}` : "Não iniciado"}</span>
+                  <span>${isCompleted ? "Concluído" : hasProgress ? (bookFormat === "EPUB" ? `${percentage}% concluído` : `Pág. ${page} de ${total}`) : "Não iniciado"}</span>
                   <span>${percentage > 0 ? `${percentage}%` : ""}</span>
                 </div>
               </div>
@@ -399,9 +404,9 @@ document.addEventListener("DOMContentLoaded", () => {
               <button type="button" class="btn-card-menu btn-edit-book-col" data-id="${book.id}" data-title="${escapeHtml(book.title)}" title="Gerenciar Coleções">
                 Coleções
               </button>
-              <a href="/api/books/${encodeURIComponent(book.id)}/download" class="btn-card-menu btn-download-book" title="Baixar PDF Original">
+              <a href="/api/books/${encodeURIComponent(book.id)}/download" class="btn-card-menu btn-download-book" title="Baixar ${bookFormat}">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-                <span>PDF</span>
+                <span>${bookFormat}</span>
               </a>
             </div>
           </article>
@@ -415,6 +420,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const total = book.page_count || book.progress_total_pages || 1;
         const page = book.current_page || 1;
         const coverUrl = book.cover_url || `/api/books/${encodeURIComponent(book.id)}/cover`;
+        const bookFormat = (book.format || (book.filename && book.filename.toLowerCase().endsWith(".epub") ? "epub" : "pdf")).toUpperCase();
 
         const collectionsChipsHtml = (book.collections || []).map(c => `
           <span class="collection-chip">${escapeHtml(c.name)}</span>
@@ -427,10 +433,13 @@ document.addEventListener("DOMContentLoaded", () => {
             </a>
 
             <a href="/reader/${book.id}" class="list-info" style="text-decoration: none; color: inherit;">
-              <div class="list-title">${escapeHtml(book.title)}</div>
+              <div class="list-title">
+                ${escapeHtml(book.title)}
+                <span class="tag-badge tag-format tag-format-${bookFormat.toLowerCase()}" style="margin-left: 0.4rem; vertical-align: middle;">${bookFormat}</span>
+              </div>
               <div class="list-author">${escapeHtml(book.author || "Autor não informado")}</div>
               <div class="list-meta">
-                ${total} págs. &bull; ${formatBytes(book.filesize)} &bull; Adicionado em ${formatDate(book.created_at)}
+                ${bookFormat === "EPUB" ? `${total} cap.` : `${total} págs.`} &bull; ${formatBytes(book.filesize)} &bull; Adicionado em ${formatDate(book.created_at)}
                 ${book.progress_updated_at ? `&bull; Lido em ${formatDate(book.progress_updated_at)}` : ""}
               </div>
               ${collectionsChipsHtml ? `<div class="book-collections-chips">${collectionsChipsHtml}</div>` : ""}
@@ -458,7 +467,7 @@ document.addEventListener("DOMContentLoaded", () => {
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
               </button>
-              <a href="/api/books/${encodeURIComponent(book.id)}/download" class="btn btn-icon btn-download-book" title="Baixar PDF Original">
+              <a href="/api/books/${encodeURIComponent(book.id)}/download" class="btn btn-icon btn-download-book" title="Baixar ${bookFormat}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
               </a>
               <button type="button" class="btn btn-icon btn-edit-book-col" data-id="${book.id}" data-title="${escapeHtml(book.title)}" title="Gerenciar Coleções">
@@ -599,6 +608,13 @@ document.addEventListener("DOMContentLoaded", () => {
     currentCollectionId = collectionSelect.value;
     loadBooks();
   });
+
+  if (formatSelect) {
+    formatSelect.addEventListener("change", () => {
+      currentFormat = formatSelect.value;
+      loadBooks();
+    });
+  }
 
   searchInput.addEventListener("input", () => {
     clearTimeout(searchTimeout);

@@ -122,9 +122,13 @@ def scan_library(source_id: Optional[int] = None) -> Dict[str, int]:
                 dirs[:] = [d for d in dirs if not d.startswith(".")]
 
                 for filename in files:
-                    if filename.startswith(".") or not filename.lower().endswith(".pdf"):
+                    if filename.startswith("."):
+                        continue
+                    ext = filename.lower().split(".")[-1] if "." in filename else ""
+                    if ext not in ("pdf", "epub"):
                         continue
 
+                    file_format = "epub" if ext == "epub" else "pdf"
                     full_path = (Path(root) / filename).resolve()
 
                     # Verificação de segurança: garante que o arquivo está contido na fonte autorizada
@@ -164,9 +168,14 @@ def scan_library(source_id: Optional[int] = None) -> Dict[str, int]:
                             continue
 
                         # Arquivo foi alterado
-                        meta = _extract_pdf_metadata(full_path)
+                        if file_format == "epub":
+                            from epub_service import extract_epub_metadata
+                            meta = extract_epub_metadata(full_path)
+                        else:
+                            meta = _extract_pdf_metadata(full_path)
+
                         if existing.get("cover_type") != "custom":
-                            # Invalida cache de capa extraída quando o PDF original foi alterado
+                            # Invalida cache de capa extraída quando o arquivo original foi alterado
                             if config.COVERS_DIR.exists():
                                 for cov_file in config.COVERS_DIR.glob(f"{existing['id']}_extracted*"):
                                     try:
@@ -177,7 +186,7 @@ def scan_library(source_id: Optional[int] = None) -> Dict[str, int]:
                                 """
                                 UPDATE books
                                 SET title = ?, author = ?, filename = ?, filesize = ?,
-                                    page_count = ?, file_hash = ?, is_missing = 0,
+                                    page_count = ?, file_hash = ?, format = ?, is_missing = 0,
                                     cover_type = 'none', cover_path = NULL, cover_source_hash = NULL,
                                     updated_at = CURRENT_TIMESTAMP
                                 WHERE id = ?
@@ -189,6 +198,7 @@ def scan_library(source_id: Optional[int] = None) -> Dict[str, int]:
                                     current_size,
                                     meta["page_count"],
                                     current_hash,
+                                    file_format,
                                     existing["id"],
                                 ),
                             )
@@ -197,7 +207,7 @@ def scan_library(source_id: Optional[int] = None) -> Dict[str, int]:
                                 """
                                 UPDATE books
                                 SET title = ?, author = ?, filename = ?, filesize = ?,
-                                    page_count = ?, file_hash = ?, is_missing = 0, updated_at = CURRENT_TIMESTAMP
+                                    page_count = ?, file_hash = ?, format = ?, is_missing = 0, updated_at = CURRENT_TIMESTAMP
                                 WHERE id = ?
                                 """,
                                 (
@@ -207,6 +217,7 @@ def scan_library(source_id: Optional[int] = None) -> Dict[str, int]:
                                     current_size,
                                     meta["page_count"],
                                     current_hash,
+                                    file_format,
                                     existing["id"],
                                 ),
                             )
@@ -214,11 +225,16 @@ def scan_library(source_id: Optional[int] = None) -> Dict[str, int]:
                     else:
                         # Novo livro encontrado nesta fonte
                         book_id = str(uuid.uuid4())
-                        meta = _extract_pdf_metadata(full_path)
+                        if file_format == "epub":
+                            from epub_service import extract_epub_metadata
+                            meta = extract_epub_metadata(full_path)
+                        else:
+                            meta = _extract_pdf_metadata(full_path)
+
                         cursor.execute(
                             """
-                            INSERT INTO books (id, source_id, title, author, filename, rel_path, filesize, page_count, file_hash, is_missing)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                            INSERT INTO books (id, source_id, title, author, filename, rel_path, filesize, page_count, file_hash, format, is_missing)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                             """,
                             (
                                 book_id,
@@ -230,6 +246,7 @@ def scan_library(source_id: Optional[int] = None) -> Dict[str, int]:
                                 current_size,
                                 meta["page_count"],
                                 current_hash,
+                                file_format,
                             ),
                         )
                         stats["added"] += 1
@@ -261,11 +278,12 @@ def get_books(
     status_filter: Optional[str] = None,
     collection_id: Optional[int] = None,
     source_id: Optional[int] = None,
+    format_filter: Optional[str] = None,
     user_id: int = 1,
 ) -> List[Dict[str, Any]]:
     """
     Retorna a lista de livros disponíveis, enriquecida com o progresso de leitura
-    e coleções associadas. Suporta busca, filtros de status e ordenação flexível.
+    e coleções associadas. Suporta busca, filtros de status, formato e ordenação flexível.
     """
     with get_db() as conn:
         cursor = conn.cursor()
@@ -279,6 +297,7 @@ def get_books(
                 b.filename,
                 b.filesize,
                 b.page_count,
+                b.format,
                 b.cover_type,
                 b.cover_path,
                 b.cover_updated_at,
@@ -287,6 +306,7 @@ def get_books(
                 p.current_page,
                 p.total_pages as progress_total_pages,
                 p.percentage as progress_percentage,
+                p.progress_locator,
                 p.updated_at as progress_updated_at
             FROM books b
             LEFT JOIN library_sources s ON b.source_id = s.id
@@ -318,6 +338,11 @@ def get_books(
             sql += " AND b.source_id = ?"
             params.append(source_id)
 
+        # Filtro por formato (pdf / epub)
+        if format_filter in ("pdf", "epub"):
+            sql += " AND b.format = ?"
+            params.append(format_filter)
+
         # Filtro por status de leitura
         if status_filter == "in_progress":
             sql += " AND (p.current_page > 1 AND COALESCE(p.percentage, 0) < 100)"
@@ -348,6 +373,7 @@ def get_books(
         books = [dict(r) for r in rows]
 
         for b in books:
+            b["format"] = b.get("format") or ("epub" if b["filename"].lower().endswith(".epub") else "pdf")
             ctype = b.get("cover_type") or "none"
             b["cover_type"] = ctype
             b["has_custom_cover"] = ctype == "custom"
@@ -395,6 +421,7 @@ def get_book(book_id: str, user_id: int = 1) -> Dict[str, Any]:
                 b.filename,
                 b.filesize,
                 b.page_count,
+                b.format,
                 b.cover_type,
                 b.cover_path,
                 b.cover_updated_at,
@@ -405,6 +432,7 @@ def get_book(book_id: str, user_id: int = 1) -> Dict[str, Any]:
                 p.current_page,
                 p.total_pages as progress_total_pages,
                 p.percentage as progress_percentage,
+                p.progress_locator,
                 p.updated_at as progress_updated_at
             FROM books b
             LEFT JOIN library_sources s ON b.source_id = s.id
@@ -434,6 +462,20 @@ def get_book(book_id: str, user_id: int = 1) -> Dict[str, Any]:
             (book_id, user_id),
         )
         data["collections"] = [dict(c) for c in cursor.fetchall()]
+        data["format"] = data.get("format") or ("epub" if data["filename"].lower().endswith(".epub") else "pdf")
+        if data["format"] == "epub":
+            try:
+                from epub_service import extract_epub_metadata
+                epub_meta = extract_epub_metadata(resolve_book_path(book_id))
+                data["is_drm"] = bool(epub_meta.get("is_drm"))
+                data["drm_type"] = epub_meta.get("drm_type")
+            except Exception:
+                data["is_drm"] = False
+                data["drm_type"] = None
+        else:
+            data["is_drm"] = False
+            data["drm_type"] = None
+
         ctype = data.get("cover_type") or "none"
         data["cover_type"] = ctype
         data["has_custom_cover"] = ctype == "custom"

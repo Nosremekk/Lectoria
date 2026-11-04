@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Generator, Optional
 import config
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -115,6 +115,10 @@ def init_db(db_path: Optional[Path] = None) -> None:
             if current_version < 5:
                 _apply_migration_v5(cursor)
                 cursor.execute("INSERT INTO schema_migrations (version) VALUES (5);")
+
+            if current_version < 6:
+                _apply_migration_v6(cursor)
+                cursor.execute("INSERT INTO schema_migrations (version) VALUES (6);")
 
             conn.commit()
         finally:
@@ -513,6 +517,25 @@ def _apply_migration_v5(cursor: sqlite3.Cursor) -> None:
         cursor.execute("ALTER TABLE books ADD COLUMN cover_source_hash TEXT;")
     if "cover_updated_at" not in book_cols:
         cursor.execute("ALTER TABLE books ADD COLUMN cover_updated_at TIMESTAMP;")
+
+
+def _apply_migration_v6(cursor: sqlite3.Cursor) -> None:
+    """
+    Schema V6:
+    - Suporte a formato de arquivo ('pdf' ou 'epub') na tabela books.
+    - Suporte a localizador de progresso (CFI / locator) na tabela reading_progress.
+    """
+    cursor.execute("PRAGMA table_info(books);")
+    book_cols = [r["name"] for r in cursor.fetchall()]
+    if "format" not in book_cols:
+        cursor.execute("ALTER TABLE books ADD COLUMN format TEXT NOT NULL DEFAULT 'pdf';")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_format ON books(format);")
+
+    cursor.execute("PRAGMA table_info(reading_progress);")
+    prog_cols = [r["name"] for r in cursor.fetchall()]
+    if "progress_locator" not in prog_cols:
+        cursor.execute("ALTER TABLE reading_progress ADD COLUMN progress_locator TEXT;")
+
 
 
 
