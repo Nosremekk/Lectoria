@@ -7,6 +7,43 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.2.0] - 2026-11-04
+
+### Adicionado
+- **Suporte Nativo ao Formato EPUB (Iterações 18 e 19)**:
+  - Renderização fluida de livros digitais em formato `.epub` no navegador via integração limpa com EPUB.js e JSZip locais (sem chamadas a servidores externos ou CDNs).
+  - Extração automática de metadados editoriais (título, autor, idioma, descrição) e capa embutida no arquivo EPUB.
+  - Navegação hierárquica por índice de capítulos (Table of Contents / TOC) em painel lateral dedicado.
+  - Personalização da leitura: controle de tamanho de fonte (A- e A+), alternância tipográfica (fontes Serif e Sans-Serif) e três temas visuais otimizados (Claro, Escuro e Sépia).
+  - Filtro e visualização unificada na biblioteca: suporte simultâneo a documentos PDF e livros EPUB com indicadores visuais de formato e filtragem instantânea na interface.
+  - Nota de compatibilidade: EPUBs comerciais protegidos por DRM (Adobe / FairPlay / LCP) não são suportados.
+- **Persistência de Progresso com Canonical Fragment Identifier (CFI)**:
+  - Rastreamento e persistência bidirecional de progresso para livros EPUB utilizando o padrão oficial EPUB-CFI (`reading_progress.cfi`), sincronizado automaticamente com a biblioteca e com a API do servidor.
+- **Barra de Ferramentas Acoplável para Tablets (Tablet Dock Toolbar)**:
+  - Barra de ações compacta e flutuante (`#tablet-dock-toolbar`) adaptada para telas sensíveis ao toque entre 768px e 1280px (iPad Mini, iPad padrão, iPad Air/Pro e tablets Android).
+  - Botão de alternância de ancoragem lateral (esquerda ou direita) para máxima ergonomia de leitura com uma das mãos, persistido no armazenamento local (`localStorage`).
+- **Leitor Adaptativo para Smartphones**:
+  - Barra inferior fixa (`#reader-mobile-bottom-bar`) com botões táteis de 44x44px, indicador de página centralizado em formato de pílula (pill) e modal de navegação numérica direta otimizado para teclado virtual de celular.
+  - Gaveta inferior expansível (Mobile Bottom Sheet) com acesso rápido a modos de estudo, zoom e opções específicas de tipografia do EPUB.
+- **Validação de Ponta a Ponta com Navegador Real (E2E Playwright - Iteração 20)**:
+  - Suíte completa de 13 testes de navegador em Chromium real (`tests/e2e/test_browser_e2e.py`), validando visualmente e funcionalmente 8 resoluções de referência, ausência de rolagem involuntária, isolamento de scripts maliciosos em iframes e concorrência de leitura.
+
+### Modificado / Corrigido
+- **Correção da Rolagem Involuntária em PDFs Extensos**:
+  - Resolução definitiva de corrida entre scroll virtualizado, renderização de slots e persistência de progresso em documentos de 50 a 200+ páginas.
+  - Adição de travas atômicas (`isProgrammaticScroll`, `isRestoringProgress`), cancelamento explícito de debounce de rolagem e compensação dinâmica de altura em slots virtualizados.
+  - Isolamento de gestos manuais: adição de `touch-action: none !important;` na camada de desenho livre vetorial e borracha, eliminando arrastos involuntários do viewport durante anotações.
+- **Migração do Banco de Dados SQLite v5 para v6**:
+  - Migração idempotente e transacional com cópia de segurança preventiva antes da aplicação de DDL.
+  - Adição da coluna `cfi` na tabela `reading_progress` e da coluna `format` na tabela `books`.
+- **Hardening de Segurança para Arquivos EPUB e XML**:
+  - Defesa contra ZIP bombs (limite de entradas e taxa de descompactação), rejeição de ataques de Path Traversal em caminhos zip e sanitização rigorosa de entidades XML (proteção contra Billion Laughs e expansão externa DTD).
+  - Sanitização de conteúdos HTML em capítulos EPUB contra injeções de script (`<script>`) e links com esquemas inseguros (`javascript:`).
+- **Otimização de Carregamento de Recursos**:
+  - Carregamento assíncrono e sob demanda dos scripts do motor EPUB (`jszip` e `epub.js`), garantindo que a abertura de arquivos PDF permaneça ultraleve e sem nenhum overhead de memória ou CPU.
+
+---
+
 ## [1.1.2] - 2026-11-03
 
 ### Adicionado

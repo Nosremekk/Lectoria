@@ -26,7 +26,7 @@ import zipfile
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_BASE_DIR = PROJECT_ROOT / "dist"
 
-PACKAGE_VERSION = "1.1.2"
+PACKAGE_VERSION = "1.2.0"
 TARGET_NAME = f"Lectoria-{PACKAGE_VERSION}-linux-x86_64"
 MIGRATION_NAME = f"Lectoria-{PACKAGE_VERSION}-migration-bundle"
 
@@ -214,7 +214,7 @@ def create_documentation_files(pkg_root: Path, git_info: dict):
         "       ./install.sh\n\n"
         "   OU INSTALAÇÃO COM MIGRAÇÃO DE BIBLIOTECA (MODALIDADE B):\n"
         "   Se você possui o pacote de migração (banco e capas anteriores):\n"
-        "       ./install.sh --with-migration /caminho/do/Lectoria-1.1.2-migration-bundle\n\n"
+        f"       ./install.sh --with-migration /caminho/do/{MIGRATION_NAME}\n\n"
         "4. ATIVAÇÃO DO SERVIÇO AUTOMÁTICO (SYSTEMD):\n"
         "   O script install.sh gera automaticamente o arquivo lectoria.service configurado.\n"
         "   Para ativá-lo no boot do Linux Mint:\n"
@@ -260,9 +260,9 @@ def create_documentation_files(pkg_root: Path, git_info: dict):
         "   • INSTALAÇÃO LIMPA: Execute './install.sh'. Um banco novo e limpo será criado.\n"
         "     Ao abrir o navegador pela primeira vez, o assistente solicitará a criação\n"
         "     do seu usuário administrador mestre.\n"
-        "   • MIGRAÇÃO: Copie também a pasta 'Lectoria-1.1.2-migration-bundle/' para o Positivo\n"
+        f"   • MIGRAÇÃO: Copie também a pasta '{MIGRATION_NAME}/' para o Positivo\n"
         "     e execute:\n"
-        "       ./install.sh --with-migration /caminho/para/Lectoria-1.1.2-migration-bundle\n"
+        f"       ./install.sh --with-migration /caminho/para/{MIGRATION_NAME}\n"
         "     Seus usuários, anotações, destaques, desenhos, progresso e capas serão 100% restaurados,\n"
         "     e as sessões ativas serão invalidadas por segurança para um login novo.\n\n"
         "6. COMO VERIFICAR A INTEGRIDADE DO PACOTE ANTES DE QUALQUER AÇÃO?\n"

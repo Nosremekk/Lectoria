@@ -1,6 +1,6 @@
-# Lectoria — Servidor Pessoal de Livros Digitais (v1.1.2)
+# Lectoria — Servidor Pessoal de Livros Digitais (v1.2.0)
 
-O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para gerenciamento e leitura de documentos PDF, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
+O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para gerenciamento e leitura de documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
 
 Foi concebido para operar perfeitamente mesmo em hardware modesto — como computadores antigos e mini-PCs domésticos com processadores de baixo consumo (ex: Intel Celeron), convivendo de forma estável e silenciosa com serviços de mídia como o Jellyfin.
 
@@ -9,18 +9,25 @@ Foi concebido para operar perfeitamente mesmo em hardware modesto — como compu
 ## 1. Principais Recursos
 
 - **Biblioteca Pessoal Editorial com Múltiplas Fontes**:
-  - **Identidade Visual Editorial Própria**: Paleta inspirada em encadernações e papelaria clássica nos temas Claro (Papel Marfim `#F6F3EC` e Tinta Carvão `#1C1B18` com acento Terracota `#9E3B24`) e Escuro (Obsidiana Quente `#141311` e Pergaminho `#EAE5DC`), usando pilhas tipográficas locais (Serifada Editorial para títulos, Sans-serif para controles e Monoespaçada Tabular para métricas).
+  - **Identidade Visual Editorial Própria**: Paleta inspirada em encadernações e papelaria clássica nos temas Claro (Papel Marfim `#F6F3EC` e Tinta Carvão `#1C1B18` com acento Terracota `#9E3B24`), Escuro (Obsidiana Quente `#141311` e Pergaminho `#EAE5DC`) e Sépia Conforto, usando pilhas tipográficas locais (Serifada Editorial para títulos, Sans-serif para controles e Monoespaçada Tabular para métricas).
+  - Suporte simultâneo a **arquivos PDF e livros EPUB nativos**, com filtros rápidos por formato na interface web.
   - Suporte a **múltiplas fontes e diretórios locais configuráveis**, com **Seletor Visual de Diretórios** integrado (navegador visual seguro pelo navegador web para acesso local ou em rede doméstica + integração com seletor nativo do sistema via Zenity/KDialog quando utilizado diretamente na máquina do servidor).
-  - Varredura sob demanda (*on-demand scanner*) com extração rápida de metadados (`pypdf`), sem modificação dos arquivos originais.
+  - Varredura sob demanda (*on-demand scanner*) com extração rápida de metadados (`pypdf` para PDF e parser XML/ZIP nativo para EPUB), sem modificação dos arquivos originais.
   - Garantia estrita de preservação: remoção ou desativação de fontes **nunca apaga arquivos físicos do disco**.
   - **Sistema de Capas em 3 Camadas (`covers_service.py`)**:
-    1. **Extração e Cache da Capa Real do PDF**: Extração automática sob demanda da imagem da primeira página do PDF (`JPEG`/`PNG`) ou cache da miniatura renderizada pelo PDF.js em `data/covers/` (ignorado pelo Git), com invalidação automática se o arquivo PDF mudar.
+    1. **Extração e Cache da Capa Real (PDF e EPUB)**: Extração automática sob demanda da imagem da primeira página do PDF ou da capa embutida no EPUB (`JPEG`/`PNG`) ou cache da miniatura renderizada em `data/covers/` (ignorado pelo Git), com invalidação automática se o arquivo mudar.
     2. **Capas Personalizadas**: Upload manual de capa (`PNG`, `JPEG`, `WebP` até 5 MB) com validação estrita de assinatura binária (*magic bytes*), substituição e restauração da capa automática a qualquer momento.
-    3. **Capa Editorial Substituta Determinística (SVG)**: Geração vetorial determinística baseada em hash SHA-256 do livro quando o PDF não contém imagem de capa identificável.
+    3. **Capa Editorial Substituta Determinística (SVG)**: Geração vetorial determinística baseada em hash SHA-256 do livro quando o arquivo não contém imagem de capa identificável.
   - Busca instantânea por título e autor, filtros por estado de leitura e ordenação multicritério.
   - Gestão de Coleções personalizadas com atribuição de livros em lote.
+- **Suporte Nativo a EPUB com EPUB.js e JSZip Locais**:
+  - Renderização completa de arquivos `.epub` diretamente no navegador, sem conversores intermediários e sem requisições para a internet.
+  - Navegação hierárquica por capítulos (Sumário / TOC) com gaveta lateral expansível.
+  - Ajustes tipográficos em tempo real: aumento/diminuição de fonte (A-/A+), alternância entre famílias tipográficas (Serif e Sans-serif) e três temas visuais (Claro, Escuro e Sépia).
+  - Persistência e restauração de progresso de leitura contínua via padrão oficial **EPUB-CFI** (*Canonical Fragment Identifier*).
+  - *Nota:* EPUBs com proteção anticópia/DRM comercial (Adobe / FairPlay / LCP) não são suportados.
 - **Download Direto de Documentos**:
-  - Download rápido do PDF original diretamente da biblioteca (cards em grade e lista) ou da barra de ferramentas do leitor.
+  - Download rápido do PDF ou EPUB original diretamente da biblioteca (cards em grade e lista) ou da barra de ferramentas do leitor.
   - Streaming em chunks com consumo de memória RAM próximo de zero e cabeçalho `Content-Disposition: attachment`.
 - **Perfis de Usuário e Autenticação Segura**:
   - Suporte a múltiplos perfis de usuário com dois papéis de acesso: Administrador (`admin`) e Leitor (`reader`).
@@ -28,18 +35,18 @@ Foi concebido para operar perfeitamente mesmo em hardware modesto — como compu
   - Proteção contra força bruta com rate-limiting em memória (bloqueio temporário após tentativas consecutivas).
   - Isolamento estrito de dados pessoais: catálogo de livros compartilhado, mas progresso, destaques, anotações, desenhos e coleções totalmente individuais para cada usuário.
   - Gerenciamento completo via interface web (modal administrativo) ou via terminal com `scripts/manage_users.py`.
-- **Leitor Integrado de Alta Performance (PDF.js)**:
-  - Modos de leitura em **Página Única** e **Rolagem Contínua Virtualizada** (descarregamento dinâmico de páginas fora do viewport).
-  - **Experiência Móvel Otimizada**: Interface adaptativa para smartphones e tablets, controles por toque, barra de ferramentas compacta e zoom responsivo.
-  - Streaming eficiente via **HTTP Range Requests (206 Partial Content)**, evitando o carregamento do arquivo PDF inteiro na memória RAM.
+- **Leitor Adaptativo de Alta Performance (PDF e EPUB)**:
+  - Modos de leitura em **Página Única** e **Rolagem Contínua Virtualizada** com proteção avançada contra saltos involuntários em documentos extensos (200+ páginas).
+  - **Barra de Ferramentas Acoplável para Tablets (`#tablet-dock-toolbar`)**: Ancoragem flutuante configurável à esquerda ou direita para uso com uma mão em iPads e tablets.
+  - **Experiência Móvel Completa em Smartphones**: Barra inferior tátil de 44px (`#reader-mobile-bottom-bar`), gaveta expansível de opções e modal com teclado puramente numérico para pulo direto de páginas.
+  - Streaming eficiente de PDFs via **HTTP Range Requests (206 Partial Content)**, evitando o carregamento do arquivo inteiro na memória RAM.
   - Salvamento automático contínuo de progresso de leitura via API e Beacon API.
-  - Temas Claro e Escuro com paletas de baixo contraste para conforto visual prolongado.
-  - Gaveta lateral de miniaturas (*thumbnails*) com *lazy rendering* via `IntersectionObserver` e descarte automático de ciclo de CPU quando fechada.
+  - Gaveta lateral de miniaturas (*thumbnails*) para PDFs com *lazy rendering* via `IntersectionObserver`.
   - Barra de progresso visual, histórico de navegação (`b`) e atalhos completos de teclado (`?`).
 - **Caderno de Estudos e Anotações Avançado**:
   - Marca-texto com 5 cores e gravação de retângulos normalizados independentes de zoom ou resolução de tela.
   - Anotações e notas vinculadas a trechos destacados ou avulsas por página.
-  - Desenho livre vetorial em SVG sobreposto às páginas com ferramenta de borracha geométrica de alta precisão.
+  - Desenho livre vetorial em SVG sobreposto às páginas com ferramenta de borracha geométrica de alta precisão e proteção `touch-action: none` contra rolagem involuntária.
   - Painel de estudos com busca local, filtros dinâmicos e navegação direta para os trechos anotados.
   - Exportação formatada em **Markdown (`.md`)** e exportação estruturada em **JSON (`.json`)**.
 - **Segurança, Integridade e Estabilidade**:
@@ -458,7 +465,22 @@ source .venv/bin/activate
 pytest -v tests/
 ```
 
-A suíte possui **82 testes automatizados**, todos isolados e executados em diretórios temporários (`tmp_path`), cobrindo:
+A suíte completa possui **119 testes automatizados** aprovados, cobrindo testes unitários, testes de integração de sistema e testes de ponta a ponta (E2E) com navegador real Chromium:
+
+```bash
+# Executa os 106 testes unitários e de integração
+pytest -v tests/test_*.py
+
+# Executa os 13 testes de ponta a ponta (E2E) em navegador real Playwright Chromium
+pytest -v tests/e2e/test_browser_e2e.py
+
+# Executa toda a suíte (119 testes)
+pytest -v tests/
+```
+
+> **Nota para execução de testes E2E:** Para executar os testes E2E com Chromium em ambiente local de desenvolvimento, instale as dependências com `pip install -r requirements-dev.txt` e baixe o binário do Chromium com `playwright install chromium`. Ambientes de produção não necessitam de Playwright nem Chromium.
+
+A suíte cobre exaustivamente:
 - Catálogo, scanner e metadados (`test_library.py`).
 - Coleções e associações em lote (`test_collections.py`, `test_iteration2_features.py`).
 - Filtros de estado de leitura, busca e ordenação (`test_filters_and_sorting.py`).
@@ -467,24 +489,28 @@ A suíte possui **82 testes automatizados**, todos isolados e executados em dire
 - Destaques, notas, desenhos vetoriais e algoritmo geométrico da borracha (`test_annotations.py`).
 - Exportação Markdown/JSON, preview de importação e rollback (`test_iteration4.py`).
 - Limites de DoS na importação, validação de profundidade JSON, concorrência de backups e retenção (`test_iteration5.py`).
-- Download de PDFs originais, gerenciamento de fontes, symlinks, scrypt, rate limiting, controle de papéis e isolamento de dados por usuário (`test_iteration6.py`).
+- Download de documentos originais, gerenciamento de fontes, symlinks, scrypt, rate limiting, controle de papéis e isolamento de dados por usuário (`test_iteration6.py`).
 - Hashing de sessões, invalidação de sessões, CSRF Double Submit, Origin check, IDOR em anotações, probing de coleções, proteção de fontes (.venv, .git) e integridade em restauração multiusuário (`test_iteration7.py`).
 - Extração de capas de PDF, cache em disco, invalidação por hash, upload/substituição/remoção de capas personalizadas, bloqueio de uploads maliciosos, fallback SVG editorial, navegador visual de diretórios e seletor nativo local (`test_iteration8.py`).
 - Carregamento e precedência de `.env`, reconciliação automática do caminho da biblioteca principal entre máquinas, backup preventivo e preservação total de dados na migração de schema V3->V5, preservação de capas personalizadas no backup/restauração e validação dos scripts de deploy e diagnóstico (`test_iteration9.py`).
 - Experiência móvel, controles de toque e adaptação visual no leitor de PDF (`test_iteration11.py`).
+- Suporte a EPUB, extração de capas, metadados, defesa contra ZIP bomb, path traversal e proteção contra ataques de entidade XML (`test_epub.py`).
+- Migração de banco SQLite v5 para v6, cabeçalhos de segurança HTTP, integridade de scripts e PDFs sintéticos de 5 a 200 páginas (`test_iteration19.py`).
+- Componentes e estilização do leitor adaptativo e travas de rolagem (`test_reader_interface.py`).
+- Testes E2E reais no Chromium Playwright cobrindo 8 resoluções de tela, ausência de rolagem involuntária de PDF, gestos de desenho livre, ergonomia da barra de tablet e segurança de scripts no EPUB (`tests/e2e/test_browser_e2e.py`).
 
 ---
 
 ## 13. Desempenho e Limitações Conhecidas
 
 ### 13.1 Medições Reais e Perfil de Consumo
-- **Consumo de Memória RAM (RSS medido via `scripts/diagnose.py`)**: **~54 MB a 62 MB** em processo único Uvicorn/FastAPI.
+- **Consumo de Memória RAM (RSS medido via `scripts/diagnose.py`)**: **~54 MB a 65 MB** em processo único Uvicorn/FastAPI.
 - **Latência de Listagem SQLite (WAL)**: **~0.5 ms**.
 - **Consumo de CPU em Repouso**: **0.0%** (zero file watchers contínuos com `inotify`).
 - **Coexistência com o Jellyfin**: Limites cgroup no `systemd` (`MemoryMax=512M`, `CPUWeight=100`), somados ao streaming sob demanda por blocos (HTTP Range), protegem o servidor doméstico contra sobrecargas.
 
-### 13.2 Limitações Conhecidas da Versão 1.1.2
-- **Suporte Exclusivo a PDFs**: Formatos como EPUB, MOBI ou CBZ não são suportados nativamente nesta versão.
+### 13.2 Limitações Conhecidas da Versão 1.2.0
+- **Livros Protegidos por DRM**: O Lectoria é projetado para bibliotecas pessoais e acervos abertos; livros comerciais protegidos por DRM proprietário (Adobe Adept, Apple FairPlay, Readium LCP com chave privada) não são descriptografados e exigem remoção prévia da proteção.
 - **Varredura Sob Demanda**: Para não degradar a CPU nem gastar ciclos com sentinelas contínuos de disco, novos arquivos adicionados às pastas de fontes são indexados sob demanda ao clicar no botão "Escanear" na interface web ou via API.
 
 ---
@@ -494,3 +520,5 @@ A suíte possui **82 testes automatizados**, todos isolados e executados em dire
 - **Lectoria**: Distribuído sob os termos da [Licença MIT](LICENSE) (Copyright © 2026 Emerson Vinicius Santos de Santana).
 - **Componentes de Terceiros**:
   - [Mozilla PDF.js](https://github.com/mozilla/pdfjs-dist) v3.11.174 (`static/vendor/pdfjs/`): Distribuído sob a [Apache License 2.0](static/vendor/pdfjs/LICENSE).
+  - [EPUB.js](https://github.com/futurepress/epub.js) v0.3.93 (`static/vendor/epubjs/epub.min.js`): Distribuído sob a [Licença FreeBSD (2-Clause)](static/vendor/epubjs/LICENSE) (Copyright © 2013-2023 Futurepress).
+  - [JSZip](https://github.com/Stuk/jszip) v3.10.1 (`static/vendor/epubjs/jszip.min.js`): Distribuído sob a [Licença MIT](static/vendor/epubjs/LICENSE) (Copyright © 2009-2016 Stuart Knightley).

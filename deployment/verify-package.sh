@@ -52,6 +52,7 @@ REQUIRED_FILES=(
     "app/main.py"
     "app/config.py"
     "app/database.py"
+    "app/epub_service.py"
     "app/requirements.txt"
     "app/.env.example"
 )
