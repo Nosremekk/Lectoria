@@ -1,4 +1,4 @@
-# Lectoria — Servidor Pessoal de Livros Digitais (v1.2.0)
+# Lectoria — Servidor Pessoal de Livros Digitais (v1.3.0)
 
 O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para gerenciamento e leitura de documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
 
@@ -37,7 +37,7 @@ Foi concebido para operar perfeitamente mesmo em hardware modesto — como compu
   - Gerenciamento completo via interface web (modal administrativo) ou via terminal com `scripts/manage_users.py`.
 - **Leitor Adaptativo de Alta Performance (PDF e EPUB)**:
   - Modos de leitura em **Página Única** e **Rolagem Contínua Virtualizada** com proteção avançada contra saltos involuntários em documentos extensos (200+ páginas).
-  - **Barra de Ferramentas Acoplável para Tablets (`#tablet-dock-toolbar`)**: Ancoragem flutuante configurável à esquerda ou direita para uso com uma mão em iPads e tablets.
+  - **Barra de Ferramentas Acoplável para Tablets (`#tablet-dock-toolbar`)**: Ancoragem flutuante compacta (~240px) e acessível (ARIA toolbar), com margem defensiva e alternância entre esquerda e direita sem sobreposição de conteúdo em iPads e tablets Android.
   - **Experiência Móvel Completa em Smartphones**: Barra inferior tátil de 44px (`#reader-mobile-bottom-bar`), gaveta expansível de opções e modal com teclado puramente numérico para pulo direto de páginas.
   - Streaming eficiente de PDFs via **HTTP Range Requests (206 Partial Content)**, evitando o carregamento do arquivo inteiro na memória RAM.
   - Salvamento automático contínuo de progresso de leitura via API e Beacon API.
@@ -509,7 +509,7 @@ A suíte cobre exaustivamente:
 - **Consumo de CPU em Repouso**: **0.0%** (zero file watchers contínuos com `inotify`).
 - **Coexistência com o Jellyfin**: Limites cgroup no `systemd` (`MemoryMax=512M`, `CPUWeight=100`), somados ao streaming sob demanda por blocos (HTTP Range), protegem o servidor doméstico contra sobrecargas.
 
-### 13.2 Limitações Conhecidas da Versão 1.2.0
+### 13.2 Limitações Conhecidas da Versão 1.3.0
 - **Livros Protegidos por DRM**: O Lectoria é projetado para bibliotecas pessoais e acervos abertos; livros comerciais protegidos por DRM proprietário (Adobe Adept, Apple FairPlay, Readium LCP com chave privada) não são descriptografados e exigem remoção prévia da proteção.
 - **Varredura Sob Demanda**: Para não degradar a CPU nem gastar ciclos com sentinelas contínuos de disco, novos arquivos adicionados às pastas de fontes são indexados sob demanda ao clicar no botão "Escanear" na interface web ou via API.
 

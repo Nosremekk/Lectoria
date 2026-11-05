@@ -7,6 +7,35 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.3.0] - 2026-11-05
+
+### Adicionado
+- **Suíte E2E Estendida com Playwright e Chromium Real**:
+  - Testes automatizados cobrindo reset imediato de scroll em navegação PDF, estabilidade da rolagem contínua com preservação de zoom, e verificação sistemática de ausência de overflow horizontal em 8 perfis de resolução.
+  - Teste de geometria e ergonomia validando matematicamente folga horizontal e zero sobreposição entre o dock de tablet (`#tablet-dock-toolbar`) e o documento, tanto na ancoragem à direita quanto à esquerda.
+- **Acessibilidade Completa na Barra de Ferramentas de Tablet**:
+  - Implementação de semântica ARIA completa: `role="toolbar"`, `aria-orientation="vertical"`, `aria-label`, e sincronização de `aria-pressed="true|false"` nos botões de modo (Leitura, Destaque, Desenho, Borracha).
+  - Anéis de foco `:focus-visible` de alto contraste e conformidade com leitores de tela no indicador de página (`aria-live="polite"`).
+
+### Modificado / Corrigido
+- **Eliminação Definitiva do Deslocamento Involuntário ao Trocar de Página no PDF**:
+  - Correção do alinhamento vertical ao navegar para novas páginas: reset síncrono imediato (`scrollTop = 0; scrollLeft = 0;`) com opção `resetScroll` para chamadas de zoom/redimensionamento.
+  - Substituição da diretiva conflitante `scroll-behavior: smooth` por `scroll-behavior: auto` no viewport, eliminando descidas graduais induzidas pelo navegador.
+  - Desativação de ancoragem errática do navegador (`overflow-anchor: none`) no viewport, contêiner de página única e slots de rolagem contínua.
+- **Estabilização da Rolagem Contínua e Preservação Visual no Zoom**:
+  - Preservação da fração de rolagem relativa (`getContinuousRelativeOffset`), permitindo aumentar ou diminuir zoom no modo contínuo sem perder a posição de leitura ou saltar de página.
+  - Tolerância defensiva contra microvariações de altura de slots geradas por subpixels (> 4px).
+  - Debounce otimizado de 120ms na detecção da página visível, sincronizando controles e miniaturas sem concorrência.
+- **Compactação e Reorganização Ergonômica do Dock de Tablet**:
+  - Redução da altura da barra acoplável de 537px para ~240px no modo leitura padrão.
+  - Remoção de controles redundantes (botão de tema unificado no cabeçalho superior).
+  - Exibição condicional da borracha (`#btn-tablet-tool-eraser`), visível exclusivamente durante o modo de desenho.
+  - Margens defensivas dinâmicas no viewport (`padding-right: 5rem` para `dock-right` e `padding-left: 5rem` para `dock-left`), garantindo leitura sem obstrução de texto.
+  - Correção na lógica de alternância de lado (`targetSide`) no JavaScript para aplicação consistente das classes de estilo.
+- **Responsividade e Prevenção de Overflow Horizontal no Cabeçalho**:
+  - Novo breakpoint CSS dedicado para tablets (768px a 1100px), ocultando rótulos textuais de botões secundários e aplicando truncamento com ellipsis no título da obra.
+  - Garantia de `scrollWidth <= clientWidth` em todas as resoluções de referência (de celulares 360px a monitores 1920px).
+
 ## [1.2.0] - 2026-11-04
 
 ### Adicionado

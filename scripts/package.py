@@ -26,7 +26,7 @@ import zipfile
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_BASE_DIR = PROJECT_ROOT / "dist"
 
-PACKAGE_VERSION = "1.2.0"
+PACKAGE_VERSION = "1.3.0"
 TARGET_NAME = f"Lectoria-{PACKAGE_VERSION}-linux-x86_64"
 MIGRATION_NAME = f"Lectoria-{PACKAGE_VERSION}-migration-bundle"
 
