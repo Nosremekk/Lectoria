@@ -568,21 +568,21 @@
   </div>
 
   <!-- Barra Flutuante Acoplável para Tablets (Fase 2) -->
-  <aside id="tablet-dock-toolbar" class="tablet-dock-toolbar dock-right" aria-label="Controles rápidos para tablet">
+  <aside id="tablet-dock-toolbar" class="tablet-dock-toolbar dock-right" role="toolbar" aria-label="Controles rápidos para tablet" aria-orientation="vertical">
     <div class="tablet-dock-header">
-      <button id="btn-tablet-dock-side" class="btn-dock-icon" title="Mudar lado da barra (Esquerda / Direita)">
+      <button id="btn-tablet-dock-side" class="btn-dock-icon" title="Mudar lado da barra (Esquerda / Direita)" aria-label="Mudar lado da barra flutuante">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/></svg>
       </button>
-      <span id="tablet-mode-badge" class="tablet-mode-badge">Ler</span>
+      <span id="tablet-mode-badge" class="tablet-mode-badge" aria-label="Modo de leitura atual">Ler</span>
     </div>
 
     <div class="tablet-dock-body">
       <div class="tablet-dock-group">
-        <button id="btn-tablet-prev" class="tablet-dock-btn" title="Página / Seção Anterior">
+        <button id="btn-tablet-prev" class="tablet-dock-btn" title="Página / Seção Anterior" aria-label="Página anterior">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
         </button>
-        <div id="tablet-page-pill" class="tablet-page-pill" title="Posição atual">1</div>
-        <button id="btn-tablet-next" class="tablet-dock-btn" title="Próxima Página / Seção">
+        <div id="tablet-page-pill" class="tablet-page-pill" title="Posição atual" aria-live="polite" aria-label="Página atual">1</div>
+        <button id="btn-tablet-next" class="tablet-dock-btn" title="Próxima Página / Seção" aria-label="Próxima página">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
         </button>
       </div>
@@ -591,16 +591,16 @@
 
       <!-- Modos de Interação (PDF) -->
       <div id="tablet-pdf-tools" class="tablet-dock-group">
-        <button id="btn-tablet-tool-read" class="tablet-dock-btn active" title="Modo Leitura">
+        <button id="btn-tablet-tool-read" class="tablet-dock-btn active" title="Modo Leitura" aria-label="Modo Leitura" aria-pressed="true">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5-2.24 5-5-2.24 5-5-5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
         </button>
-        <button id="btn-tablet-tool-highlight" class="tablet-dock-btn" title="Modo Marca-texto">
+        <button id="btn-tablet-tool-highlight" class="tablet-dock-btn" title="Modo Marca-texto" aria-label="Modo Marca-texto" aria-pressed="false">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="m15.24 3.37 5.39 5.39-8.49 8.49H6.75v-5.39l8.49-8.49zm2.55-2.55c-.78-.78-2.05-.78-2.83 0l-1.42 1.41 5.39 5.39 1.41-1.42c.78-.78.78-2.05 0-2.83l-2.55-2.55zM2 22h20v2H2v-2z"/></svg>
         </button>
-        <button id="btn-tablet-tool-draw" class="tablet-dock-btn" title="Modo Desenho">
+        <button id="btn-tablet-tool-draw" class="tablet-dock-btn" title="Modo Desenho" aria-label="Modo Desenho" aria-pressed="false">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
         </button>
-        <button id="btn-tablet-tool-eraser" class="tablet-dock-btn" title="Modo Borracha">
+        <button id="btn-tablet-tool-eraser" class="tablet-dock-btn" title="Modo Borracha" aria-label="Modo Borracha" style="display: none;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15.14 3c-.4 0-.8.15-1.11.45l-9.58 9.58c-.62.62-.62 1.61 0 2.23l5.29 5.29c.62.62 1.61.62 2.23 0l9.58-9.58c.62-.62.62-1.61 0-2.23l-5.29-5.29c-.31-.3-.72-.45-1.12-.45zm-3.17 11.02L8.5 10.55l5.52-5.52 3.47 3.47-5.52 5.52zM2 22h20v2H2v-2z"/></svg>
         </button>
       </div>
@@ -624,10 +624,10 @@
       <div class="tablet-dock-divider"></div>
 
       <div class="tablet-dock-group">
-        <button id="btn-tablet-drawer" class="tablet-dock-btn" title="Caderno de Anotações">
+        <button id="btn-tablet-drawer" class="tablet-dock-btn" title="Caderno de Anotações" aria-label="Abrir caderno de estudos e anotações">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
         </button>
-        <button id="btn-tablet-theme" class="tablet-dock-btn" title="Alternar Tema (Claro / Sépia / Escuro)">
+        <button id="btn-tablet-theme" class="tablet-dock-btn" title="Alternar Tema (Claro / Sépia / Escuro)" aria-label="Alternar tema de cores">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1z"/></svg>
         </button>
       </div>

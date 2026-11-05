@@ -347,8 +347,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // --- Escala (Zoom) Otimizada para Telas Móveis e Desktop ---
   function calculateScaleForPage(unscaledViewport) {
-    const isMobile = window.innerWidth <= 768;
-    const hPadding = isMobile ? 8 : 48;
+    const isMobile = window.innerWidth < 768;
+    const isTablet = window.innerWidth >= 768 && window.innerWidth <= 1280;
+    // Em tablets, reserva 72px para a barra flutuante lateral evitando qualquer sobreposição com o documento
+    const dockMargin = isTablet ? 72 : 0;
+    const hPadding = isMobile ? 8 : (48 + dockMargin);
     const vPadding = isMobile ? 12 : 48;
     const availableWidth = Math.max(viewportEl.clientWidth - hPadding, 100);
     const availableHeight = Math.max(viewportEl.clientHeight - vPadding, 100);
@@ -379,11 +382,18 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // --- Renderização no Modo Página Única ---
-  async function renderSinglePage(num) {
+  async function renderSinglePage(num, options = {}) {
     if (!pdfDoc) return;
+    const shouldResetScroll = options.resetScroll !== false;
     if (singleRenderTask) {
       singleRenderTask.cancel();
       singleRenderTask = null;
+    }
+
+    // Garante que o topo da nova página esteja perfeitamente alinhado (evita que o PDF desça sozinho)
+    if (shouldResetScroll) {
+      viewportEl.scrollTop = 0;
+      viewportEl.scrollLeft = 0;
     }
 
     try {
@@ -409,6 +419,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       await singleRenderTask.promise;
       singleRenderTask = null;
 
+      // Mantém topo em 0 caso o redimensionamento do canvas tenha induzido deslocamento
+      if (shouldResetScroll && viewportEl.scrollTop !== 0) {
+        viewportEl.scrollTop = 0;
+      }
+
       // Renderiza Camada de Texto para permitir seleção
       singleTextLayer.innerHTML = "";
       singleTextLayer.style.width = cssWidth;
@@ -421,6 +436,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         viewport: page.getViewport({ scale: currentScale }),
         textDivs: [],
       });
+
+      // Reforça alinhamento superior exato
+      if (shouldResetScroll && viewportEl.scrollTop !== 0) {
+        viewportEl.scrollTop = 0;
+      }
 
       // Renderiza Marcações e Desenhos
       renderHighlightsForPage(num, singleHighlightsLayer);
@@ -441,7 +461,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // --- Renderização no Modo Rolagem Contínua (Lazy & Virtualizado) ---
-  function setupContinuousView(targetPage = null) {
+  function setupContinuousView(targetPage = null, preservedOffsetRatio = null) {
     if (continuousObserver) {
       continuousObserver.disconnect();
       continuousObserver = null;
@@ -455,7 +475,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     continuousWrapper.innerHTML = "";
 
     const isMobile = window.innerWidth < 768;
-    const hPadding = isMobile ? 8 : 48;
+    const isTablet = window.innerWidth >= 768 && window.innerWidth <= 1280;
+    const dockMargin = isTablet ? 72 : 0;
+    const hPadding = isMobile ? 8 : (48 + dockMargin);
     const availableWidth = Math.max(viewportEl.clientWidth - hPadding, 100);
     const scale = zoomMode === "width" ? (availableWidth / basePageWidth) : currentScale;
     const slotWidth = Math.round(basePageWidth * scale);
@@ -497,7 +519,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     const initialSlot = document.getElementById(`page-slot-${pageToScroll}`);
     if (initialSlot) {
       isProgrammaticScroll = true;
-      viewportEl.scrollTop = initialSlot.offsetTop;
+      const extraOffset = (preservedOffsetRatio && preservedOffsetRatio > 0)
+        ? Math.round(initialSlot.clientHeight * preservedOffsetRatio)
+        : 0;
+      viewportEl.scrollTop = initialSlot.offsetTop + extraOffset;
       setTimeout(() => {
         isProgrammaticScroll = false;
         isRestoringProgress = false;
@@ -519,7 +544,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       let scale = currentScale;
       if (zoomMode === "width") {
-        const isMobile = window.innerWidth < 768;
+        const isMobile = window.innerWidth <= 768;
         const hPadding = isMobile ? 8 : 48;
         scale = Math.max(viewportEl.clientWidth - hPadding, 100) / unscaledViewport.width;
       }
@@ -533,11 +558,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       slotElement.style.width = cssWidth;
       slotElement.style.height = cssHeight;
       const newHeight = parseFloat(cssHeight);
-      if (prevHeight > 0 && Math.abs(newHeight - prevHeight) > 1) {
+      if (prevHeight > 0 && Math.abs(newHeight - prevHeight) > 4) {
         if (slotElement.offsetTop < viewportEl.scrollTop) {
           isProgrammaticScroll = true;
           viewportEl.scrollTop += (newHeight - prevHeight);
-          setTimeout(() => { isProgrammaticScroll = false; }, 50);
+          setTimeout(() => { isProgrammaticScroll = false; }, 80);
         }
       }
       slotElement.innerHTML = "";
@@ -1818,7 +1843,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (continuousObserver) continuousObserver.disconnect();
       continuousWrapper.style.display = "none";
       singlePageWrapper.style.display = "inline-block";
-      renderSinglePage(currentPage);
+      renderSinglePage(currentPage, { resetScroll: true });
     }
   }
 
@@ -1855,7 +1880,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     queueSaveProgress();
 
     if (viewMode === "single") {
-      renderSinglePage(currentPage);
+      renderSinglePage(currentPage, { resetScroll: true });
     } else {
       const slot = document.getElementById(`page-slot-${currentPage}`);
       if (slot) {
@@ -1893,6 +1918,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   // --- Controles de Zoom ---
+  function getContinuousRelativeOffset() {
+    const activeSlot = document.getElementById(`page-slot-${currentPage}`);
+    if (!activeSlot || activeSlot.clientHeight <= 0) return 0;
+    return Math.max(0, (viewportEl.scrollTop - activeSlot.offsetTop) / activeSlot.clientHeight);
+  }
+
   btnZoomIn.addEventListener("click", () => {
     if (bookFormat === "epub") {
       changeEpubFontSize(10);
@@ -1901,8 +1932,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     zoomMode = "custom";
     currentScale = Math.min(currentScale * 1.25, 4.0);
     isProgrammaticScroll = true;
-    if (viewMode === "single") renderSinglePage(currentPage);
-    else setupContinuousView(currentPage);
+    if (viewMode === "single") {
+      renderSinglePage(currentPage, { resetScroll: false });
+    } else {
+      setupContinuousView(currentPage, getContinuousRelativeOffset());
+    }
   });
 
   btnZoomOut.addEventListener("click", () => {
@@ -1913,24 +1947,33 @@ document.addEventListener("DOMContentLoaded", async () => {
     zoomMode = "custom";
     currentScale = Math.max(currentScale / 1.25, 0.4);
     isProgrammaticScroll = true;
-    if (viewMode === "single") renderSinglePage(currentPage);
-    else setupContinuousView(currentPage);
+    if (viewMode === "single") {
+      renderSinglePage(currentPage, { resetScroll: false });
+    } else {
+      setupContinuousView(currentPage, getContinuousRelativeOffset());
+    }
   });
 
   btnFitWidth.addEventListener("click", () => {
     if (bookFormat === "epub") return;
     zoomMode = "width";
     isProgrammaticScroll = true;
-    if (viewMode === "single") renderSinglePage(currentPage);
-    else setupContinuousView(currentPage);
+    if (viewMode === "single") {
+      renderSinglePage(currentPage, { resetScroll: false });
+    } else {
+      setupContinuousView(currentPage, getContinuousRelativeOffset());
+    }
   });
 
   btnFitPage.addEventListener("click", () => {
     if (bookFormat === "epub") return;
     zoomMode = "page";
     isProgrammaticScroll = true;
-    if (viewMode === "single") renderSinglePage(currentPage);
-    else setupContinuousView(currentPage);
+    if (viewMode === "single") {
+      renderSinglePage(currentPage, { resetScroll: false });
+    } else {
+      setupContinuousView(currentPage);
+    }
   });
 
   // --- Modal de Atalhos de Teclado ---
@@ -2022,7 +2065,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
       isProgrammaticScroll = true;
-      if (viewMode === "single") renderSinglePage(currentPage);
+      if (viewMode === "single") renderSinglePage(currentPage, { resetScroll: false });
       else setupContinuousView(currentPage);
     }, 180);
   });
@@ -2100,7 +2143,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (initialPinchDistance && Math.abs(lastPinchRatio - 1.0) > 0.12) {
           zoomMode = "custom";
           currentScale = Math.min(Math.max(initialPinchScale * lastPinchRatio, 0.45), 3.5);
-          if (viewMode === "single") renderSinglePage(currentPage);
+          if (viewMode === "single") renderSinglePage(currentPage, { resetScroll: false });
           else setupContinuousView();
         }
         initialPinchDistance = null;
@@ -2127,7 +2170,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         } else {
           zoomMode = "width";
         }
-        if (viewMode === "single") renderSinglePage(currentPage);
+        if (viewMode === "single") renderSinglePage(currentPage, { resetScroll: false });
         else setupContinuousView();
         return;
       }
@@ -2158,7 +2201,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
       isProgrammaticScroll = true;
-      if (viewMode === "single") renderSinglePage(currentPage);
+      if (viewMode === "single") renderSinglePage(currentPage, { resetScroll: false });
       else setupContinuousView(currentPage);
     }, 200);
   });
@@ -2415,20 +2458,29 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (btnTabletToolRead) btnTabletToolRead.classList.toggle("active", currentTool === "read" && !isEraserActive);
     if (btnTabletToolHighlight) btnTabletToolHighlight.classList.toggle("active", currentTool === "highlight");
     if (btnTabletToolDraw) btnTabletToolDraw.classList.toggle("active", currentTool === "draw" && !isEraserActive);
-    if (btnTabletToolEraser) btnTabletToolEraser.classList.toggle("active", isEraserActive);
+    if (btnTabletToolEraser) {
+      btnTabletToolEraser.classList.toggle("active", isEraserActive);
+      btnTabletToolEraser.style.display = (currentTool === "draw" || isEraserActive) ? "flex" : "none";
+    }
   }
 
   if (btnTabletDockSide) {
     const savedDockSide = localStorage.getItem("lectoria_tablet_dock") || "right";
     tabletDockToolbar.classList.remove("dock-left", "dock-right");
     tabletDockToolbar.classList.add(savedDockSide === "left" ? "dock-left" : "dock-right");
+    document.body.classList.remove("dock-side-left", "dock-side-right");
+    document.body.classList.add(savedDockSide === "left" ? "dock-side-left" : "dock-side-right");
 
     btnTabletDockSide.addEventListener("click", () => {
       const isRight = tabletDockToolbar.classList.contains("dock-right");
       tabletDockToolbar.classList.remove("dock-left", "dock-right");
-      const newSide = isRight ? "dock-left" : "dock-right";
-      tabletDockToolbar.classList.add(newSide);
-      localStorage.setItem("lectoria_tablet_dock", isRight ? "left" : "right");
+      const targetSide = isRight ? "left" : "right";
+      tabletDockToolbar.classList.add(targetSide === "left" ? "dock-left" : "dock-right");
+      document.body.classList.remove("dock-side-left", "dock-side-right");
+      document.body.classList.add(targetSide === "left" ? "dock-side-left" : "dock-side-right");
+      localStorage.setItem("lectoria_tablet_dock", targetSide);
+      if (viewMode === "single") renderSinglePage(currentPage, { resetScroll: false });
+      else setupContinuousView(currentPage);
     });
   }
 

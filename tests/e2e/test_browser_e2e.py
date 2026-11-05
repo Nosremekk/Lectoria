@@ -400,14 +400,43 @@ def test_responsive_layouts_and_dock_ergonomics(
         # Inicia ancorada à direita por padrão
         assert "dock-right" in (dock.get_attribute("class") or "")
 
+        # Verifica que na direita não há sobreposição horizontal com o canvas do PDF
+        overlap_right = page.evaluate("""() => {
+            const d = document.getElementById('tablet-dock-toolbar').getBoundingClientRect();
+            const c = document.getElementById('pdf-canvas');
+            if (!c) return false;
+            const cb = c.getBoundingClientRect();
+            return (cb.right > d.left && cb.left < d.right);
+        }""")
+        assert not overlap_right, f"Dock à direita sobrepõe canvas em {device_name}"
+
         # Clica no botão de alternar lado
         page.click("#btn-tablet-dock-side")
-        page.wait_for_timeout(150)
+        page.wait_for_timeout(250)
         assert "dock-left" in (dock.get_attribute("class") or "")
 
         # Verifica persistência no localStorage
         saved_side = page.evaluate("() => localStorage.getItem('lectoria_tablet_dock')")
         assert saved_side == "left"
+
+        # Verifica que na esquerda não há sobreposição horizontal com o canvas do PDF
+        left_info = page.evaluate("""() => {
+            const d = document.getElementById('tablet-dock-toolbar').getBoundingClientRect();
+            const c = document.getElementById('pdf-canvas');
+            if (!c) return { overlap: false };
+            const cb = c.getBoundingClientRect();
+            return {
+                overlap: (cb.left < d.right && cb.right > d.left),
+                dLeft: d.left,
+                dRight: d.right,
+                cLeft: cb.left,
+                cRight: cb.right,
+                bodyClass: document.body.className,
+                vpPaddingLeft: window.getComputedStyle(document.getElementById('reader-viewport')).paddingLeft,
+                vpPaddingRight: window.getComputedStyle(document.getElementById('reader-viewport')).paddingRight,
+            };
+        }""")
+        assert not left_info["overlap"], f"Dock à esquerda sobrepõe canvas em {device_name}: {left_info}"
 
     # 4. Se for celular, abre a gaveta inferior (Mobile Sheet)
     if is_mobile:
@@ -559,3 +588,191 @@ def test_epub_malicious_script_and_link_isolation(e2e_server, browser_instance):
         assert script_ran_iframe is None, "Script do EPUB executou no contexto do iframe!"
 
     context.close()
+
+
+# ==============================================================================
+# TESTES E2E ITERAÇÃO 11: REVISÃO COMPLETA DE LEITORES, NAVEGAÇÃO E RESPONSIVIDADE
+# ==============================================================================
+
+def test_pdf_single_page_navigation_scroll_reset(e2e_server, browser_instance):
+    """
+    Problema A: Garante que ao mudar de página no modo página única (avanço, retrocesso ou salto),
+    a nova página sempre inicia exatamente no topo (scrollTop == 0), eliminando qualquer descida involuntária.
+    """
+    base_url = e2e_server["base_url"]
+    books = _get_books_by_filename(base_url)
+    book_id = books["doc_50_pages.pdf"]["id"]
+
+    context = browser_instance.new_context(viewport={"width": 1280, "height": 800})
+    page = context.new_page()
+
+    page.goto(f"{base_url}/reader/{book_id}")
+    page.wait_for_selector("#reader-viewport", state="visible", timeout=10000)
+    page.wait_for_timeout(600)
+
+    # 1. Garante modo página única
+    page.click("#btn-mode-single")
+    page.wait_for_timeout(300)
+
+    # 2. Rola verticalmente a página 1 para baixo (simula leitura)
+    page.evaluate("() => { document.getElementById('reader-viewport').scrollTop = 320; }")
+    page.wait_for_timeout(100)
+    scroll_pos = page.evaluate("() => document.getElementById('reader-viewport').scrollTop")
+    assert scroll_pos > 250, f"Scroll deveria ter descido, mas foi {scroll_pos}"
+
+    # 3. Avança para a página 2 pelo botão Próxima
+    page.click("#btn-next-page")
+    page.wait_for_timeout(600)
+
+    current_page = page.evaluate("() => document.getElementById('page-num-input').value")
+    assert current_page == "2"
+    new_scroll = page.evaluate("() => document.getElementById('reader-viewport').scrollTop")
+    assert new_scroll == 0, f"Ao avançar para a página 2, o topo deveria estar em 0, mas foi {new_scroll}"
+
+    # 4. Rola novamente na página 2
+    page.evaluate("() => { document.getElementById('reader-viewport').scrollTop = 250; }")
+    page.wait_for_timeout(100)
+    assert page.evaluate("() => document.getElementById('reader-viewport').scrollTop") > 200
+
+    # 5. Retrocede para a página 1 pelo botão Anterior
+    page.click("#btn-prev-page")
+    page.wait_for_timeout(600)
+
+    current_page = page.evaluate("() => document.getElementById('page-num-input').value")
+    assert current_page == "1"
+    back_scroll = page.evaluate("() => document.getElementById('reader-viewport').scrollTop")
+    assert back_scroll == 0, f"Ao retroceder para a página 1, o topo deveria estar em 0, mas foi {back_scroll}"
+
+    # 6. Salto direto para a página 5 via input
+    page.fill("#page-num-input", "5")
+    page.press("#page-num-input", "Enter")
+    page.wait_for_timeout(600)
+
+    current_page = page.evaluate("() => document.getElementById('page-num-input').value")
+    assert current_page == "5"
+    jump_scroll = page.evaluate("() => document.getElementById('reader-viewport').scrollTop")
+    assert jump_scroll == 0, f"Ao pular para a página 5, o topo deveria estar em 0, mas foi {jump_scroll}"
+
+    # Evidência fotográfica
+    shot_path = SCREENSHOTS_DIR / "single_page_scroll_reset_top.png"
+    page.screenshot(path=str(shot_path))
+    assert shot_path.exists() and shot_path.stat().st_size > 1000
+
+    context.close()
+
+
+def test_pdf_continuous_view_smooth_navigation_and_zoom_preservation(e2e_server, browser_instance):
+    """
+    Problema B: Garante que o modo de rolagem contínua navegue de forma estável,
+    sem deslocamentos involuntários ao rolar e mantendo a posição de leitura relativa ao alterar o zoom.
+    """
+    base_url = e2e_server["base_url"]
+    books = _get_books_by_filename(base_url)
+    book_id = books["doc_50_pages.pdf"]["id"]
+
+    context = browser_instance.new_context(viewport={"width": 1280, "height": 800})
+    page = context.new_page()
+
+    page.goto(f"{base_url}/reader/{book_id}")
+    page.wait_for_selector("#reader-viewport", state="visible", timeout=10000)
+    page.wait_for_timeout(500)
+
+    # 1. Ativa o modo contínuo
+    page.click("#btn-mode-continuous")
+    page.wait_for_selector("#continuous-wrapper", state="visible", timeout=5000)
+    page.wait_for_timeout(400)
+
+    # 2. Navega para a página 4 via input
+    page.fill("#page-num-input", "4")
+    page.press("#page-num-input", "Enter")
+    page.wait_for_timeout(600)
+
+    page_val = page.evaluate("() => document.getElementById('page-num-input').value")
+    assert page_val == "4"
+
+    # Verifica que o viewport rolou para perto do slot 4
+    slot_top = page.evaluate("() => document.getElementById('page-slot-4').offsetTop")
+    curr_scroll = page.evaluate("() => document.getElementById('reader-viewport').scrollTop")
+    assert abs(curr_scroll - slot_top) < 30, f"Scroll ({curr_scroll}) deveria coincidir com o topo do slot 4 ({slot_top})"
+
+    # 3. Altera o zoom no modo contínuo (Aumentar zoom)
+    page.click("#btn-zoom-in")
+    page.wait_for_timeout(600)
+
+    # A página ativa deve continuar sendo a página 4 (não deve saltar para a pág 1 nem para o fim)
+    page_after_zoom = page.evaluate("() => document.getElementById('page-num-input').value")
+    assert page_after_zoom == "4", f"Após zoom in, a página ativa deveria continuar sendo 4, mas foi {page_after_zoom}"
+
+    # 4. Diminui o zoom
+    page.click("#btn-zoom-out")
+    page.wait_for_timeout(600)
+    page_after_zoom_out = page.evaluate("() => document.getElementById('page-num-input').value")
+    assert page_after_zoom_out == "4", f"Após zoom out, a página ativa deveria continuar sendo 4, mas foi {page_after_zoom_out}"
+
+    # Evidência fotográfica
+    shot_path = SCREENSHOTS_DIR / "continuous_scroll_stable_page4.png"
+    page.screenshot(path=str(shot_path))
+    assert shot_path.exists() and shot_path.stat().st_size > 1000
+
+    context.close()
+
+
+@pytest.mark.parametrize(
+    "resolution_name,w,h",
+    [
+        ("desktop_1920x1080", 1920, 1080),
+        ("desktop_1366x768", 1366, 768),
+        ("tablet_paisagem_1024x768", 1024, 768),
+        ("tablet_retrato_820x1180", 820, 1180),
+        ("tablet_retrato_768x1024", 768, 1024),
+        ("smartphone_390x844", 390, 844),
+        ("smartphone_360x640", 360, 640),
+    ],
+)
+def test_no_horizontal_overflow_across_all_resolutions(e2e_server, browser_instance, resolution_name, w, h):
+    """
+    Problema D: Garante que nenhuma resolução sofra de overflow horizontal involuntário
+    (scrollWidth <= clientWidth tanto na página quanto no cabeçalho), assegurando responsividade completa.
+    """
+    base_url = e2e_server["base_url"]
+    books = _get_books_by_filename(base_url)
+    book_id = books["doc_5_pages.pdf"]["id"]
+
+    context = browser_instance.new_context(viewport={"width": w, "height": h})
+    page = context.new_page()
+
+    page.goto(f"{base_url}/reader/{book_id}")
+    page.wait_for_selector("#reader-viewport", state="visible", timeout=10000)
+    page.wait_for_timeout(400)
+
+    metrics = page.evaluate("""() => {
+        const docScroll = document.documentElement.scrollWidth;
+        const docClient = document.documentElement.clientWidth;
+        const header = document.querySelector('.reader-header');
+        const headerScroll = header ? header.scrollWidth : 0;
+        const headerClient = header ? header.clientWidth : 0;
+        return {
+            docScroll,
+            docClient,
+            hasDocOverflow: docScroll > docClient,
+            headerScroll,
+            headerClient,
+            hasHeaderOverflow: headerScroll > headerClient
+        };
+    }""")
+
+    assert not metrics["hasDocOverflow"], (
+        f"Overflow horizontal detectado no documento em {resolution_name} ({w}x{h}): "
+        f"scrollWidth={metrics['docScroll']} > clientWidth={metrics['docClient']}"
+    )
+    assert not metrics["hasHeaderOverflow"], (
+        f"Overflow horizontal detectado no cabeçalho em {resolution_name} ({w}x{h}): "
+        f"headerScroll={metrics['headerScroll']} > headerClient={metrics['headerClient']}"
+    )
+
+    shot_path = SCREENSHOTS_DIR / f"responsive_clean_{resolution_name}.png"
+    page.screenshot(path=str(shot_path), full_page=False)
+    assert shot_path.exists() and shot_path.stat().st_size > 1000
+
+    context.close()
+
