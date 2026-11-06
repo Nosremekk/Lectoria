@@ -102,7 +102,7 @@ class TestDatabaseMigrationV5toV6:
         with get_db(test_db) as c:
             cur = c.cursor()
             cur.execute("SELECT MAX(version) FROM schema_migrations;")
-            assert cur.fetchone()[0] == 6
+            assert cur.fetchone()[0] >= 6
 
             # Valida que books possui coluna format com padrão 'pdf'
             cur.execute("SELECT format, title FROM books WHERE id = 'book-pdf-123';")

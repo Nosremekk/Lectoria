@@ -2726,3 +2726,475 @@ kbd {
   overscroll-behavior: contain;
 }
 
+/* =========================================
+   DESCOBERTA, PRATELEIRAS & TAXONOMIA (v1.4.0)
+   ========================================= */
+
+/* Navegação Principal: Descoberta vs Biblioteca */
+.main-view-nav {
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0.4rem 1.75rem;
+  display: flex;
+  align-items: center;
+}
+
+.main-view-tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.main-nav-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.main-nav-tab-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-main);
+}
+
+.main-nav-tab-btn.active {
+  background-color: var(--accent-subtle);
+  color: var(--accent);
+  border-color: rgba(212, 106, 78, 0.3);
+  font-weight: 600;
+}
+
+/* Container de Prateleiras */
+.discovery-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  padding-bottom: 3rem;
+}
+
+.shelves-loading {
+  padding: 3rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.shelves-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2.25rem;
+}
+
+.shelf-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  position: relative;
+}
+
+.shelf-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 0.25rem;
+}
+
+.shelf-title {
+  font-family: var(--font-serif);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-main);
+  letter-spacing: -0.01em;
+}
+
+.shelf-subtitle {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.shelf-nav-buttons {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.shelf-nav-btn {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 0.85rem;
+}
+
+.shelf-nav-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-main);
+  border-color: var(--border-subtle);
+}
+
+/* Linha de Rolagem Horizontal (Estilo Streaming) */
+.shelf-row {
+  display: flex;
+  gap: 1.1rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x mandatory;
+  padding: 0.25rem 0.25rem 0.75rem 0.25rem;
+}
+
+.shelf-row::-webkit-scrollbar {
+  height: 6px;
+}
+
+.shelf-row::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.shelf-row::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: var(--radius-full);
+}
+
+.shelf-row::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+}
+
+/* Card de Livro na Prateleira */
+.shelf-card {
+  flex: 0 0 170px;
+  max-width: 170px;
+  scroll-snap-align: start;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+.shelf-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow);
+  border-color: var(--accent);
+}
+
+.shelf-cover-wrapper {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1.5;
+  background-color: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.shelf-cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.shelf-info {
+  padding: 0.65rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1;
+}
+
+.shelf-book-title {
+  font-family: var(--font-serif);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.shelf-book-author {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shelf-book-tag {
+  font-size: 0.7rem;
+  color: var(--accent);
+  margin-top: 0.2rem;
+  font-weight: 500;
+}
+
+/* Filtros de Taxonomia */
+.taxonomy-filters-bar {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 0.65rem 0;
+  margin-top: 0.25rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.taxonomy-select {
+  padding: 0.4rem 0.65rem;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  max-width: 180px;
+}
+
+.taxonomy-select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Modal: Detalhes Ricos da Obra */
+.book-details-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 1.75rem;
+  align-items: start;
+}
+
+.details-cover-column {
+  display: flex;
+  flex-direction: column;
+}
+
+.details-cover-box {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1.5;
+  background-color: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--cover-shadow);
+  border: 1px solid var(--border-color);
+}
+
+.details-cover-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.details-info-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.details-book-title {
+  font-family: var(--font-serif);
+  font-size: 1.5rem;
+  line-height: 1.25;
+  color: var(--text-main);
+}
+
+.details-book-author {
+  font-size: 1.05rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+.details-taxonomy-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.badge-taxonomy {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-full);
+  letter-spacing: 0.02em;
+}
+
+.badge-category {
+  background-color: var(--accent-subtle);
+  color: var(--accent);
+  border: 1px solid rgba(212, 106, 78, 0.3);
+}
+
+.badge-genre {
+  background-color: rgba(99, 102, 241, 0.12);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.badge-origin {
+  background-color: var(--success-subtle);
+  color: var(--success);
+  border: 1px solid rgba(82, 183, 136, 0.3);
+}
+
+.details-subnav {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 0.4rem;
+}
+
+.details-tab-btn {
+  background: transparent;
+  border: none;
+  padding: 0.45rem 0.8rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: all 0.15s ease;
+}
+
+.details-tab-btn:hover {
+  color: var(--text-main);
+  background-color: var(--bg-hover);
+}
+
+.details-tab-btn.active {
+  color: var(--accent);
+  font-weight: 600;
+  background-color: var(--accent-subtle);
+}
+
+.details-meta-table {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem 1rem;
+  font-size: 0.85rem;
+  background-color: var(--bg-tertiary);
+  padding: 0.9rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  margin-top: 0.75rem;
+}
+
+.meta-row {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px dashed var(--border-subtle);
+  padding-bottom: 0.25rem;
+}
+
+.meta-row span {
+  color: var(--text-muted);
+}
+
+.meta-row strong {
+  color: var(--text-main);
+  font-weight: 500;
+}
+
+/* Candidatos de Reconciliação */
+.candidates-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.candidate-card {
+  display: flex;
+  gap: 0.85rem;
+  padding: 0.75rem;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  align-items: center;
+}
+
+.candidate-cover-thumb {
+  width: 50px;
+  height: 75px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.candidate-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.candidate-score-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-full);
+  align-self: flex-start;
+}
+
+.score-reliable {
+  background-color: var(--success-subtle);
+  color: var(--success);
+}
+
+.score-review {
+  background-color: rgba(217, 155, 38, 0.15);
+  color: var(--warning);
+}
+
+.score-insufficient {
+  background-color: var(--danger-subtle);
+  color: var(--danger);
+}
+
+/* Responsividade Mobile / Tablet para Descoberta */
+@media (max-width: 768px) {
+  .book-details-layout {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  .details-cover-box {
+    max-width: 160px;
+    margin: 0 auto;
+  }
+  .details-cover-column {
+    align-items: center;
+  }
+  .shelf-card {
+    flex: 0 0 140px;
+    max-width: 140px;
+  }
+  .details-meta-table {
+    grid-template-columns: 1fr;
+  }
+}
+
+

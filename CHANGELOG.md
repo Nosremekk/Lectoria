@@ -7,6 +7,40 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.4.0] - 2026-11-06
+
+### Adicionado
+- **Descoberta Inteligente e Prateleiras Dinâmicas (Estilo Streaming / Jellyfin)**:
+  - Navegação visual fluida na tela inicial com carrosséis horizontais dedicados: *Continuar Lendo*, *Adicionados Recentemente*, *Categorias Principais*, *Autores em Destaque*, *Para Começar a Ler*, *Leituras Concluídas* e *Coleções*.
+  - Garantia de que nenhuma prateleira vazia é exibida, com rolagem suave por toque (*swipe*) ou controles direcionais.
+  - Alternância imediata entre a visualização de **Descoberta** e a visão tradicional de **Biblioteca & Explorar** (Grade e Lista).
+- **Taxonomia Hierárquica e Classificação Multidimensional**:
+  - Árvore canônica estruturada em cinco grandes eixos: *Filosofia*, *Literatura*, *Ciências Humanas*, *Ciência e Tecnologia*, e *Artes e Cultura*, com dezenas de subcategorias temáticas.
+  - Separação multidimensional de facetas bibliográficas: *Categoria*, *Subcategoria*, *Gênero Literário* (Romance, Ensaio, Conto, Poesia, etc.), *Origem / Nacionalidade* (Literatura brasileira, latino-americana, etc.) e *Período Histórico*.
+  - Sincronização automática na varredura e suporte a vínculos manuais protegidos (`is_manual = 1`).
+  - Filtros combinados instantâneos na aba de Exploração com dropdowns dinâmicos baseados no acervo real (`GET /api/taxonomy/tree`).
+- **Motor de Busca Textual FTS5 Nativamente Integrado**:
+  - Tabela virtual `books_fts` em SQLite para busca instantânea em frações de milissegundo por título, autor, sinopse, editora e assuntos, com suporte a prefixos e termos múltiplos.
+- **Identificação Bibliográfica e Reconciliação Externa**:
+  - Consulta automática e manual a fontes públicas confiáveis: **Open Library API** (primária, com rate limit defensivo de 1 req/s) e **Google Books API** (complementar).
+  - Algoritmo de correspondência inteligente (*Smart Matcher*) com pontuação ponderada (0 a 100):
+    - *Reliable* (Score >= 85): correspondência segura por ISBN e título/autor.
+    - *Needs Review* (50 <= Score < 85): correspondência por obra/título que exige revisão manual.
+    - *Insufficient* (Score < 50): descartado automaticamente para evitar dados incorretos.
+  - Auditoria e histórico de candidatos registrados na tabela `metadata_candidates`.
+- **Fila Assíncrona de Enriquecimento em Segundo Plano**:
+  - Worker sequencial com taxa controlada e baixa prioridade de CPU/IO, ideal para hardware modesto como o Positivo C1260.
+  - **Central de Metadados** acessível por administradores com métricas em tempo real (total, processados, identificados, revisão necessária, falhas) e controles de iniciar, pausar, cancelar e enfileirar.
+  - Cache local com TTL de 7 dias (`metadata_api_cache`) para evitar consultas redundantes de rede.
+- **Modal Rico de Detalhes da Obra**:
+  - Exibição de sinopse detalhada, capa ampliada, tags taxonômicas clicáveis, editora, ano de publicação, idioma, ISBN-10, ISBN-13 e formato.
+  - Subabas para *Visão Geral*, *Reconciliação Externa* (com busca interativa e aplicação de candidatos) e *Edição Manual*.
+  - Sistema de travas manuais (*field locking*): proteção de campos editados pelo usuário contra sobrescrita em novas varreduras.
+- **Migração do Banco de Dados SQLite Schema v7**:
+  - Adição de colunas bibliográficas estruturadas (`isbn10`, `isbn13`, `publisher`, `publish_year`, `language`, `description`, `identification_status`, `identification_score`, `manual_lock_fields`, etc.).
+  - Criação das tabelas `subjects`, `book_subjects`, `metadata_candidates`, `metadata_api_cache` e `books_fts`.
+  - Backup preventivo automático pré-migração `lectoria_pre_migration_v6_to_v7.db.bak` com validação de integridade.
+
 ## [1.3.0] - 2026-11-05
 
 ### Adicionado

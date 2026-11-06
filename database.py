@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Generator, Optional
 import config
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -119,6 +119,10 @@ def init_db(db_path: Optional[Path] = None) -> None:
             if current_version < 6:
                 _apply_migration_v6(cursor)
                 cursor.execute("INSERT INTO schema_migrations (version) VALUES (6);")
+
+            if current_version < 7:
+                _apply_migration_v7(cursor)
+                cursor.execute("INSERT INTO schema_migrations (version) VALUES (7);")
 
             conn.commit()
         finally:
@@ -535,6 +539,148 @@ def _apply_migration_v6(cursor: sqlite3.Cursor) -> None:
     prog_cols = [r["name"] for r in cursor.fetchall()]
     if "progress_locator" not in prog_cols:
         cursor.execute("ALTER TABLE reading_progress ADD COLUMN progress_locator TEXT;")
+
+
+def _apply_migration_v7(cursor: sqlite3.Cursor) -> None:
+    """
+    Schema V7 — Intelligent Library & Metadata Discovery:
+    - Metadados bibliográficos estruturados na tabela books:
+      isbn10, isbn13, publisher, publish_year, language, description,
+      original_title, work_id, edition, identification_status, identification_score,
+      metadata_source, metadata_updated_at, manual_lock_fields.
+    - Taxonomia e classificação bibliográfica:
+      tabela 'subjects' (id, name, category, subcategory, genre, origin, period)
+      tabela 'book_subjects' (book_id, subject_id, is_manual)
+    - Tabela 'metadata_candidates' para candidatos e auditoria de correspondência externa.
+    - Tabela 'metadata_api_cache' para cache com TTL de requisições Open Library e Google Books.
+    - Tabela virtual 'books_fts' (FTS5) para busca textual instantânea de título, autor, descrição, editora e assuntos.
+    """
+    cursor.execute("PRAGMA table_info(books);")
+    book_cols = [r["name"] for r in cursor.fetchall()]
+
+    new_book_cols = [
+        ("isbn10", "TEXT"),
+        ("isbn13", "TEXT"),
+        ("publisher", "TEXT"),
+        ("publish_year", "INTEGER"),
+        ("language", "TEXT"),
+        ("description", "TEXT"),
+        ("original_title", "TEXT"),
+        ("work_id", "TEXT"),
+        ("edition", "TEXT"),
+        ("identification_status", "TEXT NOT NULL DEFAULT 'pending'"),
+        ("identification_score", "REAL DEFAULT 0.0"),
+        ("metadata_source", "TEXT"),
+        ("metadata_updated_at", "TIMESTAMP"),
+        ("manual_lock_fields", "TEXT DEFAULT '[]'"),
+    ]
+
+    for col_name, col_type in new_book_cols:
+        if col_name not in book_cols:
+            cursor.execute(f"ALTER TABLE books ADD COLUMN {col_name} {col_type};")
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_isbn13 ON books(isbn13);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_isbn10 ON books(isbn10);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_work_id ON books(work_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_id_status ON books(identification_status);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_publish_year ON books(publish_year);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_books_language ON books(language);")
+
+    # 2. Taxonomia e Classificação
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS subjects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            category TEXT NOT NULL,
+            subcategory TEXT,
+            genre TEXT,
+            origin TEXT,
+            period TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_subjects_cat ON subjects(category, subcategory);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_subjects_genre ON subjects(genre);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_subjects_origin ON subjects(origin);")
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS book_subjects (
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+            is_manual INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (book_id, subject_id)
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_book_subjects_subject ON book_subjects(subject_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_book_subjects_book ON book_subjects(book_id);")
+
+    # 3. Candidatos de Correspondência
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS metadata_candidates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            source TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            author TEXT,
+            publisher TEXT,
+            publish_year INTEGER,
+            isbn10 TEXT,
+            isbn13 TEXT,
+            cover_url TEXT,
+            raw_json TEXT NOT NULL,
+            score REAL NOT NULL,
+            confidence_level TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_candidates_book ON metadata_candidates(book_id);")
+
+    # 4. Cache de APIs bibliográficas
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS metadata_api_cache (
+            cache_key TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            response_json TEXT NOT NULL,
+            status_code INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_cache_expires ON metadata_api_cache(expires_at);")
+
+    # 5. Tabela Virtual FTS5 (com suporte a fallback se FTS5 não estiver compilado)
+    try:
+        cursor.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS books_fts USING fts5(
+                book_id UNINDEXED,
+                title,
+                author,
+                description,
+                publisher,
+                subjects
+            );
+            """
+        )
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO books_fts (book_id, title, author, description, publisher, subjects)
+            SELECT id, title, COALESCE(author, ''), COALESCE(description, ''), COALESCE(publisher, ''), ''
+            FROM books;
+            """
+        )
+    except sqlite3.OperationalError:
+        pass
+
 
 
 

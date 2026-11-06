@@ -5,9 +5,10 @@ Suporta streaming com HTTP Range, downloads, múltiplas fontes e perfis com isol
 """
 
 from contextlib import asynccontextmanager
+import json
 from pathlib import Path
 import secrets
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
@@ -17,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
 import config
-from database import init_db
+from database import get_db, init_db
 from auth_service import (
     SESSION_COOKIE_NAME,
     AuthError,
@@ -65,8 +66,18 @@ from library import (
     SecurityError,
     get_book,
     get_books,
+    get_discovery_shelves,
+    update_book_metadata,
     resolve_book_path,
     scan_library,
+)
+from taxonomy_service import get_taxonomy_tree
+from background_enricher import enricher
+from metadata_service import (
+    OpenLibraryClient,
+    GoogleBooksClient,
+    score_candidate,
+    identify_book_metadata,
 )
 from progress import get_progress, save_progress
 from collections_service import (
@@ -294,6 +305,39 @@ class NoteUpdatePayload(BaseModel):
 
 class DrawingSavePayload(BaseModel):
     strokes: list[dict] = Field(description="Array de traços vetoriais com pontos normalizados")
+
+
+class MetadataSearchPayload(BaseModel):
+    query: Optional[str] = None
+    isbn: Optional[str] = None
+    provider: Optional[str] = None
+
+
+class MetadataApplyPayload(BaseModel):
+    candidate_id: int
+    apply_cover: bool = True
+    lock_fields: Optional[List[str]] = None
+
+
+class MetadataUpdatePayload(BaseModel):
+    title: Optional[str] = None
+    author: Optional[str] = None
+    isbn10: Optional[str] = None
+    isbn13: Optional[str] = None
+    publisher: Optional[str] = None
+    publish_year: Optional[int] = None
+    language: Optional[str] = None
+    description: Optional[str] = None
+    original_title: Optional[str] = None
+    work_id: Optional[str] = None
+    edition: Optional[str] = None
+    taxonomy: Optional[Dict[str, Any]] = None
+    lock_fields: Optional[List[str]] = None
+
+
+class MetadataQueueEnqueuePayload(BaseModel):
+    book_ids: Optional[List[str]] = None
+    only_pending: bool = True
 
 
 # =========================================================================
@@ -674,9 +718,19 @@ async def list_books(
     order: str = "asc",
     status: Optional[str] = None,
     collection_id: Optional[int] = None,
+    source_id: Optional[int] = None,
     format: Optional[str] = None,
+    category: Optional[str] = None,
+    subcategory: Optional[str] = None,
+    genre: Optional[str] = None,
+    origin: Optional[str] = None,
+    language: Optional[str] = None,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
+    identification_status: Optional[str] = None,
+    fts_query: Optional[str] = None,
 ):
-    """Lista todos os livros disponíveis com filtros, coleções e ordenação para o usuário autenticado."""
+    """Lista todos os livros disponíveis com filtros multidimensionais, coleções e ordenação."""
     user = require_user(request)
     books = get_books(
         search=search,
@@ -684,10 +738,36 @@ async def list_books(
         order=order,
         status_filter=status,
         collection_id=collection_id,
+        source_id=source_id,
         format_filter=format,
+        category_filter=category,
+        subcategory_filter=subcategory,
+        genre_filter=genre,
+        origin_filter=origin,
+        language_filter=language,
+        year_from=year_from,
+        year_to=year_to,
+        identification_status=identification_status,
+        fts_query=fts_query,
         user_id=user["id"],
     )
     return {"books": books, "count": len(books)}
+
+
+@app.get("/api/discovery/shelves")
+async def discovery_shelves_endpoint(request: Request):
+    """Retorna as prateleiras dinâmicas de descoberta inspiradas em serviços de streaming."""
+    user = require_user(request)
+    shelves = get_discovery_shelves(user_id=user["id"])
+    return {"shelves": shelves, "count": len(shelves)}
+
+
+@app.get("/api/taxonomy/tree")
+async def taxonomy_tree_endpoint(request: Request):
+    """Retorna a árvore taxonômica estruturada de categorias presentes no acervo."""
+    require_user(request)
+    tree = get_taxonomy_tree()
+    return {"tree": tree}
 
 
 @app.get("/api/books/{book_id}")
@@ -863,6 +943,250 @@ async def trigger_scan(request: Request):
     require_admin(request)
     stats = scan_library()
     return {"status": "success", "stats": stats}
+
+
+# =========================================================================
+# ENDPOINTS DE METADADOS BIBLIOGRÁFICOS E RECONCILIAÇÃO EXTERNA (v1.4.0)
+# =========================================================================
+
+@app.get("/api/books/{book_id}/metadata/candidates")
+async def get_book_metadata_candidates_endpoint(book_id: str, request: Request):
+    """Retorna os candidatos a metadados externos registrados para o livro."""
+    user = require_user(request)
+    try:
+        book = get_book(book_id, user_id=user["id"])
+    except (SecurityError, BookNotFoundError) as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, source as provider, external_id, title, author, publisher,
+                   publish_year, isbn10, isbn13, cover_url,
+                   score as confidence_score, confidence_level as match_status,
+                   raw_json as raw_data, created_at
+            FROM metadata_candidates
+            WHERE book_id = ?
+            ORDER BY score DESC, id DESC
+            """,
+            (book_id,),
+        )
+        candidates = [dict(r) for r in cursor.fetchall()]
+
+    return {"book_id": book_id, "candidates": candidates, "count": len(candidates)}
+
+
+@app.post("/api/books/{book_id}/metadata/search")
+async def search_book_metadata_endpoint(book_id: str, payload: MetadataSearchPayload, request: Request):
+    """
+    Realiza busca externa manual (Open Library e/ou Google Books) para encontrar
+    candidatos bibliográficos precisos para o livro.
+    """
+    user = require_user(request)
+    try:
+        book = get_book(book_id, user_id=user["id"])
+    except (SecurityError, BookNotFoundError) as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    q_title = payload.query or book.get("title")
+    q_isbn = payload.isbn or book.get("isbn13") or book.get("isbn10")
+    q_author = book.get("author")
+
+    raw_candidates: List[Dict[str, Any]] = []
+
+    # 1. Consulta Open Library
+    if payload.provider in (None, "", "open_library", "all"):
+        if q_isbn:
+            ol_isbn_res = OpenLibraryClient.lookup_isbn(q_isbn)
+            if ol_isbn_res:
+                raw_candidates.append(ol_isbn_res)
+        if q_title:
+            ol_res = OpenLibraryClient.search(q_title, author=q_author, limit=5)
+            raw_candidates.extend(ol_res)
+
+    # 2. Consulta Google Books
+    if payload.provider in (None, "", "google_books", "all"):
+        if q_isbn:
+            gb_isbn_res = GoogleBooksClient.lookup_isbn(q_isbn)
+            if gb_isbn_res:
+                raw_candidates.append(gb_isbn_res)
+        if q_title:
+            gb_res = GoogleBooksClient.search(q_title, author=q_author, limit=5)
+            raw_candidates.extend(gb_res)
+
+    scored_candidates = []
+    with get_db() as conn:
+        cursor = conn.cursor()
+        for cand in raw_candidates:
+            score, match_status = score_candidate(book, cand)
+            cand["confidence_score"] = score
+            cand["match_status"] = match_status
+
+            cursor.execute(
+                """
+                INSERT INTO metadata_candidates (
+                    book_id, source, external_id, title, author, publisher,
+                    publish_year, isbn10, isbn13, cover_url, raw_json,
+                    score, confidence_level
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    book_id,
+                    cand.get("source") or cand.get("provider", "unknown"),
+                    cand.get("external_id") or "ext_1",
+                    cand.get("title") or "",
+                    cand.get("author"),
+                    cand.get("publisher"),
+                    cand.get("publish_year"),
+                    cand.get("isbn10"),
+                    cand.get("isbn13"),
+                    cand.get("cover_url"),
+                    json.dumps(cand),
+                    score,
+                    match_status,
+                ),
+            )
+            cand["id"] = cursor.lastrowid
+            scored_candidates.append(cand)
+
+    scored_candidates.sort(key=lambda x: x.get("confidence_score", 0), reverse=True)
+    return {"book_id": book_id, "candidates": scored_candidates, "count": len(scored_candidates)}
+
+
+@app.post("/api/books/{book_id}/metadata/apply")
+async def apply_book_metadata_candidate_endpoint(book_id: str, payload: MetadataApplyPayload, request: Request):
+    """
+    Aplica formalmente os metadados de um candidato aprovado ao livro, com opção
+    de travar campos específicos e aplicar a capa oficial.
+    """
+    user = require_user(request)
+    try:
+        book = get_book(book_id, user_id=user["id"])
+    except (SecurityError, BookNotFoundError) as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM metadata_candidates WHERE id = ? AND book_id = ?",
+            (payload.candidate_id, book_id),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidato não encontrado para esta obra.")
+        candidate = dict(row)
+
+    raw_info = {}
+    if candidate.get("raw_json"):
+        try:
+            raw_info = json.loads(candidate["raw_json"])
+        except Exception:
+            pass
+
+    cand_desc = raw_info.get("description")
+    cand_provider = candidate.get("source") or raw_info.get("provider", "external")
+
+    updates: Dict[str, Any] = {
+        "title": candidate["title"] or book["title"],
+        "author": candidate["author"] or book["author"],
+        "isbn10": candidate["isbn10"] or book.get("isbn10"),
+        "isbn13": candidate["isbn13"] or book.get("isbn13"),
+        "publisher": candidate["publisher"] or book.get("publisher"),
+        "publish_year": candidate["publish_year"] or book.get("publish_year"),
+        "description": cand_desc or book.get("description"),
+        "identification_status": "identified",
+        "metadata_source": cand_provider,
+    }
+    if payload.lock_fields:
+        updates["lock_fields"] = payload.lock_fields
+
+    updated_book = update_book_metadata(book_id, updates, user_id=user["id"])
+
+    # Se solicitado, tenta baixar e validar a capa externa
+    if payload.apply_cover and candidate.get("cover_url") and book.get("cover_type") != "custom":
+        from background_enricher import is_safe_external_url
+        if is_safe_external_url(candidate["cover_url"]):
+            try:
+                import httpx
+                with httpx.Client(timeout=10.0, follow_redirects=True) as http_client:
+                    res = http_client.get(candidate["cover_url"])
+                    if res.status_code == 200 and len(res.content) > 100:
+                        ext, mime, w, h = validate_cover_image(res.content)
+                        config.COVERS_DIR.mkdir(parents=True, exist_ok=True)
+                        cover_filename = f"{book_id}_extracted.{ext}"
+                        (config.COVERS_DIR / cover_filename).write_bytes(res.content)
+                        with get_db() as conn:
+                            conn.execute(
+                                """
+                                UPDATE books
+                                SET cover_type = 'extracted', cover_path = ?, cover_updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ? AND cover_type != 'custom'
+                                """,
+                                (cover_filename, book_id),
+                            )
+            except Exception:
+                pass
+
+    return {"status": "success", "book": get_book(book_id, user_id=user["id"])}
+
+
+@app.put("/api/books/{book_id}/metadata")
+async def update_book_metadata_endpoint(book_id: str, payload: MetadataUpdatePayload, request: Request):
+    """Atualização direta de metadados pelo usuário com sincronização FTS5 e travas."""
+    user = require_user(request)
+    try:
+        book = get_book(book_id, user_id=user["id"])
+    except (SecurityError, BookNotFoundError) as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    updates = payload.model_dump(exclude_unset=True)
+    updated = update_book_metadata(book_id, updates, user_id=user["id"])
+    return {"status": "success", "book": updated}
+
+
+# =========================================================================
+# ENDPOINTS DA FILA DE ENRIQUECIMENTO EM SEGUNDO PLANO (ADMIN)
+# =========================================================================
+
+@app.get("/api/metadata/queue/status")
+async def metadata_queue_status_endpoint(request: Request):
+    """Consulta o status detalhado da fila de enriquecimento em segundo plano."""
+    require_admin(request)
+    return enricher.get_status()
+
+
+@app.post("/api/metadata/queue/start")
+async def metadata_queue_start_endpoint(request: Request):
+    """Inicia ou retoma o processamento assíncrono da fila de enriquecimento."""
+    require_admin(request)
+    enricher.start()
+    return {"status": "success", "queue": enricher.get_status()}
+
+
+@app.post("/api/metadata/queue/pause")
+async def metadata_queue_pause_endpoint(request: Request):
+    """Pausa a fila de enriquecimento sem perder a posição atual."""
+    require_admin(request)
+    enricher.pause()
+    return {"status": "success", "queue": enricher.get_status()}
+
+
+@app.post("/api/metadata/queue/cancel")
+async def metadata_queue_cancel_endpoint(request: Request):
+    """Cancela e esvazia a fila de enriquecimento."""
+    require_admin(request)
+    enricher.cancel()
+    return {"status": "success", "queue": enricher.get_status()}
+
+
+@app.post("/api/metadata/queue/enqueue")
+async def metadata_queue_enqueue_endpoint(payload: MetadataQueueEnqueuePayload, request: Request):
+    """Enfileira obras para enriquecimento inteligente."""
+    require_admin(request)
+    count = enricher.enqueue_books(payload.book_ids, only_pending=payload.only_pending)
+    enricher.start()
+    return {"status": "success", "enqueued_count": count, "queue": enricher.get_status()}
 
 
 # =========================================================================

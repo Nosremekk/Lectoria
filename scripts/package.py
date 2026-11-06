@@ -26,7 +26,14 @@ import zipfile
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_BASE_DIR = PROJECT_ROOT / "dist"
 
-PACKAGE_VERSION = "1.3.0"
+# Importa versão canônica do sistema
+sys.path.insert(0, str(PROJECT_ROOT))
+try:
+    import config
+    PACKAGE_VERSION = getattr(config, "APP_VERSION", "1.4.0")
+except Exception:
+    PACKAGE_VERSION = "1.4.0"
+
 TARGET_NAME = f"Lectoria-{PACKAGE_VERSION}-linux-x86_64"
 MIGRATION_NAME = f"Lectoria-{PACKAGE_VERSION}-migration-bundle"
 

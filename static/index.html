@@ -50,6 +50,13 @@
           <span id="scan-text">Escanear</span>
         </button>
 
+        <button id="btn-metadata-center" class="btn" title="Central de Metadados e Enriquecimento Inteligente">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
+          </svg>
+          <span>Metadados</span>
+        </button>
+
         <button id="btn-backup" class="btn" title="Criar backup manual do banco de dados SQLite">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
@@ -87,54 +94,118 @@
     </div>
   </header>
 
+  <!-- Barra de Navegação Principal: Descoberta vs Biblioteca & Explorar -->
+  <nav class="main-view-nav">
+    <div class="main-view-tabs">
+      <button id="tab-nav-discovery" class="main-nav-tab-btn active" data-view="discovery">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+        </svg>
+        <span>Descoberta &amp; Destaques</span>
+      </button>
+      <button id="tab-nav-library" class="main-nav-tab-btn" data-view="library">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z"/>
+        </svg>
+        <span>Biblioteca &amp; Explorar</span>
+      </button>
+    </div>
+  </nav>
+
   <main class="main-container">
-    <!-- Abas de Filtros de Leitura e Seletor de Coleções -->
-    <div class="library-filter-tabs">
-      <div class="status-tabs">
-        <button class="tab-btn active" data-status="all">Todos os livros</button>
-        <button class="tab-btn" data-status="in_progress">Em andamento</button>
-        <button class="tab-btn" data-status="unread">Não iniciados</button>
-        <button class="tab-btn" data-status="completed">Concluídos</button>
+    <!-- Seção 1: Descoberta e Prateleiras Horizontais (Estilo Streaming) -->
+    <section id="discovery-section" class="discovery-section">
+      <div id="discovery-loading" class="shelves-loading">
+        <p>Carregando prateleiras de descoberta...</p>
+      </div>
+      <div id="shelves-container" class="shelves-container">
+        <!-- Prateleiras renderizadas dinamicamente pelo JavaScript -->
+      </div>
+    </section>
+
+    <!-- Seção 2: Biblioteca & Explorar Tradicional com Filtros Avançados -->
+    <section id="library-section" class="library-section" style="display: none;">
+      <div class="library-filter-tabs">
+        <div class="status-tabs">
+          <button class="tab-btn active" data-status="all">Todos os livros</button>
+          <button class="tab-btn" data-status="in_progress">Em andamento</button>
+          <button class="tab-btn" data-status="unread">Não iniciados</button>
+          <button class="tab-btn" data-status="completed">Concluídos</button>
+        </div>
+
+        <div class="filter-actions">
+          <select id="collection-select" class="collection-select" title="Filtrar por Coleção">
+            <option value="">Todas as coleções</option>
+            <!-- Populado via JavaScript -->
+          </select>
+
+          <select id="format-select" class="collection-select" title="Filtrar por Formato">
+            <option value="">Todos os formatos</option>
+            <option value="pdf">Apenas PDF</option>
+            <option value="epub">Apenas EPUB</option>
+          </select>
+
+          <button id="btn-manage-collections" class="btn" title="Criar ou editar coleções">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+            </svg>
+            <span>Coleções</span>
+          </button>
+
+          <select id="sort-select" class="sort-select" title="Critério de ordenação">
+            <option value="title_asc">Título (A-Z)</option>
+            <option value="title_desc">Título (Z-A)</option>
+            <option value="author_asc">Autor (A-Z)</option>
+            <option value="author_desc">Autor (Z-A)</option>
+            <option value="year_desc">Ano (Mais recente)</option>
+            <option value="year_asc">Ano (Mais antigo)</option>
+            <option value="last_read_desc">Última leitura</option>
+            <option value="recent_desc">Recém-adicionados</option>
+            <option value="progress_desc">Mais lidos</option>
+          </select>
+        </div>
       </div>
 
-      <div class="filter-actions">
-        <select id="collection-select" class="collection-select" title="Filtrar por Coleção">
-          <option value="">Todas as coleções</option>
-          <!-- Populado via JavaScript -->
+      <!-- Barra de Filtros Multidimensionais e Taxonomia -->
+      <div class="taxonomy-filters-bar">
+        <select id="category-select" class="taxonomy-select" title="Filtrar por Categoria Principal">
+          <option value="">Todas as Categorias</option>
         </select>
 
-        <select id="format-select" class="collection-select" title="Filtrar por Formato">
-          <option value="">Todos os formatos</option>
-          <option value="pdf">Apenas PDF</option>
-          <option value="epub">Apenas EPUB</option>
+        <select id="subcategory-select" class="taxonomy-select" title="Filtrar por Subcategoria">
+          <option value="">Todas as Subcategorias</option>
         </select>
 
-        <button id="btn-manage-collections" class="btn" title="Criar ou editar coleções">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
-          </svg>
-          <span>Coleções</span>
+        <select id="genre-select" class="taxonomy-select" title="Filtrar por Gênero Literário">
+          <option value="">Todos os Gêneros</option>
+        </select>
+
+        <select id="origin-select" class="taxonomy-select" title="Filtrar por Origem Literária">
+          <option value="">Todas as Origens</option>
+        </select>
+
+        <select id="id-status-select" class="taxonomy-select" title="Filtrar por Status de Identificação">
+          <option value="">Todos os Status</option>
+          <option value="identified">Identificado</option>
+          <option value="needs_review">Revisão Necessária</option>
+          <option value="pending">Pendente</option>
+          <option value="insufficient">Insuficiente</option>
+          <option value="manual_override">Manual</option>
+        </select>
+
+        <button id="btn-clear-filters" class="btn btn-subtle" title="Limpar todos os filtros">
+          Limpar filtros
         </button>
-
-        <select id="sort-select" class="sort-select" title="Critério de ordenação">
-          <option value="title_asc">Título (A-Z)</option>
-          <option value="title_desc">Título (Z-A)</option>
-          <option value="author_asc">Autor (A-Z)</option>
-          <option value="author_desc">Autor (Z-A)</option>
-          <option value="last_read_desc">Última leitura</option>
-          <option value="recent_desc">Recém-adicionados</option>
-          <option value="progress_desc">Mais lidos</option>
-        </select>
       </div>
-    </div>
 
-    <div class="library-meta-bar">
-      <div id="books-count">Carregando acervo...</div>
-    </div>
+      <div class="library-meta-bar">
+        <div id="books-count">Carregando acervo...</div>
+      </div>
 
-    <div id="books-container" class="books-grid">
-      <!-- Livros renderizados dinamicamente pelo app.js -->
-    </div>
+      <div id="books-container" class="books-grid">
+        <!-- Livros renderizados dinamicamente pelo app.js -->
+      </div>
+    </section>
   </main>
 
   <!-- Modal: Gerenciador de Coleções -->
@@ -393,6 +464,202 @@
       </div>
       <div class="modal-footer">
         <button type="button" id="btn-done-cover-modal" class="btn btn-primary">Concluir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Detalhes Ricos da Obra e Metadados (v1.4.0) -->
+  <div id="modal-book-details" class="modal-overlay">
+    <div class="modal-content modal-content-large" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+      <div class="modal-header">
+        <h3 id="details-modal-title" class="modal-title">Detalhes da Obra</h3>
+        <button id="btn-close-details-modal" class="btn btn-icon" title="Fechar">&times;</button>
+      </div>
+      <div class="modal-body" id="details-modal-body">
+        <div class="book-details-layout">
+          <!-- Coluna 1: Capa e Ações Principais -->
+          <div class="details-cover-column">
+            <div class="details-cover-box">
+              <img id="details-cover-img" src="" alt="Capa do livro" loading="lazy">
+              <span id="details-format-badge" class="tag-badge tag-format">PDF</span>
+            </div>
+            <a id="btn-details-read" href="#" class="btn btn-primary btn-block" style="margin-top: 0.8rem; text-align: center; text-decoration: none;">
+              Ler Documento
+            </a>
+            <div style="display: flex; gap: 0.4rem; margin-top: 0.4rem;">
+              <button id="btn-details-edit-cover" class="btn btn-subtle" style="flex: 1;" title="Alterar Capa">Capa</button>
+              <button id="btn-details-collections" class="btn btn-subtle" style="flex: 1;" title="Coleções">Coleções</button>
+              <a id="btn-details-download" href="#" class="btn btn-subtle" style="flex: 1; text-align: center; text-decoration: none;" title="Download">Baixar</a>
+            </div>
+            <div id="details-status-box" class="details-identification-status" style="margin-top: 0.8rem;">
+              <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.2rem;">Identificação Bibliográfica:</div>
+              <span id="details-id-status-badge" class="source-badge">Pendente</span>
+            </div>
+          </div>
+
+          <!-- Coluna 2: Informações Bibliográficas, Abas e Reconciliação -->
+          <div class="details-info-column">
+            <div class="details-header-info">
+              <h2 id="details-title" class="details-book-title">Título</h2>
+              <div id="details-author" class="details-book-author">Autor</div>
+              <div id="details-taxonomy-tags" class="details-taxonomy-chips" style="margin-top: 0.5rem;">
+                <!-- Tags de Categoria, Gênero, Origem -->
+              </div>
+            </div>
+
+            <!-- Navegação interna de abas do modal -->
+            <div class="details-subnav">
+              <button class="details-tab-btn active" data-subtab="overview">Visão Geral &amp; Sinopse</button>
+              <button class="details-tab-btn" data-subtab="reconciliation">Reconciliação Externa</button>
+              <button class="details-tab-btn" data-subtab="edit">Editar Metadados</button>
+            </div>
+
+            <!-- Subaba 1: Visão Geral e Sinopse -->
+            <div id="details-subtab-overview" class="details-subtab-pane active">
+              <div class="details-synopsis-box">
+                <h4 style="font-size: 0.88rem; margin-bottom: 0.4rem; color: var(--text-muted);">Sinopse / Descrição</h4>
+                <p id="details-description" style="font-size: 0.9rem; line-height: 1.6; color: var(--text-main); white-space: pre-line;">
+                  Nenhuma descrição cadastrada para esta obra.
+                </p>
+              </div>
+
+              <div class="details-meta-table">
+                <div class="meta-row"><span>Editora:</span> <strong id="details-meta-publisher">--</strong></div>
+                <div class="meta-row"><span>Ano de Publicação:</span> <strong id="details-meta-year">--</strong></div>
+                <div class="meta-row"><span>Idioma:</span> <strong id="details-meta-language">--</strong></div>
+                <div class="meta-row"><span>ISBN-13:</span> <strong id="details-meta-isbn13">--</strong></div>
+                <div class="meta-row"><span>ISBN-10:</span> <strong id="details-meta-isbn10">--</strong></div>
+                <div class="meta-row"><span>Edição:</span> <strong id="details-meta-edition">--</strong></div>
+                <div class="meta-row"><span>Arquivo / Tamanho:</span> <strong id="details-meta-file">--</strong></div>
+              </div>
+            </div>
+
+            <!-- Subaba 2: Reconciliação com Bases Externas -->
+            <div id="details-subtab-reconciliation" class="details-subtab-pane" style="display: none;">
+              <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+                Consulte bases bibliográficas (Open Library e Google Books) para identificar a obra e sincronizar título, autor, capa e dados editoriais.
+              </p>
+              <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <input type="text" id="details-reconcile-query" class="form-input" placeholder="Buscar por título, autor ou ISBN..." style="flex: 1;">
+                <button id="btn-details-search-candidates" class="btn btn-primary">Buscar</button>
+              </div>
+              <div id="details-candidates-loading" style="display: none; font-size: 0.85rem; color: var(--text-muted); padding: 0.5rem 0;">
+                Consultando bases bibliográficas...
+              </div>
+              <div id="details-candidates-list" class="candidates-container">
+                <!-- Lista de candidatos renderizada via JS -->
+              </div>
+            </div>
+
+            <!-- Subaba 3: Editor Manual de Metadados -->
+            <div id="details-subtab-edit" class="details-subtab-pane" style="display: none;">
+              <form id="details-edit-form" onsubmit="return false;" style="display: flex; flex-direction: column; gap: 0.65rem;">
+                <div class="form-row" style="display: flex; gap: 0.5rem;">
+                  <div style="flex: 2;">
+                    <label class="form-label" for="edit-field-title">Título</label>
+                    <input type="text" id="edit-field-title" class="form-input">
+                  </div>
+                  <div style="flex: 1.5;">
+                    <label class="form-label" for="edit-field-author">Autor</label>
+                    <input type="text" id="edit-field-author" class="form-input">
+                  </div>
+                </div>
+
+                <div class="form-row" style="display: flex; gap: 0.5rem;">
+                  <div style="flex: 1;">
+                    <label class="form-label" for="edit-field-publisher">Editora</label>
+                    <input type="text" id="edit-field-publisher" class="form-input">
+                  </div>
+                  <div style="flex: 0.6;">
+                    <label class="form-label" for="edit-field-year">Ano</label>
+                    <input type="number" id="edit-field-year" class="form-input">
+                  </div>
+                  <div style="flex: 0.6;">
+                    <label class="form-label" for="edit-field-language">Idioma</label>
+                    <input type="text" id="edit-field-language" class="form-input" placeholder="pt, en...">
+                  </div>
+                </div>
+
+                <div class="form-row" style="display: flex; gap: 0.5rem;">
+                  <div style="flex: 1;">
+                    <label class="form-label" for="edit-field-isbn13">ISBN-13</label>
+                    <input type="text" id="edit-field-isbn13" class="form-input">
+                  </div>
+                  <div style="flex: 1;">
+                    <label class="form-label" for="edit-field-isbn10">ISBN-10</label>
+                    <input type="text" id="edit-field-isbn10" class="form-input">
+                  </div>
+                </div>
+
+                <div>
+                  <label class="form-label" for="edit-field-desc">Descrição / Sinopse</label>
+                  <textarea id="edit-field-desc" class="form-input" rows="4"></textarea>
+                </div>
+
+                <div style="background: var(--bg-tertiary); padding: 0.6rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                  <label class="form-label" style="margin-bottom: 0.3rem;">Campos com Trava Manual (Lock)</label>
+                  <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; font-size: 0.82rem;">
+                    <label><input type="checkbox" id="lock-title" value="title"> Travar Título</label>
+                    <label><input type="checkbox" id="lock-author" value="author"> Travar Autor</label>
+                    <label><input type="checkbox" id="lock-publisher" value="publisher"> Travar Editora</label>
+                    <label><input type="checkbox" id="lock-isbn" value="isbn13"> Travar ISBN</label>
+                    <label><input type="checkbox" id="lock-desc" value="description"> Travar Sinopse</label>
+                  </div>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; margin-top: 0.5rem;">
+                  <button id="btn-save-manual-metadata" class="btn btn-primary">Salvar Metadados</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Central de Metadados e Fila de Enriquecimento (Admin) -->
+  <div id="modal-metadata-center" class="modal-overlay">
+    <div class="modal-content" style="max-width: 650px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Central de Metadados &amp; Enriquecimento</h3>
+        <button id="btn-close-meta-center-modal" class="btn btn-icon" title="Fechar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.8rem;">
+          Gerencie o processo assíncrono de identificação inteligente do acervo em segundo plano.
+        </p>
+
+        <div class="queue-status-card" style="background: var(--bg-tertiary); padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-color); margin-bottom: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.6rem;">
+            <strong>Status da Fila:</strong>
+            <span id="queue-status-badge" class="source-badge">Ociosa</span>
+          </div>
+
+          <div class="progress-bar-bg" style="height: 10px; margin-bottom: 0.6rem;">
+            <div id="queue-progress-bar" class="progress-bar-fill" style="width: 0%;"></div>
+          </div>
+
+          <div class="queue-metrics-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; font-size: 0.85rem;">
+            <div>Fila Total: <strong id="queue-metric-total">0</strong></div>
+            <div>Processados: <strong id="queue-metric-processed">0</strong></div>
+            <div>Identificados com Sucesso: <strong id="queue-metric-identified" style="color: var(--success);">0</strong></div>
+            <div>Revisão Necessária: <strong id="queue-metric-review" style="color: var(--warning);">0</strong></div>
+            <div>Não Encontrados: <strong id="queue-metric-notfound" style="color: var(--text-muted);">0</strong></div>
+            <div>Falhas / Erros: <strong id="queue-metric-failed" style="color: var(--danger);">0</strong></div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+          <button id="btn-queue-enqueue-pending" class="btn btn-primary">Enfileirar Obras Pendentes</button>
+          <button id="btn-queue-enqueue-all" class="btn">Enfileirar Todo o Acervo</button>
+          <button id="btn-queue-pause" class="btn btn-subtle" style="display: none;">Pausar</button>
+          <button id="btn-queue-resume" class="btn btn-subtle" style="display: none;">Retomar</button>
+          <button id="btn-queue-cancel" class="btn btn-danger" style="display: none;">Cancelar Fila</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-done-meta-center-modal" class="btn btn-primary">Fechar</button>
       </div>
     </div>
   </div>
