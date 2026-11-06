@@ -7,10 +7,12 @@ persistência de estados e atualização segura de livros e capas.
 
 import asyncio
 from datetime import datetime, timezone
+import ipaddress
 import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import urllib.parse
 import urllib.request
 import urllib.error
 
@@ -21,6 +23,28 @@ from metadata_service import identify_book_metadata
 from taxonomy_service import map_raw_subjects_to_taxonomy, sync_book_taxonomy
 
 logger = logging.getLogger("lectoria.enricher")
+
+
+def is_safe_external_url(url: str) -> bool:
+    """Valida se a URL é HTTP/HTTPS e não aponta para localhost ou redes privadas (anti-SSRF)."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = (parsed.hostname or "").lower()
+        if not hostname:
+            return False
+        if hostname in ("localhost", "127.0.0.1", "::1", "169.254.169.254"):
+            return False
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local:
+                return False
+        except ValueError:
+            pass
+        return True
+    except Exception:
+        return False
 
 
 class BackgroundEnricher:
@@ -347,6 +371,10 @@ class BackgroundEnricher:
 
     def _download_external_cover_safely(self, book_id: str, cover_url: str) -> bool:
         """Baixa e valida a imagem de capa de fonte externa sem sobrescrever capas manuais."""
+        if not is_safe_external_url(cover_url):
+            logger.warning("URL de capa rejeitada por política de segurança anti-SSRF: %s", cover_url)
+            return False
+
         try:
             req = urllib.request.Request(
                 cover_url,

@@ -1105,26 +1105,28 @@ async def apply_book_metadata_candidate_endpoint(book_id: str, payload: Metadata
 
     # Se solicitado, tenta baixar e validar a capa externa
     if payload.apply_cover and candidate.get("cover_url") and book.get("cover_type") != "custom":
-        try:
-            import httpx
-            with httpx.Client(timeout=10.0, follow_redirects=True) as http_client:
-                res = http_client.get(candidate["cover_url"])
-                if res.status_code == 200 and len(res.content) > 100:
-                    ext, mime, w, h = validate_cover_image(res.content)
-                    config.COVERS_DIR.mkdir(parents=True, exist_ok=True)
-                    cover_filename = f"{book_id}_extracted.{ext}"
-                    (config.COVERS_DIR / cover_filename).write_bytes(res.content)
-                    with get_db() as conn:
-                        conn.execute(
-                            """
-                            UPDATE books
-                            SET cover_type = 'extracted', cover_path = ?, cover_updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ? AND cover_type != 'custom'
-                            """,
-                            (cover_filename, book_id),
-                        )
-        except Exception:
-            pass
+        from background_enricher import is_safe_external_url
+        if is_safe_external_url(candidate["cover_url"]):
+            try:
+                import httpx
+                with httpx.Client(timeout=10.0, follow_redirects=True) as http_client:
+                    res = http_client.get(candidate["cover_url"])
+                    if res.status_code == 200 and len(res.content) > 100:
+                        ext, mime, w, h = validate_cover_image(res.content)
+                        config.COVERS_DIR.mkdir(parents=True, exist_ok=True)
+                        cover_filename = f"{book_id}_extracted.{ext}"
+                        (config.COVERS_DIR / cover_filename).write_bytes(res.content)
+                        with get_db() as conn:
+                            conn.execute(
+                                """
+                                UPDATE books
+                                SET cover_type = 'extracted', cover_path = ?, cover_updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ? AND cover_type != 'custom'
+                                """,
+                                (cover_filename, book_id),
+                            )
+            except Exception:
+                pass
 
     return {"status": "success", "book": get_book(book_id, user_id=user["id"])}
 

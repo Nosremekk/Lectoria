@@ -56,6 +56,7 @@ def test_manual_metadata_update_and_locks(client):
     create_sample_pdf(sample_file, "Obra Original de Teste", "Autor Teste", pages=2)
     scan_library()
 
+    b_id = None
     try:
         books = client.get("/api/books?search=Original").json()["books"]
         assert len(books) > 0
@@ -90,8 +91,9 @@ def test_manual_metadata_update_and_locks(client):
     finally:
         if sample_file.exists():
             sample_file.unlink()
-        with get_db() as conn:
-            conn.execute("DELETE FROM books WHERE id = ?", (b_id,))
+        if b_id:
+            with get_db() as conn:
+                conn.execute("DELETE FROM books WHERE id = ?", (b_id,))
         scan_library()
 
 
@@ -101,6 +103,7 @@ def test_metadata_search_and_apply(mock_http, client):
     create_sample_pdf(sample_file, "Obra Para Reconciliar", "Autor Inicial", pages=2)
     scan_library()
 
+    b_id = None
     try:
         books = client.get("/api/books?search=Reconciliar").json()["books"]
         assert len(books) > 0
@@ -111,15 +114,15 @@ def test_metadata_search_and_apply(mock_http, client):
             "authors": [{"name": "Autor Canônico"}],
             "publishers": ["Editora Nacional"],
             "publish_date": "2010",
-            "isbn_13": ["9788535902778"],
-            "isbn_10": ["8535902775"],
+            "isbn_13": ["9788535999990"],
+            "isbn_10": None,
             "covers": [99999],
         }
 
         # 1. Busca externa de candidatos
         res_search = client.post(
             f"/api/books/{b_id}/metadata/search",
-            json={"isbn": "9788535902778", "provider": "open_library"},
+            json={"isbn": "9788535999990", "provider": "open_library"},
         )
         assert res_search.status_code == 200
         candidates = res_search.json()["candidates"]
@@ -135,12 +138,14 @@ def test_metadata_search_and_apply(mock_http, client):
         assert res_apply.status_code == 200
         applied_book = res_apply.json()["book"]
         assert applied_book["identification_status"] == "identified"
-        assert applied_book["isbn13"] == "9788535902778"
+        assert applied_book["isbn13"] == "9788535999990"
     finally:
         if sample_file.exists():
             sample_file.unlink()
-        with get_db() as conn:
-            conn.execute("DELETE FROM books WHERE id = ?", (b_id,))
+        if b_id:
+            with get_db() as conn:
+                conn.execute("DELETE FROM books WHERE id = ?", (b_id,))
+                conn.execute("DELETE FROM metadata_api_cache;")
         scan_library()
 
 

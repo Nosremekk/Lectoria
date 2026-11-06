@@ -776,3 +776,121 @@ def test_no_horizontal_overflow_across_all_resolutions(e2e_server, browser_insta
 
     context.close()
 
+
+# ==============================================================================
+# TESTES E2E: INTERFACE DE DESCOBERTA, PRATELEIRAS E MODAIS (v1.4.0)
+# ==============================================================================
+
+@pytest.mark.parametrize(
+    "view_name,w,h",
+    [
+        ("desktop_1440x900", 1440, 900),
+        ("tablet_820x1180", 820, 1180),
+        ("smartphone_390x844", 390, 844),
+    ],
+)
+def test_discovery_interface_and_modals_across_devices(e2e_server, browser_instance, view_name, w, h):
+    """
+    Valida a nova interface de Descoberta v1.4.0:
+    - Alternância entre abas de visão ('Descoberta' vs 'Biblioteca').
+    - Prateleiras horizontais com scroll touch/botões.
+    - Modal de Detalhes do Livro com sub-abas (Visão Geral, Reconciliação, Editar).
+    - Fechamento com tecla Escape.
+    - Captura de screenshots em desktop, tablet e smartphone.
+    """
+    import urllib.request
+    import json
+    base_url = e2e_server["base_url"]
+
+    # Garante que um usuário administrador está cadastrado e obtém token de sessão
+    try:
+        req_setup = urllib.request.Request(
+            f"{base_url}/api/auth/setup",
+            data=json.dumps({"username": "admin", "password": "AdminSenha123!", "display_name": "Admin"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req_setup) as _:
+            pass
+    except Exception:
+        pass
+
+    admin_token = None
+    try:
+        req_login = urllib.request.Request(
+            f"{base_url}/api/auth/login",
+            data=json.dumps({"username": "admin", "password": "AdminSenha123!"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req_login) as resp:
+            for header_val in resp.headers.get_all("Set-Cookie", []):
+                if "lectoria_session=" in header_val:
+                    admin_token = header_val.split("lectoria_session=")[1].split(";")[0]
+    except Exception:
+        pass
+
+    context = browser_instance.new_context(viewport={"width": w, "height": h})
+    if admin_token:
+        context.add_cookies([{"name": "lectoria_session", "value": admin_token, "domain": "127.0.0.1", "path": "/"}])
+
+    page = context.new_page()
+
+    # 1. Abre a página principal
+    page.goto(f"{base_url}/")
+    page.wait_for_selector("#tab-nav-discovery", state="visible", timeout=10000)
+
+    # 2. Alterna para a aba de Descoberta
+    page.click("#tab-nav-discovery")
+    page.wait_for_selector("#shelves-container", state="visible", timeout=5000)
+    page.wait_for_timeout(400)
+
+    # 3. Valida prateleiras renderizadas
+    shelf_count = page.evaluate("() => document.querySelectorAll('.shelf-wrapper').length")
+    assert shelf_count >= 1, f"Nenhuma prateleira renderizada na visão de descoberta em {view_name}"
+
+    # 4. Testa botão de scroll horizontal da prateleira (se presente e visível)
+    btn_next = page.locator(".btn-shelf-next").first
+    if btn_next.is_visible():
+        row = page.locator(".shelf-row").first
+        init_scroll = row.evaluate("el => el.scrollLeft")
+        btn_next.click()
+        page.wait_for_timeout(300)
+        after_scroll = row.evaluate("el => el.scrollLeft")
+        assert after_scroll >= init_scroll
+
+    # 5. Clica no primeiro card de prateleira para abrir Detalhes do Livro
+    first_card = page.locator(".shelf-card").first
+    if first_card.is_visible():
+        first_card.click()
+        page.wait_for_selector("#modal-book-details.active", state="visible", timeout=5000)
+
+        # Valida que as sub-abas do modal existem e funcionam
+        page.click("button[data-subtab='reconciliation']")
+        page.wait_for_timeout(200)
+        reconcile_active = page.evaluate("() => document.getElementById('details-subtab-reconciliation').style.display !== 'none'")
+        assert reconcile_active is True
+
+        page.click("button[data-subtab='edit']")
+        page.wait_for_timeout(200)
+        edit_active = page.evaluate("() => document.getElementById('details-subtab-edit').style.display !== 'none'")
+        assert edit_active is True
+
+        # Testa tecla ESC para fechar modal
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(200)
+        modal_closed = page.evaluate("() => !document.getElementById('modal-book-details').classList.contains('active')")
+        assert modal_closed is True, "Tecla Escape falhou ao fechar o modal de detalhes"
+
+    # 6. Alterna de volta para a aba 'Biblioteca & Explorar'
+    page.click("#tab-nav-library")
+    page.wait_for_timeout(300)
+    lib_visible = page.evaluate("() => document.getElementById('library-section').style.display !== 'none'")
+    assert lib_visible is True
+
+    # 7. Captura screenshot de evidência
+    shot_path = SCREENSHOTS_DIR / f"discovery_ui_{view_name}.png"
+    page.screenshot(path=str(shot_path), full_page=False)
+    assert shot_path.exists() and shot_path.stat().st_size > 1000
+
+    context.close()
+
+

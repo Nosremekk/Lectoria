@@ -48,6 +48,7 @@ USER_AGENT = "Lectoria-Library-Server/1.4.0 (self-hosted; +https://github.com/No
 # Controle de taxa (Rate limiting)
 _LAST_OPENLIBRARY_CALL = 0.0
 _OPENLIBRARY_MIN_INTERVAL = 1.0  # Mínimo 1 segundo entre chamadas à Open Library
+_GOOGLE_BOOKS_COOLDOWN_UNTIL = 0.0  # Timestamp de expiração do cooldown em caso de HTTP 429
 
 
 # ==============================================================================
@@ -441,9 +442,14 @@ def _safe_http_get_json(url: str, cache_key: Optional[str] = None, source: str =
     """
     Executa requisição GET segura para APIs externas:
     - Consulta e preenche o cache local em SQLite.
-    - Respeita limites de taxa (rate limiting).
+    - Respeita limites de taxa (rate limiting) e backoff em caso de 429.
     - Timeout estrito e tratamento de códigos de erro HTTP.
     """
+    global _GOOGLE_BOOKS_COOLDOWN_UNTIL
+    if "googleapis.com" in url and time.time() < _GOOGLE_BOOKS_COOLDOWN_UNTIL:
+        logger.debug("Google Books em cooldown de taxa (HTTP 429) até %s. Ignorando requisição.", _GOOGLE_BOOKS_COOLDOWN_UNTIL)
+        return None
+
     if cache_key:
         cached = get_cached_api_response(cache_key)
         if cached is not None:
@@ -473,8 +479,12 @@ def _safe_http_get_json(url: str, cache_key: Optional[str] = None, source: str =
                 return parsed
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
         logger.debug("Falha na consulta HTTP para %s: %s", url, e)
+        # Se 429 (Too Many Requests), aciona cooldown para evitar sobrecarga
+        if isinstance(e, urllib.error.HTTPError) and e.code == 429 and "googleapis.com" in url:
+            _GOOGLE_BOOKS_COOLDOWN_UNTIL = time.time() + 60.0
+            logger.warning("Google Books retornou HTTP 429 (Too Many Requests). Cooldown ativado por 60s.")
         # Se 404, faz cache de resposta vazia para evitar consultas repetidas
-        if isinstance(e, urllib.error.HTTPError) and e.code == 404 and cache_key:
+        elif isinstance(e, urllib.error.HTTPError) and e.code == 404 and cache_key:
             set_cached_api_response(cache_key, source, {}, status_code=404, ttl_days=3)
 
     return None
@@ -494,6 +504,14 @@ class OpenLibraryClient:
         if not (validate_isbn13(clean) or validate_isbn10(clean)):
             return None
 
+        # Cache consolidado de resultado da Open Library para o ISBN
+        item_cache_key = f"ol:item:{clean}"
+        cached_result = get_cached_api_response(item_cache_key)
+        if cached_result is not None:
+            if cached_result.get("not_found"):
+                return None
+            return cached_result
+
         cache_key = f"ol:isbn:{clean}"
         url = f"{OPENLIBRARY_BASE_URL}/isbn/{clean}.json"
         data = _safe_http_get_json(url, cache_key=cache_key, source="openlibrary")
@@ -503,10 +521,15 @@ class OpenLibraryClient:
             bib_data = _safe_http_get_json(bib_url, cache_key=f"ol:bib:{clean}", source="openlibrary")
             if bib_data and f"ISBN:{clean}" in bib_data:
                 item = bib_data[f"ISBN:{clean}"]
-                return OpenLibraryClient._parse_bib_item(item, clean)
+                parsed = OpenLibraryClient._parse_bib_item(item, clean)
+                set_cached_api_response(item_cache_key, "openlibrary", parsed, status_code=200)
+                return parsed
+            set_cached_api_response(item_cache_key, "openlibrary", {"not_found": True}, status_code=404, ttl_days=3)
             return None
 
-        return OpenLibraryClient._parse_edition_json(data, clean)
+        parsed = OpenLibraryClient._parse_edition_json(data, clean)
+        set_cached_api_response(item_cache_key, "openlibrary", parsed, status_code=200)
+        return parsed
 
     @staticmethod
     def search(title: str, author: Optional[str] = None, limit: int = 5) -> List[Dict[str, Any]]:
