@@ -41,6 +41,14 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - Criação das tabelas `subjects`, `book_subjects`, `metadata_candidates`, `metadata_api_cache` e `books_fts`.
   - Backup preventivo automático pré-migração `lectoria_pre_migration_v6_to_v7.db.bak` com validação de integridade.
 
+- **Segurança Reforçada e Proteção Anti-SSRF**:
+  - Validação estrita de URLs de capas externas (`is_safe_external_url`), bloqueando loopback (`localhost`, `127.0.0.1`, `::1`), metadados de nuvem (`169.254.169.254`), faixas privadas (`10.x`, `192.168.x`, `172.16-31.x`) e esquemas não-HTTP.
+  - Controle de acesso administrativo estrito nas rotas da fila de enriquecimento (`require_admin`).
+  - Resiliência contra limites de taxa: cooldown automático de 60 segundos para HTTP 429 na Google Books API e cache de resultados negativos em SQLite, reduzindo lookups repetidos de ISBNs não catalogados de 1.6s para 0.5ms.
+- **Suíte de Testes e Validação Completa (158 Testes Aprovados)**:
+  - Inclusão de testes E2E com Chromium em Desktop, Tablet e Smartphone para carrosséis, modais e atalhos de teclado.
+  - Testes de migração de schema SQLite v6 para v7 em ambiente isolado com validação de integridade.
+
 ## [1.3.0] - 2026-11-05
 
 ### Adicionado
