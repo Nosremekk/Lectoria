@@ -1,6 +1,6 @@
-# Lectoria — Servidor Pessoal de Livros Digitais (v1.3.0)
+# Lectoria — Servidor Pessoal de Livros Digitais (v1.4.0)
 
-O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para gerenciamento e leitura de documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
+O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para organização, identificação e leitura de documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
 
 Foi concebido para operar perfeitamente mesmo em hardware modesto — como computadores antigos e mini-PCs domésticos com processadores de baixo consumo (ex: Intel Celeron), convivendo de forma estável e silenciosa com serviços de mídia como o Jellyfin.
 
@@ -8,6 +8,28 @@ Foi concebido para operar perfeitamente mesmo em hardware modesto — como compu
 
 ## 1. Principais Recursos
 
+- **Descoberta Inteligente e Prateleiras Horizontais (Estilo Streaming / Jellyfin — v1.4.0)**:
+  - Experiência visual rica com carrosséis horizontais dinâmicos: *Continuar Lendo*, *Adicionados Recentemente*, *Categorias do Acervo*, *Autores em Destaque*, *Para Começar a Ler*, *Leituras Concluídas* e *Coleções*.
+  - Garantia estrita de que nenhuma prateleira vazia é renderizada.
+  - Alternância instantânea de visão entre a aba de **Descoberta** e a visão clássica de **Biblioteca & Explorar** (Grade e Lista).
+- **Taxonomia Hierárquica e Classificação Multidimensional (v1.4.0)**:
+  - Árvore taxonômica editorial estruturada em 5 grandes eixos canônicos (*Filosofia*, *Literatura*, *Ciências Humanas*, *Ciência e Tecnologia*, *Artes e Cultura*) e dezenas de subcategorias temáticas.
+  - Separação multidimensional de facetas: *Categoria*, *Subcategoria*, *Gênero Literário*, *Origem / Nacionalidade* e *Período Histórico*.
+  - Filtros combinados instantâneos na interface web alimentados dinamicamente pelo endpoint `/api/taxonomy/tree`.
+- **Motor de Busca Textual FTS5 Nativamente Integrado (v1.4.0)**:
+  - Tabela virtual `books_fts` em SQLite permitindo busca instantânea em frações de milissegundo por título, autor, sinopse, editora e assuntos, com suporte a prefixos e termos múltiplos.
+- **Identificação Bibliográfica e Reconciliação Externa (v1.4.0)**:
+  - Consulta automática e manual a fontes públicas confiáveis: **Open Library API** (primária, com taxa defensiva de 1 req/s) e **Google Books API** (complementar).
+  - Algoritmo de correspondência inteligente (*Smart Matcher*) com pontuação ponderada de 0 a 100 (*reliable*, *needs_review*, *insufficient*), evitando correspondências equivocadas.
+  - Auditoria e histórico de candidatos registrados na tabela `metadata_candidates`.
+- **Fila Assíncrona de Enriquecimento em Segundo Plano (v1.4.0)**:
+  - Worker sequencial com taxa controlada e baixa prioridade de CPU/IO, preservando recursos em computadores modestos.
+  - **Central de Metadados** administrativa na interface web com métricas de progresso em tempo real e controles de pausar, retomar, cancelar e enfileirar.
+  - Cache local com TTL de 7 dias (`metadata_api_cache`) para evitar consultas de rede redundantes.
+- **Modal Rico de Detalhes da Obra (v1.4.0)**:
+  - Exibição de sinopse detalhada, capa ampliada, tags taxonômicas clicáveis, editora, ano de publicação, idioma, ISBN-10, ISBN-13 e formato.
+  - Subabas de *Visão Geral*, *Reconciliação Externa* (com busca interativa e aplicação de candidatos) e *Edição Manual*.
+  - Sistema de travas manuais (*field locking*): proteção de campos editados pelo usuário contra sobrescrita em novas varreduras.
 - **Biblioteca Pessoal Editorial com Múltiplas Fontes**:
   - **Identidade Visual Editorial Própria**: Paleta inspirada em encadernações e papelaria clássica nos temas Claro (Papel Marfim `#F6F3EC` e Tinta Carvão `#1C1B18` com acento Terracota `#9E3B24`), Escuro (Obsidiana Quente `#141311` e Pergaminho `#EAE5DC`) e Sépia Conforto, usando pilhas tipográficas locais (Serifada Editorial para títulos, Sans-serif para controles e Monoespaçada Tabular para métricas).
   - Suporte simultâneo a **arquivos PDF e livros EPUB nativos**, com filtros rápidos por formato na interface web.

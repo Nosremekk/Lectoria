@@ -109,7 +109,86 @@ document.addEventListener("DOMContentLoaded", () => {
   const userErrorEl = document.getElementById("user-error");
   const usersListEl = document.getElementById("users-list");
 
+  // Elementos da Atualização v1.4.0 — Descoberta & Metadados Inteligentes
+  const tabNavDiscovery = document.getElementById("tab-nav-discovery");
+  const tabNavLibrary = document.getElementById("tab-nav-library");
+  const discoverySection = document.getElementById("discovery-section");
+  const librarySection = document.getElementById("library-section");
+  const shelvesContainer = document.getElementById("shelves-container");
+  const discoveryLoading = document.getElementById("discovery-loading");
+
+  const categorySelect = document.getElementById("category-select");
+  const subcategorySelect = document.getElementById("subcategory-select");
+  const genreSelect = document.getElementById("genre-select");
+  const originSelect = document.getElementById("origin-select");
+  const idStatusSelect = document.getElementById("id-status-select");
+  const btnClearFilters = document.getElementById("btn-clear-filters");
+
+  // Modal: Detalhes da Obra
+  const modalBookDetails = document.getElementById("modal-book-details");
+  const btnCloseDetailsModal = document.getElementById("btn-close-details-modal");
+  const detailsCoverImg = document.getElementById("details-cover-img");
+  const detailsFormatBadge = document.getElementById("details-format-badge");
+  const btnDetailsRead = document.getElementById("btn-details-read");
+  const btnDetailsEditCover = document.getElementById("btn-details-edit-cover");
+  const btnDetailsCollections = document.getElementById("btn-details-collections");
+  const btnDetailsDownload = document.getElementById("btn-details-download");
+  const detailsIdStatusBadge = document.getElementById("details-id-status-badge");
+  const detailsTitle = document.getElementById("details-title");
+  const detailsAuthor = document.getElementById("details-author");
+  const detailsTaxonomyTags = document.getElementById("details-taxonomy-tags");
+  const detailsDescription = document.getElementById("details-description");
+  const detailsMetaPublisher = document.getElementById("details-meta-publisher");
+  const detailsMetaYear = document.getElementById("details-meta-year");
+  const detailsMetaLanguage = document.getElementById("details-meta-language");
+  const detailsMetaIsbn13 = document.getElementById("details-meta-isbn13");
+  const detailsMetaIsbn10 = document.getElementById("details-meta-isbn10");
+  const detailsMetaEdition = document.getElementById("details-meta-edition");
+  const detailsMetaFile = document.getElementById("details-meta-file");
+  const detailsReconcileQuery = document.getElementById("details-reconcile-query");
+  const btnDetailsSearchCandidates = document.getElementById("btn-details-search-candidates");
+  const detailsCandidatesLoading = document.getElementById("details-candidates-loading");
+  const detailsCandidatesList = document.getElementById("details-candidates-list");
+
+  // Formulário de Edição Manual
+  const editFieldTitle = document.getElementById("edit-field-title");
+  const editFieldAuthor = document.getElementById("edit-field-author");
+  const editFieldPublisher = document.getElementById("edit-field-publisher");
+  const editFieldYear = document.getElementById("edit-field-year");
+  const editFieldLanguage = document.getElementById("edit-field-language");
+  const editFieldIsbn13 = document.getElementById("edit-field-isbn13");
+  const editFieldIsbn10 = document.getElementById("edit-field-isbn10");
+  const editFieldDesc = document.getElementById("edit-field-desc");
+  const lockTitle = document.getElementById("lock-title");
+  const lockAuthor = document.getElementById("lock-author");
+  const lockPublisher = document.getElementById("lock-publisher");
+  const lockIsbn = document.getElementById("lock-isbn");
+  const lockDesc = document.getElementById("lock-desc");
+  const btnSaveManualMetadata = document.getElementById("btn-save-manual-metadata");
+
+  // Modal: Central de Metadados
+  const btnMetadataCenter = document.getElementById("btn-metadata-center");
+  const modalMetadataCenter = document.getElementById("modal-metadata-center");
+  const btnCloseMetaCenterModal = document.getElementById("btn-close-meta-center-modal");
+  const btnDoneMetaCenterModal = document.getElementById("btn-done-meta-center-modal");
+  const queueStatusBadge = document.getElementById("queue-status-badge");
+  const queueProgressBar = document.getElementById("queue-progress-bar");
+  const queueMetricTotal = document.getElementById("queue-metric-total");
+  const queueMetricProcessed = document.getElementById("queue-metric-processed");
+  const queueMetricIdentified = document.getElementById("queue-metric-identified");
+  const queueMetricReview = document.getElementById("queue-metric-review");
+  const queueMetricNotfound = document.getElementById("queue-metric-notfound");
+  const queueMetricFailed = document.getElementById("queue-metric-failed");
+  const btnQueueEnqueuePending = document.getElementById("btn-queue-enqueue-pending");
+  const btnQueueEnqueueAll = document.getElementById("btn-queue-enqueue-all");
+  const btnQueuePause = document.getElementById("btn-queue-pause");
+  const btnQueueResume = document.getElementById("btn-queue-resume");
+  const btnQueueCancel = document.getElementById("btn-queue-cancel");
+
   // Estado da aplicação
+  let currentMainTab = localStorage.getItem("lectoria_main_tab") || "discovery";
+  let activeBookForDetails = null;
+  let queuePollInterval = null;
   let currentView = localStorage.getItem("lectoria_view") || "grid";
   let currentTheme = localStorage.getItem("lectoria_theme") || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
   let currentStatus = "all";
@@ -293,6 +372,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (currentCollectionId) params.set("collection_id", currentCollectionId);
     if (currentFormat) params.set("format", currentFormat);
 
+    if (categorySelect && categorySelect.value) params.set("category", categorySelect.value);
+    if (subcategorySelect && subcategorySelect.value) params.set("subcategory", subcategorySelect.value);
+    if (genreSelect && genreSelect.value) params.set("genre", genreSelect.value);
+    if (originSelect && originSelect.value) params.set("origin", originSelect.value);
+    if (idStatusSelect && idStatusSelect.value) params.set("identification_status", idStatusSelect.value);
+
     try {
       booksCountEl.textContent = "Carregando acervo...";
       const res = await fetch(`/api/books?${params.toString()}`);
@@ -401,6 +486,9 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
 
             <div class="card-actions-bar">
+              <button type="button" class="btn-card-menu btn-book-details" data-id="${book.id}" title="Ver Detalhes e Metadados">
+                Detalhes
+              </button>
               <button type="button" class="btn-card-menu btn-edit-book-col" data-id="${book.id}" data-title="${escapeHtml(book.title)}" title="Gerenciar Coleções">
                 Coleções
               </button>
@@ -458,6 +546,14 @@ document.addEventListener("DOMContentLoaded", () => {
             <div class="list-actions">
               <button
                 type="button"
+                class="btn btn-subtle btn-book-details"
+                data-id="${book.id}"
+                title="Ver Detalhes e Metadados"
+              >
+                Detalhes
+              </button>
+              <button
+                type="button"
                 class="btn btn-icon btn-edit-book-cover"
                 data-id="${book.id}"
                 data-title="${escapeHtml(book.title)}"
@@ -500,6 +596,15 @@ document.addEventListener("DOMContentLoaded", () => {
         e.preventDefault();
         e.stopPropagation();
         openBookCollectionsModal(btn.getAttribute("data-id"), btn.getAttribute("data-title"));
+      });
+    });
+
+    // Vincula botões de detalhes da obra
+    document.querySelectorAll(".btn-book-details").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openBookDetails(btn.getAttribute("data-id"));
       });
     });
   }
@@ -1478,11 +1583,624 @@ document.addEventListener("DOMContentLoaded", () => {
   if (btnCloseCoverModal) btnCloseCoverModal.addEventListener("click", () => modalBookCover.classList.remove("active"));
   if (btnDoneCoverModal) btnDoneCoverModal.addEventListener("click", () => modalBookCover.classList.remove("active"));
 
+  // =========================================================================
+  // IMPLEMENTAÇÃO DE DESCOBERTA, PRATELEIRAS E METADADOS (v1.4.0)
+  // =========================================================================
+
+  function setMainTab(tab) {
+    currentMainTab = tab;
+    localStorage.setItem("lectoria_main_tab", tab);
+    if (tab === "discovery") {
+      if (tabNavDiscovery) tabNavDiscovery.classList.add("active");
+      if (tabNavLibrary) tabNavLibrary.classList.remove("active");
+      if (discoverySection) discoverySection.style.display = "flex";
+      if (librarySection) librarySection.style.display = "none";
+      loadShelves();
+    } else {
+      if (tabNavDiscovery) tabNavDiscovery.classList.remove("active");
+      if (tabNavLibrary) tabNavLibrary.classList.add("active");
+      if (discoverySection) discoverySection.style.display = "none";
+      if (librarySection) librarySection.style.display = "block";
+      loadBooks();
+    }
+  }
+
+  if (tabNavDiscovery) tabNavDiscovery.addEventListener("click", () => setMainTab("discovery"));
+  if (tabNavLibrary) tabNavLibrary.addEventListener("click", () => setMainTab("library"));
+
+  // --- Prateleiras de Descoberta ---
+  async function loadShelves() {
+    if (!shelvesContainer) return;
+    if (discoveryLoading) discoveryLoading.style.display = "block";
+
+    try {
+      const res = await fetch("/api/discovery/shelves");
+      if (!res.ok) throw new Error("Erro ao carregar prateleiras de descoberta.");
+      const data = await res.json();
+      const shelves = data.shelves || [];
+
+      if (discoveryLoading) discoveryLoading.style.display = "none";
+
+      if (shelves.length === 0) {
+        shelvesContainer.innerHTML = `
+          <div class="empty-state">
+            <h3>Nenhuma prateleira disponível</h3>
+            <p>Adicione livros ao seu acervo para gerar recomendações e categorias de descoberta.</p>
+          </div>
+        `;
+        return;
+      }
+
+      shelvesContainer.innerHTML = shelves.map(shelf => {
+        const booksHtml = (shelf.books || []).map(b => {
+          const coverUrl = b.cover_url || `/api/books/${encodeURIComponent(b.id)}/cover`;
+          const bookFormat = (b.format || "pdf").toUpperCase();
+          const primaryCat = (b.taxonomy && b.taxonomy.categories && b.taxonomy.categories[0]) || "";
+          return `
+            <div class="shelf-card" data-id="${b.id}" tabindex="0" role="button" aria-label="Abrir detalhes de ${escapeHtml(b.title)}">
+              <div class="shelf-cover-wrapper">
+                <img class="shelf-cover-img" src="${escapeHtml(coverUrl)}" alt="Capa de ${escapeHtml(b.title)}" loading="lazy">
+                <div class="book-cover-badges">
+                  <span class="tag-badge tag-format tag-format-${bookFormat.toLowerCase()}">${bookFormat}</span>
+                </div>
+              </div>
+              <div class="shelf-info">
+                <div class="shelf-book-title" title="${escapeHtml(b.title)}">${escapeHtml(b.title)}</div>
+                <div class="shelf-book-author" title="${escapeHtml(b.author || '')}">${escapeHtml(b.author || 'Autor não informado')}</div>
+                ${primaryCat ? `<div class="shelf-book-tag">${escapeHtml(primaryCat)}</div>` : ''}
+              </div>
+            </div>
+          `;
+        }).join("");
+
+        return `
+          <section class="shelf-wrapper" data-shelf-id="${escapeHtml(shelf.id)}">
+            <div class="shelf-header">
+              <div>
+                <h2 class="shelf-title">${escapeHtml(shelf.title)}</h2>
+                ${shelf.subtitle ? `<div class="shelf-subtitle">${escapeHtml(shelf.subtitle)}</div>` : ""}
+              </div>
+              <div class="shelf-nav-buttons">
+                <button class="shelf-nav-btn btn-shelf-prev" title="Rolar para esquerda" aria-label="Rolar para esquerda">&larr;</button>
+                <button class="shelf-nav-btn btn-shelf-next" title="Rolar para direita" aria-label="Rolar para direita">&rarr;</button>
+              </div>
+            </div>
+            <div class="shelf-row">
+              ${booksHtml}
+            </div>
+          </section>
+        `;
+      }).join("");
+
+      // Vincula navegação horizontal suave por botões
+      shelvesContainer.querySelectorAll(".shelf-wrapper").forEach(wrapper => {
+        const row = wrapper.querySelector(".shelf-row");
+        const btnPrev = wrapper.querySelector(".btn-shelf-prev");
+        const btnNext = wrapper.querySelector(".btn-shelf-next");
+
+        if (btnPrev && row) {
+          btnPrev.addEventListener("click", () => {
+            row.scrollBy({ left: -340, behavior: "smooth" });
+          });
+        }
+        if (btnNext && row) {
+          btnNext.addEventListener("click", () => {
+            row.scrollBy({ left: 340, behavior: "smooth" });
+          });
+        }
+      });
+
+      // Vincula abertura de detalhes ao clicar no card da prateleira
+      shelvesContainer.querySelectorAll(".shelf-card").forEach(card => {
+        card.addEventListener("click", () => {
+          openBookDetails(card.getAttribute("data-id"));
+        });
+        card.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openBookDetails(card.getAttribute("data-id"));
+          }
+        });
+      });
+    } catch (err) {
+      console.error(err);
+      if (discoveryLoading) discoveryLoading.style.display = "none";
+      shelvesContainer.innerHTML = `
+        <div class="empty-state">
+          <h3>Erro ao carregar prateleiras de descoberta</h3>
+          <p>Tente novamente mais tarde.</p>
+        </div>
+      `;
+    }
+  }
+
+  // --- Árvore Taxonômica e Filtros ---
+  async function loadTaxonomyTree() {
+    try {
+      const res = await fetch("/api/taxonomy/tree");
+      if (!res.ok) return;
+      const data = await res.json();
+      const tree = data.tree || [];
+
+      if (categorySelect) {
+        categorySelect.innerHTML = `<option value="">Todas as Categorias</option>` +
+          tree.map(cat => `<option value="${escapeHtml(cat.category)}">${escapeHtml(cat.category)} (${cat.total_books})</option>`).join("");
+      }
+
+      // Atualiza subcategorias dinamicamente ao selecionar categoria
+      if (categorySelect && subcategorySelect) {
+        categorySelect.addEventListener("change", () => {
+          const selectedCatName = categorySelect.value;
+          const found = tree.find(t => t.category === selectedCatName);
+          if (found && found.subcategories && found.subcategories.length > 0) {
+            subcategorySelect.innerHTML = `<option value="">Todas as Subcategorias</option>` +
+              found.subcategories.map(s => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)} (${s.book_count})</option>`).join("");
+          } else {
+            subcategorySelect.innerHTML = `<option value="">Todas as Subcategorias</option>`;
+          }
+          loadBooks();
+        });
+      }
+
+      if (subcategorySelect) subcategorySelect.addEventListener("change", () => loadBooks());
+      if (genreSelect) genreSelect.addEventListener("change", () => loadBooks());
+      if (originSelect) originSelect.addEventListener("change", () => loadBooks());
+      if (idStatusSelect) idStatusSelect.addEventListener("change", () => loadBooks());
+
+      if (btnClearFilters) {
+        btnClearFilters.addEventListener("click", () => {
+          if (searchInput) searchInput.value = "";
+          if (collectionSelect) collectionSelect.value = "";
+          if (formatSelect) formatSelect.value = "";
+          if (categorySelect) categorySelect.value = "";
+          if (subcategorySelect) subcategorySelect.innerHTML = `<option value="">Todas as Subcategorias</option>`;
+          if (genreSelect) genreSelect.value = "";
+          if (originSelect) originSelect.value = "";
+          if (idStatusSelect) idStatusSelect.value = "";
+          currentCollectionId = "";
+          currentFormat = "";
+          loadBooks();
+        });
+      }
+    } catch (e) {
+      console.error("Erro ao carregar árvore de taxonomia:", e);
+    }
+  }
+
+  // --- Modal: Detalhes Ricos da Obra e Reconciliação ---
+  async function openBookDetails(bookId) {
+    if (!modalBookDetails) return;
+    try {
+      const res = await fetch(`/api/books/${bookId}`);
+      if (!res.ok) throw new Error("Livro não encontrado");
+      const book = await res.json();
+      activeBookForDetails = book;
+
+      if (detailsCoverImg) {
+        detailsCoverImg.src = book.cover_url || `/api/books/${encodeURIComponent(book.id)}/cover`;
+      }
+      if (detailsFormatBadge) {
+        const fmt = (book.format || "pdf").toUpperCase();
+        detailsFormatBadge.textContent = fmt;
+        detailsFormatBadge.className = `tag-badge tag-format tag-format-${fmt.toLowerCase()}`;
+      }
+      if (btnDetailsRead) {
+        btnDetailsRead.href = `/reader/${book.id}`;
+      }
+      if (btnDetailsDownload) {
+        btnDetailsDownload.href = `/api/books/${encodeURIComponent(book.id)}/download`;
+      }
+      if (detailsTitle) detailsTitle.textContent = book.title || "Sem título";
+      if (detailsAuthor) detailsAuthor.textContent = book.author || "Autor não informado";
+
+      // Status de Identificação
+      if (detailsIdStatusBadge) {
+        const idStatus = book.identification_status || "pending";
+        const score = Math.round((book.identification_score || 0));
+        if (idStatus === "identified") {
+          detailsIdStatusBadge.textContent = `Identificado (${score}%)`;
+          detailsIdStatusBadge.className = "source-badge source-badge-active";
+        } else if (idStatus === "needs_review") {
+          detailsIdStatusBadge.textContent = `Revisão Necessária (${score}%)`;
+          detailsIdStatusBadge.className = "source-badge";
+          detailsIdStatusBadge.style.backgroundColor = "rgba(217, 155, 38, 0.2)";
+          detailsIdStatusBadge.style.color = "var(--warning)";
+        } else if (idStatus === "manual_override") {
+          detailsIdStatusBadge.textContent = "Edição Manual";
+          detailsIdStatusBadge.className = "source-badge source-badge-active";
+        } else {
+          detailsIdStatusBadge.textContent = "Pendente";
+          detailsIdStatusBadge.className = "source-badge source-badge-inactive";
+        }
+      }
+
+      // Badges Taxonômicas
+      if (detailsTaxonomyTags) {
+        const tax = book.taxonomy || {};
+        let tagsHtml = "";
+        (tax.categories || []).forEach(cat => {
+          tagsHtml += `<span class="badge-taxonomy badge-category">${escapeHtml(cat)}</span>`;
+        });
+        (tax.subcategories || []).forEach(subcat => {
+          tagsHtml += `<span class="badge-taxonomy badge-category">${escapeHtml(subcat)}</span>`;
+        });
+        if (tax.genre) {
+          tagsHtml += `<span class="badge-taxonomy badge-genre">${escapeHtml(tax.genre)}</span>`;
+        }
+        if (tax.origin) {
+          tagsHtml += `<span class="badge-taxonomy badge-origin">${escapeHtml(tax.origin)}</span>`;
+        }
+        detailsTaxonomyTags.innerHTML = tagsHtml;
+      }
+
+      // Sinopse e Metadados
+      if (detailsDescription) {
+        detailsDescription.textContent = book.description || "Nenhuma sinopse cadastrada para esta obra.";
+      }
+      if (detailsMetaPublisher) detailsMetaPublisher.textContent = book.publisher || "--";
+      if (detailsMetaYear) detailsMetaYear.textContent = book.publish_year || "--";
+      if (detailsMetaLanguage) detailsMetaLanguage.textContent = (book.language || "--").toUpperCase();
+      if (detailsMetaIsbn13) detailsMetaIsbn13.textContent = book.isbn13 || "--";
+      if (detailsMetaIsbn10) detailsMetaIsbn10.textContent = book.isbn10 || "--";
+      if (detailsMetaEdition) detailsMetaEdition.textContent = book.edition || "--";
+      if (detailsMetaFile) detailsMetaFile.textContent = `${formatBytes(book.filesize || 0)} (${(book.format || "pdf").toUpperCase()})`;
+
+      // Popula campos do editor manual
+      if (editFieldTitle) editFieldTitle.value = book.title || "";
+      if (editFieldAuthor) editFieldAuthor.value = book.author || "";
+      if (editFieldPublisher) editFieldPublisher.value = book.publisher || "";
+      if (editFieldYear) editFieldYear.value = book.publish_year || "";
+      if (editFieldLanguage) editFieldLanguage.value = book.language || "";
+      if (editFieldIsbn13) editFieldIsbn13.value = book.isbn13 || "";
+      if (editFieldIsbn10) editFieldIsbn10.value = book.isbn10 || "";
+      if (editFieldDesc) editFieldDesc.value = book.description || "";
+
+      const locks = new Set(book.manual_lock_fields || []);
+      if (lockTitle) lockTitle.checked = locks.has("title");
+      if (lockAuthor) lockAuthor.checked = locks.has("author");
+      if (lockPublisher) lockPublisher.checked = locks.has("publisher");
+      if (lockIsbn) lockIsbn.checked = locks.has("isbn13");
+      if (lockDesc) lockDesc.checked = locks.has("description");
+
+      // Reset para primeira subaba (Visão Geral)
+      switchDetailsSubtab("overview");
+      loadBookCandidates(book.id);
+
+      modalBookDetails.classList.add("active");
+    } catch (e) {
+      alert("Não foi possível carregar os detalhes desta obra.");
+    }
+  }
+
+  function switchDetailsSubtab(subtabName) {
+    document.querySelectorAll(".details-tab-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.getAttribute("data-subtab") === subtabName);
+    });
+    document.querySelectorAll(".details-subtab-pane").forEach(pane => {
+      pane.style.display = pane.id === `details-subtab-${subtabName}` ? "block" : "none";
+    });
+  }
+
+  document.querySelectorAll(".details-tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      switchDetailsSubtab(btn.getAttribute("data-subtab"));
+    });
+  });
+
+  if (btnCloseDetailsModal) {
+    btnCloseDetailsModal.addEventListener("click", () => {
+      modalBookDetails.classList.remove("active");
+    });
+  }
+
+  if (btnDetailsEditCover) {
+    btnDetailsEditCover.addEventListener("click", () => {
+      if (!activeBookForDetails) return;
+      openBookCoverModal(
+        activeBookForDetails.id,
+        activeBookForDetails.title,
+        activeBookForDetails.cover_url,
+        activeBookForDetails.cover_type
+      );
+    });
+  }
+
+  if (btnDetailsCollections) {
+    btnDetailsCollections.addEventListener("click", () => {
+      if (!activeBookForDetails) return;
+      openBookCollectionsModal(activeBookForDetails.id, activeBookForDetails.title);
+    });
+  }
+
+  // --- Reconciliação e Candidatos ---
+  async function loadBookCandidates(bookId) {
+    if (!detailsCandidatesList) return;
+    try {
+      const res = await fetch(`/api/books/${bookId}/metadata/candidates`);
+      if (!res.ok) return;
+      const data = await res.json();
+      renderCandidateList(data.candidates || []);
+    } catch (e) {
+      console.error("Erro ao listar candidatos:", e);
+    }
+  }
+
+  function renderCandidateList(candidates) {
+    if (!detailsCandidatesList) return;
+    if (!candidates || candidates.length === 0) {
+      detailsCandidatesList.innerHTML = `
+        <div style="font-size: 0.85rem; color: var(--text-muted); padding: 0.75rem 0; text-align: center;">
+          Nenhum candidato registrado. Clique em "Buscar" acima para consultar Open Library e Google Books.
+        </div>
+      `;
+      return;
+    }
+
+    detailsCandidatesList.innerHTML = candidates.map(c => {
+      const score = Math.round(c.confidence_score || 0);
+      let scoreClass = "score-insufficient";
+      if (score >= 85) scoreClass = "score-reliable";
+      else if (score >= 50) scoreClass = "score-review";
+
+      return `
+        <div class="candidate-card">
+          ${c.cover_url ? `<img class="candidate-cover-thumb" src="${escapeHtml(c.cover_url)}" alt="Capa" loading="lazy">` : `<div class="candidate-cover-thumb" style="display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:var(--text-faint);">Sem capa</div>`}
+          <div class="candidate-info">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <strong style="font-size: 0.88rem;">${escapeHtml(c.title)}</strong>
+              <span class="candidate-score-badge ${scoreClass}">${score}% match</span>
+            </div>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">${escapeHtml(c.author || "Autor não informado")} ${c.publish_year ? `&bull; ${c.publish_year}` : ""} &bull; <em style="text-transform: capitalize;">${escapeHtml(c.provider || "externo")}</em></div>
+            <div style="font-size: 0.75rem; color: var(--text-faint); margin-top: 0.2rem;">${escapeHtml(c.publisher || "")} ${c.isbn13 ? `| ISBN: ${c.isbn13}` : ""}</div>
+          </div>
+          <button class="btn btn-primary btn-apply-candidate" data-id="${c.id}" style="padding: 0.35rem 0.65rem; font-size: 0.8rem;">
+            Aplicar
+          </button>
+        </div>
+      `;
+    }).join("");
+
+    detailsCandidatesList.querySelectorAll(".btn-apply-candidate").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        if (!activeBookForDetails) return;
+        const candidateId = parseInt(btn.getAttribute("data-id"), 10);
+        try {
+          btn.disabled = true;
+          btn.textContent = "Aplicando...";
+          const res = await fetch(`/api/books/${activeBookForDetails.id}/metadata/apply`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ candidate_id: candidateId, apply_cover: true }),
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            alert(err.detail || "Erro ao aplicar candidato.");
+            btn.disabled = false;
+            btn.textContent = "Aplicar";
+            return;
+          }
+          await openBookDetails(activeBookForDetails.id);
+          loadShelves();
+          loadBooks();
+        } catch (e) {
+          alert("Erro de conexão ao aplicar metadados.");
+          btn.disabled = false;
+          btn.textContent = "Aplicar";
+        }
+      });
+    });
+  }
+
+  if (btnDetailsSearchCandidates) {
+    btnDetailsSearchCandidates.addEventListener("click", async () => {
+      if (!activeBookForDetails) return;
+      const q = detailsReconcileQuery ? detailsReconcileQuery.value.trim() : "";
+      if (detailsCandidatesLoading) detailsCandidatesLoading.style.display = "block";
+      try {
+        const res = await fetch(`/api/books/${activeBookForDetails.id}/metadata/search`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: q || undefined }),
+        });
+        if (detailsCandidatesLoading) detailsCandidatesLoading.style.display = "none";
+        if (res.ok) {
+          const data = await res.json();
+          renderCandidateList(data.candidates || []);
+        } else {
+          alert("Falha na busca externa de metadados.");
+        }
+      } catch (e) {
+        if (detailsCandidatesLoading) detailsCandidatesLoading.style.display = "none";
+        alert("Erro de conexão ao buscar candidatos.");
+      }
+    });
+  }
+
+  // Salvar Edição Manual de Metadados
+  if (btnSaveManualMetadata) {
+    btnSaveManualMetadata.addEventListener("click", async () => {
+      if (!activeBookForDetails) return;
+      const updates = {
+        title: editFieldTitle ? editFieldTitle.value.trim() : undefined,
+        author: editFieldAuthor ? editFieldAuthor.value.trim() : undefined,
+        publisher: editFieldPublisher ? editFieldPublisher.value.trim() : undefined,
+        publish_year: editFieldYear && editFieldYear.value ? parseInt(editFieldYear.value, 10) : undefined,
+        language: editFieldLanguage ? editFieldLanguage.value.trim() : undefined,
+        isbn13: editFieldIsbn13 ? editFieldIsbn13.value.trim() : undefined,
+        isbn10: editFieldIsbn10 ? editFieldIsbn10.value.trim() : undefined,
+        description: editFieldDesc ? editFieldDesc.value.trim() : undefined,
+      };
+
+      const lockFields = [];
+      if (lockTitle && lockTitle.checked) lockFields.push("title");
+      if (lockAuthor && lockAuthor.checked) lockFields.push("author");
+      if (lockPublisher && lockPublisher.checked) lockFields.push("publisher");
+      if (lockIsbn && lockIsbn.checked) lockFields.push("isbn13");
+      if (lockDesc && lockDesc.checked) lockFields.push("description");
+      updates.lock_fields = lockFields;
+
+      try {
+        btnSaveManualMetadata.disabled = true;
+        const res = await fetch(`/api/books/${activeBookForDetails.id}/metadata`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        });
+        btnSaveManualMetadata.disabled = false;
+        if (res.ok) {
+          await openBookDetails(activeBookForDetails.id);
+          loadShelves();
+          loadBooks();
+          alert("Metadados atualizados com sucesso.");
+        } else {
+          const err = await res.json();
+          alert(err.detail || "Erro ao salvar metadados.");
+        }
+      } catch (e) {
+        btnSaveManualMetadata.disabled = false;
+        alert("Erro de conexão ao salvar metadados.");
+      }
+    });
+  }
+
+  // --- Central de Metadados (Fila de Enriquecimento) ---
+  function updateQueueModalUI(status) {
+    if (!queueStatusBadge) return;
+    const state = status.status || "idle";
+    const stateMap = {
+      running: { label: "Em Execução", cls: "source-badge-active" },
+      paused: { label: "Pausada", cls: "" },
+      completed: { label: "Concluída", cls: "source-badge-active" },
+      cancelled: { label: "Cancelada", cls: "source-badge-inactive" },
+      idle: { label: "Ociosa", cls: "source-badge-inactive" },
+    };
+    const sInfo = stateMap[state] || { label: state, cls: "" };
+    queueStatusBadge.textContent = sInfo.label;
+    queueStatusBadge.className = `source-badge ${sInfo.cls}`;
+
+    const total = status.total || 0;
+    const processed = status.processed || 0;
+    const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
+    if (queueProgressBar) queueProgressBar.style.width = `${percent}%`;
+
+    if (queueMetricTotal) queueMetricTotal.textContent = total;
+    if (queueMetricProcessed) queueMetricProcessed.textContent = `${processed} (${percent}%)`;
+    if (queueMetricIdentified) queueMetricIdentified.textContent = status.identified || 0;
+    if (queueMetricReview) queueMetricReview.textContent = status.needs_review || 0;
+    if (queueMetricNotfound) queueMetricNotfound.textContent = status.not_found || 0;
+    if (queueMetricFailed) queueMetricFailed.textContent = status.failed || 0;
+
+    // Alterna botões
+    if (btnQueuePause) btnQueuePause.style.display = state === "running" ? "inline-flex" : "none";
+    if (btnQueueResume) btnQueueResume.style.display = state === "paused" ? "inline-flex" : "none";
+    if (btnQueueCancel) btnQueueCancel.style.display = (state === "running" || state === "paused") ? "inline-flex" : "none";
+  }
+
+  async function pollQueueStatus() {
+    try {
+      const res = await fetch("/api/metadata/queue/status");
+      if (res.ok) {
+        const data = await res.json();
+        updateQueueModalUI(data);
+      }
+    } catch (e) {
+      console.error("Erro ao consultar fila:", e);
+    }
+  }
+
+  function openMetadataCenter() {
+    if (!modalMetadataCenter) return;
+    pollQueueStatus();
+    if (queuePollInterval) clearInterval(queuePollInterval);
+    queuePollInterval = setInterval(pollQueueStatus, 2500);
+    modalMetadataCenter.classList.add("active");
+  }
+
+  function closeMetadataCenter() {
+    if (!modalMetadataCenter) return;
+    if (queuePollInterval) {
+      clearInterval(queuePollInterval);
+      queuePollInterval = null;
+    }
+    modalMetadataCenter.classList.remove("active");
+    loadShelves();
+    loadBooks();
+  }
+
+  if (btnMetadataCenter) btnMetadataCenter.addEventListener("click", openMetadataCenter);
+  if (btnCloseMetaCenterModal) btnCloseMetaCenterModal.addEventListener("click", closeMetadataCenter);
+  if (btnDoneMetaCenterModal) btnDoneMetaCenterModal.addEventListener("click", closeMetadataCenter);
+
+  if (btnQueueEnqueuePending) {
+    btnQueueEnqueuePending.addEventListener("click", async () => {
+      try {
+        btnQueueEnqueuePending.disabled = true;
+        const res = await fetch("/api/metadata/queue/enqueue", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ only_pending: true }),
+        });
+        btnQueueEnqueuePending.disabled = false;
+        if (res.ok) {
+          pollQueueStatus();
+        }
+      } catch (e) {
+        btnQueueEnqueuePending.disabled = false;
+        alert("Erro ao enfileirar obras.");
+      }
+    });
+  }
+
+  if (btnQueueEnqueueAll) {
+    btnQueueEnqueueAll.addEventListener("click", async () => {
+      if (!confirm("Deseja re-enfileirar todo o acervo para enriquecimento?")) return;
+      try {
+        btnQueueEnqueueAll.disabled = true;
+        const res = await fetch("/api/metadata/queue/enqueue", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ only_pending: false }),
+        });
+        btnQueueEnqueueAll.disabled = false;
+        if (res.ok) {
+          pollQueueStatus();
+        }
+      } catch (e) {
+        btnQueueEnqueueAll.disabled = false;
+        alert("Erro ao enfileirar todo o acervo.");
+      }
+    });
+  }
+
+  if (btnQueuePause) {
+    btnQueuePause.addEventListener("click", async () => {
+      await fetch("/api/metadata/queue/pause", { method: "POST" });
+      pollQueueStatus();
+    });
+  }
+
+  if (btnQueueResume) {
+    btnQueueResume.addEventListener("click", async () => {
+      await fetch("/api/metadata/queue/start", { method: "POST" });
+      pollQueueStatus();
+    });
+  }
+
+  if (btnQueueCancel) {
+    btnQueueCancel.addEventListener("click", async () => {
+      if (!confirm("Deseja cancelar e esvaziar a fila de enriquecimento?")) return;
+      await fetch("/api/metadata/queue/cancel", { method: "POST" });
+      pollQueueStatus();
+    });
+  }
+
   // Fecha modais com tecla ESC
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       modalCollections.classList.remove("active");
       modalBookCol.classList.remove("active");
+      if (modalBookDetails) modalBookDetails.classList.remove("active");
+      if (modalMetadataCenter) closeMetadataCenter();
       if (!isSetupRequired) modalAuth.classList.remove("active");
       if (modalDirPicker && modalDirPicker.classList.contains("active")) {
         modalDirPicker.classList.remove("active");
@@ -1496,5 +2214,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Inicialização
   setView(currentView);
+  setMainTab(currentMainTab);
+  loadTaxonomyTree();
   initAuth();
 });
