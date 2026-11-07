@@ -295,13 +295,13 @@ def test_sqlite_v6_to_v7_clean_migration():
         expected_bak = test_db.with_name(f"lectoria_pre_migration_v6_to_v{SCHEMA_VERSION}.db.bak")
         assert expected_bak.exists(), "Backup automático pré-migração não foi gerado!"
 
-        # 2. Verifica se a versão no schema_migrations agora é 7
+        # 2. Verifica se a versão no schema_migrations agora é SCHEMA_VERSION
         conn = sqlite3.connect(str(test_db))
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
         cur.execute("SELECT MAX(version) FROM schema_migrations;")
-        assert cur.fetchone()[0] == 7
+        assert cur.fetchone()[0] == SCHEMA_VERSION
 
         # 3. Verifica integridade do SQLite
         cur.execute("PRAGMA integrity_check;")

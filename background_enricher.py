@@ -17,9 +17,9 @@ import urllib.request
 import urllib.error
 
 import config
-from covers_service import validate_cover_image
+from covers_service import is_extracted_cover_visually_valid, validate_cover_image
 from database import get_db
-from metadata_service import identify_book_metadata
+from metadata_service import identify_book_metadata_with_diagnostics, record_metadata_provenance
 from taxonomy_service import map_raw_subjects_to_taxonomy, sync_book_taxonomy
 
 logger = logging.getLogger("lectoria.enricher")
@@ -61,7 +61,9 @@ class BackgroundEnricher:
             "processed": 0,
             "identified": 0,
             "needs_review": 0,
+            "ambiguous": 0,
             "not_found": 0,
+            "rate_limited": 0,
             "failed": 0,
             "started_at": None,
             "finished_at": None,
@@ -78,7 +80,9 @@ class BackgroundEnricher:
             "processed": self._stats.get("processed", 0),
             "identified": self._stats.get("identified", 0),
             "needs_review": self._stats.get("needs_review", 0),
+            "ambiguous": self._stats.get("ambiguous", 0),
             "not_found": self._stats.get("not_found", 0),
+            "rate_limited": self._stats.get("rate_limited", 0),
             "failed": self._stats.get("failed", 0),
             "stats": dict(self._stats),
         }
@@ -100,12 +104,21 @@ class BackgroundEnricher:
                 cursor.execute(
                     """
                     SELECT id FROM books
-                    WHERE is_missing = 0 AND (identification_status IS NULL OR identification_status IN ('pending', 'failed', 'not_found'))
+                    WHERE is_missing = 0 AND (
+                        identification_status IS NULL
+                        OR identification_status IN ('pending', 'failed', 'not_found', 'rate_limited', 'technical_error')
+                    )
                     ORDER BY created_at DESC;
                     """
                 )
             else:
-                cursor.execute("SELECT id FROM books WHERE is_missing = 0 ORDER BY created_at DESC;")
+                cursor.execute(
+                    """
+                    SELECT id FROM books
+                    WHERE is_missing = 0 AND COALESCE(identification_status, '') != 'manual_override'
+                    ORDER BY created_at DESC;
+                    """
+                )
 
             found_ids = [row["id"] for row in cursor.fetchall()]
 
@@ -195,8 +208,9 @@ class BackgroundEnricher:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT id, title, author, filename, isbn10, isbn13, publisher, publish_year,
-                       cover_type, cover_path, manual_lock_fields
+                SELECT id, title, author, subtitle, volume, edition, filename, rel_path,
+                       isbn10, isbn13, publisher, publish_year,
+                       cover_type, cover_path, file_hash, manual_lock_fields
                 FROM books WHERE id = ?;
                 """,
                 (book_id,),
@@ -215,14 +229,28 @@ class BackgroundEnricher:
             except Exception:
                 locked_fields = set()
 
-        # 1. Consulta candidatos bibliográficos externos
-        candidates = identify_book_metadata(book_dict)
+        # 1. Consulta candidatos bibliográficos externos com diagnóstico completo
+        diag = identify_book_metadata_with_diagnostics(book_dict)
+        candidates = diag.get("candidates", [])
+        decision_status = diag.get("status", "not_found")
+        error_reason = diag.get("error_reason")
 
         # 2. Persiste os candidatos encontrados para auditoria e revisão
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM metadata_candidates WHERE book_id = ?;", (book_id,))
             for cand in candidates:
+                raw_payload = dict(cand.get("raw_data") or {})
+                if cand.get("score_reasons"):
+                    raw_payload["_score_reasons"] = cand["score_reasons"]
+                if cand.get("subtitle"):
+                    raw_payload["subtitle"] = cand["subtitle"]
+                if cand.get("description"):
+                    raw_payload["description"] = cand["description"]
+                if cand.get("language"):
+                    raw_payload["language"] = cand["language"]
+                if cand.get("subjects"):
+                    raw_payload["subjects"] = cand["subjects"]
                 cursor.execute(
                     """
                     INSERT INTO metadata_candidates (
@@ -241,67 +269,93 @@ class BackgroundEnricher:
                         cand.get("isbn10"),
                         cand.get("isbn13"),
                         cand.get("cover_url"),
-                        json.dumps(cand.get("raw_data", {})),
+                        json.dumps(raw_payload),
                         cand.get("score", 0.0),
                         cand.get("confidence_level", "insufficient"),
                     ),
                 )
 
         if not candidates:
+            final_empty_status = decision_status if decision_status in ("rate_limited", "technical_error") else "not_found"
             with get_db() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
                     UPDATE books
-                    SET identification_status = 'not_found', identification_score = 0.0,
+                    SET identification_status = ?, identification_score = 0.0,
+                        last_error_reason = ?,
                         metadata_updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?;
                     """,
-                    (book_id,),
+                    (final_empty_status, error_reason, book_id),
                 )
-            self._stats["not_found"] += 1
+            if final_empty_status == "rate_limited":
+                self._stats["rate_limited"] = self._stats.get("rate_limited", 0) + 1
+            elif final_empty_status == "technical_error":
+                self._stats["failed"] += 1
+            else:
+                self._stats["not_found"] += 1
             return
 
         best = candidates[0]
         score = best.get("score", 0.0)
         confidence = best.get("confidence_level", "insufficient")
 
-        if confidence == "reliable":
+        if decision_status == "identified" or confidence == "reliable":
             # Correspondência segura: enriquece metadados respeitando campos bloqueados
             updates = []
             params = []
+            provenance_fields = {}
 
             if "title" not in locked_fields and best.get("title"):
                 updates.append("title = ?")
                 params.append(best["title"])
+                provenance_fields["title"] = best["title"]
+
+            if "subtitle" not in locked_fields and best.get("subtitle"):
+                updates.append("subtitle = ?")
+                params.append(best["subtitle"])
+                provenance_fields["subtitle"] = best["subtitle"]
 
             if "author" not in locked_fields and best.get("author"):
                 updates.append("author = ?")
                 params.append(best["author"])
+                provenance_fields["author"] = best["author"]
 
             if "publisher" not in locked_fields and best.get("publisher"):
                 updates.append("publisher = ?")
                 params.append(best["publisher"])
+                provenance_fields["publisher"] = best["publisher"]
 
             if "publish_year" not in locked_fields and best.get("publish_year"):
                 updates.append("publish_year = ?")
                 params.append(best["publish_year"])
+                provenance_fields["publish_year"] = best["publish_year"]
 
             if "isbn10" not in locked_fields and best.get("isbn10"):
                 updates.append("isbn10 = ?")
                 params.append(best["isbn10"])
+                provenance_fields["isbn10"] = best["isbn10"]
 
             if "isbn13" not in locked_fields and best.get("isbn13"):
                 updates.append("isbn13 = ?")
                 params.append(best["isbn13"])
+                provenance_fields["isbn13"] = best["isbn13"]
 
             if "description" not in locked_fields and best.get("description"):
                 updates.append("description = ?")
                 params.append(best["description"])
+                provenance_fields["description"] = best["description"]
+
+            if "language" not in locked_fields and best.get("language"):
+                updates.append("language = ?")
+                params.append(best["language"])
+                provenance_fields["language"] = best["language"]
 
             if "work_id" not in locked_fields and best.get("work_id"):
                 updates.append("work_id = ?")
                 params.append(best["work_id"])
+                provenance_fields["work_id"] = best["work_id"]
 
             updates.append("identification_status = 'identified'")
             updates.append("identification_score = ?")
@@ -310,6 +364,7 @@ class BackgroundEnricher:
             updates.append("metadata_source = ?")
             params.append(best.get("source"))
 
+            updates.append("last_error_reason = NULL")
             updates.append("metadata_updated_at = CURRENT_TIMESTAMP")
             params.append(book_id)
 
@@ -318,6 +373,13 @@ class BackgroundEnricher:
                 cursor.execute(
                     f"UPDATE books SET {', '.join(updates)} WHERE id = ?;",
                     params,
+                )
+                record_metadata_provenance(
+                    cursor,
+                    book_id,
+                    provenance_fields,
+                    source=best.get("source") or "external",
+                    confidence=score,
                 )
 
             # Classificação taxonômica
@@ -334,13 +396,33 @@ class BackgroundEnricher:
             if "cover" not in locked_fields and book_dict.get("cover_type") != "custom":
                 cover_url = best.get("cover_url")
                 if cover_url:
-                    self._download_external_cover_safely(book_id, cover_url)
+                    self._download_external_cover_safely(
+                        book_id,
+                        cover_url,
+                        file_hash=book_dict.get("file_hash"),
+                    )
 
             # Atualiza FTS5
             self._update_fts_index(book_id)
             self._stats["identified"] += 1
 
-        elif confidence == "needs_review":
+        elif decision_status == "ambiguous":
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    UPDATE books
+                    SET identification_status = 'ambiguous', identification_score = ?,
+                        last_error_reason = 'Múltiplos candidatos com pontuação próxima; requer revisão humana',
+                        metadata_updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?;
+                    """,
+                    (score, book_id),
+                )
+            self._stats["ambiguous"] = self._stats.get("ambiguous", 0) + 1
+            self._stats["needs_review"] += 1
+
+        elif decision_status == "needs_review" or confidence == "needs_review":
             # Correspondência incerta: registra candidatos mas NÃO aplica alterações destrutivas
             with get_db() as conn:
                 cursor = conn.cursor()
@@ -348,6 +430,7 @@ class BackgroundEnricher:
                     """
                     UPDATE books
                     SET identification_status = 'needs_review', identification_score = ?,
+                        last_error_reason = NULL,
                         metadata_updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?;
                     """,
@@ -362,14 +445,20 @@ class BackgroundEnricher:
                     """
                     UPDATE books
                     SET identification_status = 'not_found', identification_score = ?,
+                        last_error_reason = ?,
                         metadata_updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?;
                     """,
-                    (score, book_id),
+                    (score, error_reason, book_id),
                 )
             self._stats["not_found"] += 1
 
-    def _download_external_cover_safely(self, book_id: str, cover_url: str) -> bool:
+    def _download_external_cover_safely(
+        self,
+        book_id: str,
+        cover_url: str,
+        file_hash: Optional[str] = None,
+    ) -> bool:
         """Baixa e valida a imagem de capa de fonte externa sem sobrescrever capas manuais."""
         if not is_safe_external_url(cover_url):
             logger.warning("URL de capa rejeitada por política de segurança anti-SSRF: %s", cover_url)
@@ -378,27 +467,38 @@ class BackgroundEnricher:
         try:
             req = urllib.request.Request(
                 cover_url,
-                headers={"User-Agent": "Lectoria-Cover-Agent/1.4.0"},
+                headers={"User-Agent": "Lectoria-Cover-Agent/1.5.0"},
             )
             with urllib.request.urlopen(req, timeout=8.0) as resp:
                 if resp.status == 200:
                     img_bytes = resp.read()
                     ext, mime_type, w, h = validate_cover_image(img_bytes)
+                    if not is_extracted_cover_visually_valid(img_bytes):
+                        logger.debug("Capa externa rejeitada por baixa qualidade visual/contraste: %s", cover_url)
+                        return False
 
                     # Garante pasta de capas
                     config.COVERS_DIR.mkdir(parents=True, exist_ok=True)
-                    dest_file = config.COVERS_DIR / f"{book_id}_extracted.{ext}"
+                    dest_filename = f"{book_id}_extracted.{ext}"
+                    dest_file = config.COVERS_DIR / dest_filename
                     dest_file.write_bytes(img_bytes)
 
                     with get_db() as conn:
                         cursor = conn.cursor()
+                        if not file_hash:
+                            cursor.execute("SELECT file_hash FROM books WHERE id = ?;", (book_id,))
+                            fh_row = cursor.fetchone()
+                            file_hash = fh_row["file_hash"] if fh_row else None
                         cursor.execute(
                             """
                             UPDATE books
-                            SET cover_type = 'extracted', cover_path = ?, cover_updated_at = CURRENT_TIMESTAMP
+                            SET cover_type = 'extracted',
+                                cover_path = ?,
+                                cover_source_hash = ?,
+                                cover_updated_at = CURRENT_TIMESTAMP
                             WHERE id = ? AND cover_type != 'custom';
                             """,
-                            (str(dest_file), book_id),
+                            (dest_filename, file_hash, book_id),
                         )
                     return True
         except Exception as e:

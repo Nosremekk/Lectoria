@@ -104,7 +104,7 @@ def validate_cover_image(data: bytes) -> Tuple[str, str, int, int]:
 
     # 2. Validação de JPEG: \xff\xd8\xff
     if data[:3] == b"\xff\xd8\xff":
-        width, height = _parse_jpeg_dimensions(data)
+        width, height, components = _parse_jpeg_info(data)
         if width < 16 or height < 16 or width > 12000 or height > 12000:
             raise CoverValidationError("Arquivo JPEG corrompido ou com dimensões inválidas (mínimo 16x16 pixels).")
         return ("jpg", "image/jpeg", width, height)
@@ -118,8 +118,8 @@ def validate_cover_image(data: bytes) -> Tuple[str, str, int, int]:
     raise CoverValidationError("Formato de arquivo inválido. Envie apenas imagens PNG, JPEG ou WebP.")
 
 
-def _parse_jpeg_dimensions(data: bytes) -> Tuple[int, int]:
-    """Extrai largura e altura de um stream JPEG inspecionando os marcadores SOF."""
+def _parse_jpeg_info(data: bytes) -> Tuple[int, int, int]:
+    """Extrai (largura, altura, num_componentes) de um stream JPEG inspecionando os marcadores SOF."""
     idx = 2
     length = len(data)
     sof_markers = {
@@ -149,14 +149,78 @@ def _parse_jpeg_dimensions(data: bytes) -> Tuple[int, int]:
             break
 
         if marker in sof_markers:
-            if idx + 7 <= length:
-                height, width = struct.unpack(">HH", data[idx + 3:idx + 7])
-                return (width, height)
+            if idx + 8 <= length:
+                height, width, components = struct.unpack(">HHB", data[idx + 3:idx + 8])
+                return (width, height, components)
             break
 
         idx += seg_len
 
-    return (0, 0)
+    return (0, 0, 0)
+
+
+def _parse_jpeg_dimensions(data: bytes) -> Tuple[int, int]:
+    """Extrai largura e altura de um stream JPEG inspecionando os marcadores SOF."""
+    w, h, _ = _parse_jpeg_info(data)
+    return (w, h)
+
+
+def _is_raw_pixel_buffer_valid(raw_pixels: bytes) -> bool:
+    """
+    Inspeciona estatisticamente um buffer de pixels (RGB ou Grayscale) para rejeitar
+    retângulos totalmente pretos, máscaras de transparência ou imagens vazias/uniformes.
+    """
+    if not raw_pixels or len(raw_pixels) < 64:
+        return False
+    step = max(1, len(raw_pixels) // 4096)
+    sample = raw_pixels[::step]
+    if not sample:
+        return False
+    n = len(sample)
+    mean_val = sum(sample) / n
+    dark_count = sum(1 for b in sample if b < 22)
+    bright_count = sum(1 for b in sample if b > 250)
+    val_range = max(sample) - min(sample)
+    # Rejeita se >82% dos pixels forem pretos, ou >97% brancos puros, ou sem contraste (cor sólida)
+    if (dark_count / n) > 0.82 or mean_val < 20.0:
+        return False
+    if (bright_count / n) > 0.97 or val_range < 12:
+        return False
+    return True
+
+
+def is_extracted_cover_visually_valid(img_bytes: bytes) -> bool:
+    """
+    Verifica se uma imagem de capa extraída (JPEG ou PNG) é visualmente válida:
+    - Rejeita JPEGs CMYK/YCCK de 4 canais (que renderizam invertidos/pretos no navegador).
+    - Rejeita PNGs cujos pixels descomprimidos sejam predominantemente pretos ou uniformes.
+    """
+    if not img_bytes or len(img_bytes) < 64:
+        return False
+    if img_bytes[:3] == b"\xff\xd8\xff":
+        w, h, comps = _parse_jpeg_info(img_bytes)
+        if w < 48 or h < 48 or comps not in (1, 3):
+            return False
+        return True
+    if img_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        try:
+            idx = 8
+            idat_chunks = bytearray()
+            while idx + 8 <= len(img_bytes):
+                c_len = struct.unpack(">I", img_bytes[idx:idx + 4])[0]
+                c_type = img_bytes[idx + 4:idx + 8]
+                c_data = img_bytes[idx + 8:idx + 8 + c_len]
+                if c_type == b"IDAT":
+                    idat_chunks.extend(c_data)
+                elif c_type == b"IEND":
+                    break
+                idx += 12 + c_len
+            if idat_chunks:
+                decompressed = zlib.decompress(bytes(idat_chunks))
+                return _is_raw_pixel_buffer_valid(decompressed)
+        except Exception:
+            return False
+    return True
 
 
 def _encode_raw_pixels_to_png(raw_pixels: bytes, width: int, height: int, channels: int) -> Optional[bytes]:
@@ -230,10 +294,27 @@ def _extract_cover_from_pdf_file(pdf_path: Path) -> Optional[Tuple[bytes, str, s
 
                 best_candidate: Optional[Tuple[int, bytes, str, str]] = None
 
+                # Coleta referências de objetos que atuam como máscaras (/SMask ou /Mask)
+                mask_obj_ids = set()
                 for _, ref in xobjects_obj.items():
                     try:
+                        o = ref.get_object()
+                        for m_key in ("/SMask", "/Mask"):
+                            m_ref = o.get(m_key)
+                            if m_ref is not None and hasattr(m_ref, "idnum"):
+                                mask_obj_ids.add(m_ref.idnum)
+                    except Exception:
+                        pass
+
+                for _, ref in xobjects_obj.items():
+                    try:
+                        if hasattr(ref, "idnum") and ref.idnum in mask_obj_ids:
+                            continue
                         obj = ref.get_object()
                         if obj.get("/Subtype") != "/Image":
+                            continue
+                        # Ignora máscaras binárias ou imagens com máscara de transparência separada
+                        if obj.get("/ImageMask") or obj.get("/SMask") is not None or obj.get("/Mask") is not None:
                             continue
 
                         width = int(obj.get("/Width") or 0)
@@ -250,6 +331,11 @@ def _extract_cover_from_pdf_file(pdf_path: Path) -> Optional[Tuple[bytes, str, s
                         else:
                             filter_list = []
 
+                        cs_raw = obj.get("/ColorSpace")
+                        cs_str = str(cs_raw) if cs_raw is not None else "/DeviceRGB"
+                        if "CMYK" in cs_str.upper():
+                            continue
+
                         # Caso 1: Imagem JPEG incorporada (/DCTDecode)
                         if "/DCTDecode" in filter_list:
                             raw_stream = getattr(obj, "_data", None)
@@ -261,6 +347,7 @@ def _extract_cover_from_pdf_file(pdf_path: Path) -> Optional[Tuple[bytes, str, s
                             if (
                                 len(raw_stream) <= MAX_COVER_SIZE_BYTES
                                 and raw_stream[:3] == b"\xff\xd8\xff"
+                                and is_extracted_cover_visually_valid(raw_stream)
                             ):
                                 if best_candidate is None or area > best_candidate[0]:
                                     best_candidate = (area, raw_stream, "jpg", "image/jpeg")
@@ -271,6 +358,8 @@ def _extract_cover_from_pdf_file(pdf_path: Path) -> Optional[Tuple[bytes, str, s
                             cs = str(obj.get("/ColorSpace") or "/DeviceRGB")
                             if bpc == 8 and cs in ("/DeviceRGB", "/DeviceGray") and area <= (2500 * 2500):
                                 decoded = obj.get_data()
+                                if not _is_raw_pixel_buffer_valid(decoded):
+                                    continue
                                 channels = 3 if cs == "/DeviceRGB" else 1
                                 png_bytes = _encode_raw_pixels_to_png(decoded, width, height, channels)
                                 if png_bytes and len(png_bytes) <= MAX_COVER_SIZE_BYTES:
@@ -321,10 +410,16 @@ def _wrap_title_lines(title: str, max_chars: int = 18, max_lines: int = 4) -> li
     return lines
 
 
-def generate_editorial_svg_cover(book_id: str, title: str, author: Optional[str] = None) -> str:
+def generate_editorial_svg_cover(
+    book_id: str,
+    title: str,
+    author: Optional[str] = None,
+    category: Optional[str] = None,
+) -> str:
     """
     Gera uma capa editorial determinística em SVG para livros sem capa de imagem.
-    A aparência é derivada do hash determinístico do livro, mantendo consistência entre reinicializações.
+    A aparência é derivada do hash determinístico do identificador estável do livro,
+    utilizando título, autor e categoria quando disponíveis.
     """
     seed_str = f"{book_id}:{title or ''}:{author or ''}"
     digest = hashlib.sha256(seed_str.encode("utf-8")).digest()
@@ -335,6 +430,10 @@ def generate_editorial_svg_cover(book_id: str, title: str, author: Optional[str]
     clean_author = (author or "Acervo Pessoal").strip()
     if len(clean_author) > 28:
         clean_author = clean_author[:27].rstrip() + "…"
+
+    header_label = (category or "EDIÇÃO DIGITAL").strip().upper()
+    if len(header_label) > 24:
+        header_label = header_label[:23].rstrip() + "…"
 
     title_lines = _wrap_title_lines(clean_title, max_chars=18, max_lines=4)
     title_tspans = ""
@@ -389,8 +488,8 @@ def generate_editorial_svg_cover(book_id: str, title: str, author: Optional[str]
   <rect x="40" y="28" width="296" height="454" fill="none" stroke="{palette['accent']}" stroke-width="1.2" opacity="0.55"/>
   <rect x="46" y="34" width="284" height="442" fill="none" stroke="{palette['accent']}" stroke-width="0.6" opacity="0.35"/>
 
-  <!-- Cabeçalho da Coleção -->
-  <text x="190" y="66" text-anchor="middle" fill="{palette['accent']}" font-family=" sans-serif" font-size="10" letter-spacing="3" opacity="0.8">EDIÇÃO DIGITAL</text>
+  <!-- Cabeçalho da Coleção / Categoria -->
+  <text x="190" y="66" text-anchor="middle" fill="{palette['accent']}" font-family="sans-serif" font-size="10" letter-spacing="2.5" opacity="0.85">{_escape_xml(header_label)}</text>
   <line x1="150" y1="78" x2="230" y2="78" stroke="{palette['accent']}" stroke-width="0.75" opacity="0.45"/>
 
   <!-- Título da Obra -->
@@ -449,8 +548,9 @@ def get_or_create_book_cover(book_id: str) -> Dict[str, Any]:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT id, title, author, file_hash, cover_type, cover_path, cover_source_hash
-            FROM books WHERE id = ?
+            SELECT b.id, b.title, b.author, b.file_hash, b.cover_type, b.cover_path, b.cover_source_hash,
+                   (SELECT s.category FROM book_subjects bs JOIN subjects s ON bs.subject_id = s.id WHERE bs.book_id = b.id LIMIT 1) as primary_category
+            FROM books b WHERE b.id = ?
             """,
             (book_id,),
         )
@@ -461,8 +561,9 @@ def get_or_create_book_cover(book_id: str) -> Dict[str, Any]:
 
     config.COVERS_DIR.mkdir(parents=True, exist_ok=True)
     cover_type = book.get("cover_type") or "none"
-    cover_filename = book.get("cover_path")
+    cover_filename = Path(book["cover_path"]).name if book.get("cover_path") else None
     current_file_hash = book.get("file_hash") or ""
+    primary_category = book.get("primary_category")
 
     # 1. Prioridade máxima: Capa personalizada definida pelo usuário/admin
     if cover_type == "custom" and cover_filename:
@@ -477,26 +578,33 @@ def get_or_create_book_cover(book_id: str) -> Dict[str, Any]:
                 "content": None,
             }
 
-    # 2. Capa extraída em cache (desde que o PDF não tenha sido modificado desde a extração)
+    # 2. Capa extraída em cache (desde que o PDF não tenha sido modificado e a imagem seja visualmente válida)
     if (
         cover_type == "extracted"
         and cover_filename
-        and book.get("cover_source_hash") == current_file_hash
+        and (not book.get("cover_source_hash") or book.get("cover_source_hash") == current_file_hash)
     ):
         cached_path = (config.COVERS_DIR / cover_filename).resolve()
         if cached_path.is_relative_to(config.COVERS_DIR.resolve()) and cached_path.is_file():
-            ext = cached_path.suffix.lower().lstrip(".")
-            mime = "image/png" if ext == "png" else "image/webp" if ext == "webp" else "image/jpeg"
-            return {
-                "type": "extracted",
-                "file_path": cached_path,
-                "media_type": mime,
-                "content": None,
-            }
+            try:
+                cached_bytes = cached_path.read_bytes()
+                if is_extracted_cover_visually_valid(cached_bytes):
+                    ext = cached_path.suffix.lower().lstrip(".")
+                    mime = "image/png" if ext == "png" else "image/webp" if ext == "webp" else "image/jpeg"
+                    return {
+                        "type": "extracted",
+                        "file_path": cached_path,
+                        "media_type": mime,
+                        "content": None,
+                    }
+                else:
+                    cached_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     # Se já foi avaliado para este mesmo file_hash e resultou em fallback, evita reabrir o PDF a cada requisição
     if cover_type == "fallback" and book.get("cover_source_hash") == current_file_hash:
-        svg_str = generate_editorial_svg_cover(book_id, book["title"], book.get("author"))
+        svg_str = generate_editorial_svg_cover(book_id, book["title"], book.get("author"), category=primary_category)
         return {
             "type": "fallback",
             "file_path": None,
@@ -514,27 +622,28 @@ def get_or_create_book_cover(book_id: str) -> Dict[str, Any]:
 
     if extracted is not None:
         img_bytes, ext, mime = extracted
-        target_filename = f"{book_id}_extracted.{ext}"
-        target_path = config.COVERS_DIR / target_filename
-        _remove_cached_files_for_book(book_id, prefix_filter="extracted")
-        target_path.write_bytes(img_bytes)
+        if is_extracted_cover_visually_valid(img_bytes):
+            target_filename = f"{book_id}_extracted.{ext}"
+            target_path = config.COVERS_DIR / target_filename
+            _remove_cached_files_for_book(book_id, prefix_filter="extracted")
+            target_path.write_bytes(img_bytes)
 
-        with get_db() as conn:
-            conn.execute(
-                """
-                UPDATE books
-                SET cover_type = 'extracted', cover_path = ?, cover_source_hash = ?, cover_updated_at = ?
-                WHERE id = ?
-                """,
-                (target_filename, current_file_hash, now_iso, book_id),
-            )
+            with get_db() as conn:
+                conn.execute(
+                    """
+                    UPDATE books
+                    SET cover_type = 'extracted', cover_path = ?, cover_source_hash = ?, cover_updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (target_filename, current_file_hash, now_iso, book_id),
+                )
 
-        return {
-            "type": "extracted",
-            "file_path": target_path,
-            "media_type": mime,
-            "content": None,
-        }
+            return {
+                "type": "extracted",
+                "file_path": target_path,
+                "media_type": mime,
+                "content": None,
+            }
 
     # 4. Nenhuma imagem de capa identificável no PDF -> registra estado 'fallback' para o hash atual
     with get_db() as conn:
@@ -547,7 +656,7 @@ def get_or_create_book_cover(book_id: str) -> Dict[str, Any]:
             (current_file_hash, now_iso, book_id),
         )
 
-    svg_str = generate_editorial_svg_cover(book_id, book["title"], book.get("author"))
+    svg_str = generate_editorial_svg_cover(book_id, book["title"], book.get("author"), category=primary_category)
     return {
         "type": "fallback",
         "file_path": None,

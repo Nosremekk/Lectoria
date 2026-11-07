@@ -109,13 +109,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const userErrorEl = document.getElementById("user-error");
   const usersListEl = document.getElementById("users-list");
 
-  // Elementos da Atualização v1.4.0 — Descoberta & Metadados Inteligentes
+  // Elementos da Atualização v1.4.0 & v1.5.0 — Descoberta, Social e Painel Admin
   const tabNavDiscovery = document.getElementById("tab-nav-discovery");
   const tabNavLibrary = document.getElementById("tab-nav-library");
+  const tabNavSocial = document.getElementById("tab-nav-social");
+  const tabNavAdmin = document.getElementById("tab-nav-admin");
   const discoverySection = document.getElementById("discovery-section");
   const librarySection = document.getElementById("library-section");
+  const socialSection = document.getElementById("social-section");
+  const adminSection = document.getElementById("admin-section");
   const shelvesContainer = document.getElementById("shelves-container");
   const discoveryLoading = document.getElementById("discovery-loading");
+  const btnOpenProfile = document.getElementById("btn-open-profile");
 
   const categorySelect = document.getElementById("category-select");
   const subcategorySelect = document.getElementById("subcategory-select");
@@ -368,7 +373,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (query) params.set("search", query);
     if (sortBy) params.set("sort_by", sortBy);
     if (order) params.set("order", order);
-    if (currentStatus && currentStatus !== "all") params.set("status", currentStatus);
+    if (currentStatus === "favorites") {
+      params.set("favorite_only", "true");
+    } else if (currentStatus === "want_to_read") {
+      params.set("want_to_read_only", "true");
+    } else if (currentStatus && currentStatus !== "all") {
+      params.set("status", currentStatus);
+    }
     if (currentCollectionId) params.set("collection_id", currentCollectionId);
     if (currentFormat) params.set("format", currentFormat);
 
@@ -816,14 +827,25 @@ document.addEventListener("DOMContentLoaded", () => {
         if (adminControls) {
           adminControls.style.display = currentUser.role === "admin" ? "flex" : "none";
         }
+        if (tabNavAdmin) {
+          tabNavAdmin.style.display = currentUser.role === "admin" ? "inline-flex" : "none";
+        }
         modalAuth.classList.remove("active");
         await loadCollections();
+        loadTaxonomyTree();
         loadBooks();
+        if (currentMainTab === "discovery") loadShelves();
+        else if (currentMainTab === "social") loadSocialFeed();
+        else if (currentMainTab === "admin" && currentUser.role === "admin") loadAdminPanel();
       } else {
         currentUser = null;
         userBadgeContainer.style.display = "none";
         btnOpenLogin.style.display = "inline-flex";
         if (adminControls) adminControls.style.display = "none";
+        if (tabNavAdmin) tabNavAdmin.style.display = "none";
+        if (currentMainTab === "admin") {
+          setMainTab("discovery");
+        }
         
         authModalTitle.textContent = "Entrar no Lectoria";
         authSetupBanner.style.display = "none";
@@ -836,12 +858,15 @@ document.addEventListener("DOMContentLoaded", () => {
           modalAuth.classList.add("active");
         }
         await loadCollections();
+        loadTaxonomyTree();
         loadBooks();
+        if (currentMainTab === "discovery") loadShelves();
       }
     } catch (err) {
       console.warn("Falha ao inicializar autenticação:", err);
       await loadCollections();
       loadBooks();
+      if (currentMainTab === "discovery") loadShelves();
     }
   }
 
@@ -1588,25 +1613,37 @@ document.addEventListener("DOMContentLoaded", () => {
   // =========================================================================
 
   function setMainTab(tab) {
+    if (tab === "admin" && (!currentUser || currentUser.role !== "admin")) {
+      tab = "discovery";
+    }
     currentMainTab = tab;
     localStorage.setItem("lectoria_main_tab", tab);
+
+    if (tabNavDiscovery) tabNavDiscovery.classList.toggle("active", tab === "discovery");
+    if (tabNavLibrary) tabNavLibrary.classList.toggle("active", tab === "library");
+    if (tabNavSocial) tabNavSocial.classList.toggle("active", tab === "social");
+    if (tabNavAdmin) tabNavAdmin.classList.toggle("active", tab === "admin");
+
+    if (discoverySection) discoverySection.style.display = tab === "discovery" ? "flex" : "none";
+    if (librarySection) librarySection.style.display = tab === "library" ? "block" : "none";
+    if (socialSection) socialSection.style.display = tab === "social" ? "block" : "none";
+    if (adminSection) adminSection.style.display = tab === "admin" ? "block" : "none";
+
     if (tab === "discovery") {
-      if (tabNavDiscovery) tabNavDiscovery.classList.add("active");
-      if (tabNavLibrary) tabNavLibrary.classList.remove("active");
-      if (discoverySection) discoverySection.style.display = "flex";
-      if (librarySection) librarySection.style.display = "none";
       loadShelves();
-    } else {
-      if (tabNavDiscovery) tabNavDiscovery.classList.remove("active");
-      if (tabNavLibrary) tabNavLibrary.classList.add("active");
-      if (discoverySection) discoverySection.style.display = "none";
-      if (librarySection) librarySection.style.display = "block";
+    } else if (tab === "library") {
       loadBooks();
+    } else if (tab === "social") {
+      loadSocialFeed();
+    } else if (tab === "admin") {
+      loadAdminPanel();
     }
   }
 
   if (tabNavDiscovery) tabNavDiscovery.addEventListener("click", () => setMainTab("discovery"));
   if (tabNavLibrary) tabNavLibrary.addEventListener("click", () => setMainTab("library"));
+  if (tabNavSocial) tabNavSocial.addEventListener("click", () => setMainTab("social"));
+  if (tabNavAdmin) tabNavAdmin.addEventListener("click", () => setMainTab("admin"));
 
   // --- Prateleiras de Descoberta ---
   async function loadShelves() {
@@ -1865,6 +1902,7 @@ document.addEventListener("DOMContentLoaded", () => {
       // Reset para primeira subaba (Visão Geral)
       switchDetailsSubtab("overview");
       loadBookCandidates(book.id);
+      loadBookDetailsSocial(book.id);
 
       modalBookDetails.classList.add("active");
     } catch (e) {
@@ -2191,6 +2229,1082 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!confirm("Deseja cancelar e esvaziar a fila de enriquecimento?")) return;
       await fetch("/api/metadata/queue/cancel", { method: "POST" });
       pollQueueStatus();
+    });
+  }
+
+  // =========================================================================
+  // LECTORIA v1.5.0 — BIBLIOTECA VIVA (SOCIAL, PERFIS, AUTOMAÇÃO & ADMIN)
+  // =========================================================================
+
+  // --- 1. Avaliações, Favoritos, Quero Ler e Citações no Modal de Detalhes ---
+  const btnDetailsFavorite = document.getElementById("btn-details-favorite");
+  const btnDetailsWantToRead = document.getElementById("btn-details-want-to-read");
+  const btnDetailsRecommend = document.getElementById("btn-details-recommend");
+  const detailsAvgRatingBadge = document.getElementById("details-avg-rating-badge");
+  const detailsRatingSelect = document.getElementById("details-rating-select");
+  const detailsReviewPublic = document.getElementById("details-review-public");
+  const detailsReviewText = document.getElementById("details-review-text");
+  const btnDetailsSaveReview = document.getElementById("btn-details-save-review");
+  const btnDetailsShareQuote = document.getElementById("btn-details-share-quote");
+  const detailsSocialReviewsList = document.getElementById("details-social-reviews-list");
+  const detailsSocialAnnotationsList = document.getElementById("details-social-annotations-list");
+
+  let currentBookUserReview = null;
+
+  async function loadBookDetailsSocial(bookId) {
+    try {
+      const [revRes, annRes] = await Promise.all([
+        fetch(`/api/books/${encodeURIComponent(bookId)}/reviews`),
+        fetch(`/api/books/${encodeURIComponent(bookId)}/shared-annotations`),
+      ]);
+
+      if (revRes.ok) {
+        const revData = await revRes.json();
+        currentBookUserReview = revData.user_review || null;
+        const avg = revData.average_rating;
+        const count = revData.ratings_count || 0;
+        if (detailsAvgRatingBadge) {
+          detailsAvgRatingBadge.textContent = avg ? `★ ${avg} (${count} aval.)` : "Sem avaliações";
+        }
+        const isFav = Boolean(currentBookUserReview && currentBookUserReview.is_favorite);
+        const isWtr = Boolean(currentBookUserReview && currentBookUserReview.want_to_read);
+        if (btnDetailsFavorite) {
+          btnDetailsFavorite.textContent = isFav ? "★ Favorito" : "☆ Favorito";
+          btnDetailsFavorite.classList.toggle("btn-active", isFav);
+        }
+        if (btnDetailsWantToRead) {
+          btnDetailsWantToRead.textContent = isWtr ? "✓ Quero Ler" : "+ Quero Ler";
+          btnDetailsWantToRead.classList.toggle("btn-active", isWtr);
+        }
+        if (detailsRatingSelect) {
+          detailsRatingSelect.value = currentBookUserReview && currentBookUserReview.rating ? String(currentBookUserReview.rating) : "";
+        }
+        if (detailsReviewText) {
+          detailsReviewText.value = (currentBookUserReview && currentBookUserReview.review_text) || "";
+        }
+        if (detailsReviewPublic) {
+          detailsReviewPublic.checked = Boolean(currentBookUserReview && currentBookUserReview.is_public);
+        }
+
+        if (detailsSocialReviewsList) {
+          const reviews = (revData.reviews || []).filter(r => r.rating || r.review_text);
+          if (reviews.length === 0) {
+            detailsSocialReviewsList.innerHTML = `<p style="font-size: 0.82rem; color: var(--text-muted);">Nenhuma resenha compartilhada ainda para esta obra.</p>`;
+          } else {
+            detailsSocialReviewsList.innerHTML = reviews.map(r => `
+              <div class="social-quote-card" style="margin-bottom: 0.5rem;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
+                  <strong>${escapeHtml(r.display_name || r.username)}</strong>
+                  <span style="color: #fbbf24;">${r.rating ? "★".repeat(r.rating) : ""}</span>
+                </div>
+                ${r.review_text ? `<p style="font-size: 0.84rem; margin-top: 0.25rem;">${escapeHtml(r.review_text)}</p>` : ""}
+              </div>
+            `).join("");
+          }
+        }
+      }
+
+      if (annRes.ok && detailsSocialAnnotationsList) {
+        const annData = await annRes.json();
+        const anns = annData.annotations || [];
+        renderSharedAnnotationsCards(anns, detailsSocialAnnotationsList, () => loadBookDetailsSocial(bookId));
+      }
+    } catch (e) {
+      console.warn("Erro ao carregar dados sociais do livro:", e);
+    }
+  }
+
+  async function saveBookReviewQuick(overrides = {}) {
+    if (!activeBookForDetails) return;
+    const payload = {
+      rating: detailsRatingSelect && detailsRatingSelect.value ? parseInt(detailsRatingSelect.value, 10) : (currentBookUserReview ? currentBookUserReview.rating : null),
+      review_text: detailsReviewText ? detailsReviewText.value.trim() : (currentBookUserReview ? currentBookUserReview.review_text : ""),
+      is_favorite: currentBookUserReview ? Boolean(currentBookUserReview.is_favorite) : false,
+      want_to_read: currentBookUserReview ? Boolean(currentBookUserReview.want_to_read) : false,
+      is_public: detailsReviewPublic ? detailsReviewPublic.checked : undefined,
+      ...overrides,
+    };
+    const res = await fetch(`/api/books/${encodeURIComponent(activeBookForDetails.id)}/reviews`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      await loadBookDetailsSocial(activeBookForDetails.id);
+      if (currentMainTab === "library") loadBooks();
+      else if (currentMainTab === "discovery") loadShelves();
+    } else if (res.status === 401) {
+      alert("Entre na sua conta para avaliar ou favoritar livros.");
+    }
+  }
+
+  if (btnDetailsFavorite) {
+    btnDetailsFavorite.addEventListener("click", () => {
+      const nextFav = !(currentBookUserReview && currentBookUserReview.is_favorite);
+      saveBookReviewQuick({ is_favorite: nextFav });
+    });
+  }
+
+  if (btnDetailsWantToRead) {
+    btnDetailsWantToRead.addEventListener("click", () => {
+      const nextWtr = !(currentBookUserReview && currentBookUserReview.want_to_read);
+      saveBookReviewQuick({ want_to_read: nextWtr });
+    });
+  }
+
+  if (btnDetailsSaveReview) {
+    btnDetailsSaveReview.addEventListener("click", () => {
+      saveBookReviewQuick({});
+    });
+  }
+
+  if (btnDetailsShareQuote) {
+    btnDetailsShareQuote.addEventListener("click", () => {
+      if (!activeBookForDetails) return;
+      openShareAnnotationModal(activeBookForDetails.id);
+    });
+  }
+
+  if (btnDetailsRecommend) {
+    btnDetailsRecommend.addEventListener("click", () => {
+      if (!activeBookForDetails) return;
+      openRecommendModal(activeBookForDetails.id);
+    });
+  }
+
+  // --- 2. Renderização de Citações Compartilhadas e Comentários ---
+  function renderSharedAnnotationsCards(annotations, containerEl, onRefresh) {
+    if (!containerEl) return;
+    if (!annotations || annotations.length === 0) {
+      containerEl.innerHTML = `<p class="text-muted-empty">Nenhuma citação ou anotação compartilhada ainda.</p>`;
+      return;
+    }
+
+    containerEl.innerHTML = annotations.map(a => {
+      const isOwner = currentUser && (currentUser.id === a.user_id || currentUser.role === "admin");
+      const comments = a.comments || [];
+      const commentsHtml = comments.map(c => {
+        const canDelComment = currentUser && (currentUser.id === c.user_id || currentUser.role === "admin");
+        return `
+          <div class="social-comment-item" data-comment-id="${c.id}">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <strong style="font-size: 0.78rem;">${escapeHtml(c.display_name || c.username)}</strong>
+              <div style="display: flex; gap: 0.35rem; align-items: center;">
+                <span style="font-size: 0.7rem; color: var(--text-faint);">${formatDate(c.created_at)}</span>
+                ${canDelComment ? `<button type="button" class="btn-link-danger btn-del-comment" data-id="${c.id}" title="Excluir comentário">&times;</button>` : ""}
+              </div>
+            </div>
+            <div style="font-size: 0.82rem; color: var(--text-main); margin-top: 0.15rem;">${escapeHtml(c.content)}</div>
+          </div>
+        `;
+      }).join("");
+
+      return `
+        <div class="social-quote-card" data-ann-id="${a.id}">
+          <div class="social-quote-header">
+            <div>
+              <strong>${escapeHtml(a.display_name || a.username)}</strong>
+              ${a.book_title ? `<span style="color: var(--text-muted); font-size: 0.8rem;"> em <em>${escapeHtml(a.book_title)}</em></span>` : ""}
+              ${a.page_number ? `<span class="social-badge-pill" style="margin-left: 0.35rem;">Pág. ${a.page_number}</span>` : ""}
+            </div>
+            <div style="display: flex; gap: 0.4rem; align-items: center;">
+              <span style="font-size: 0.72rem; color: var(--text-faint);">${formatDate(a.created_at)}</span>
+              ${isOwner ? `<button type="button" class="btn-link-danger btn-del-shared-ann" data-id="${a.id}" title="Remover compartilhamento">Excluir</button>` : ""}
+            </div>
+          </div>
+          ${a.quote_text ? `<blockquote class="social-blockquote">&ldquo;${escapeHtml(a.quote_text)}&rdquo;</blockquote>` : ""}
+          ${a.content ? `<p class="social-quote-comment">${escapeHtml(a.content)}</p>` : ""}
+
+          <div class="social-comments-section">
+            ${commentsHtml}
+            <div class="social-comment-form">
+              <input type="text" class="form-input input-new-comment" data-ann-id="${a.id}" placeholder="Escrever um comentário..." style="font-size: 0.8rem; padding: 0.3rem 0.55rem;">
+              <button type="button" class="btn btn-subtle btn-send-comment" data-ann-id="${a.id}" style="font-size: 0.78rem; padding: 0.3rem 0.6rem;">Comentar</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    containerEl.querySelectorAll(".btn-send-comment").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const annId = btn.getAttribute("data-ann-id");
+        const input = containerEl.querySelector(`.input-new-comment[data-ann-id="${annId}"]`);
+        const text = input ? input.value.trim() : "";
+        if (!text) return;
+        const res = await fetch(`/api/shared-annotations/${annId}/comments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: text }),
+        });
+        if (res.ok) {
+          if (onRefresh) onRefresh();
+        } else if (res.status === 401) {
+          alert("Entre na sua conta para comentar.");
+        }
+      });
+    });
+
+    containerEl.querySelectorAll(".btn-del-comment").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const commentId = btn.getAttribute("data-id");
+        const res = await fetch(`/api/annotation-comments/${commentId}`, { method: "DELETE" });
+        if (res.ok && onRefresh) onRefresh();
+      });
+    });
+
+    containerEl.querySelectorAll(".btn-del-shared-ann").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const annId = btn.getAttribute("data-id");
+        if (!confirm("Remover esta citação compartilhada?")) return;
+        const res = await fetch(`/api/shared-annotations/${annId}`, { method: "DELETE" });
+        if (res.ok && onRefresh) onRefresh();
+      });
+    });
+  }
+
+  // --- 3. Aba "Nossa Biblioteca" (Feed Social com Privacidade por Padrão) ---
+  const socialSharedAnnotationsEl = document.getElementById("social-shared-annotations");
+  const socialRecentReviewsEl = document.getElementById("social-recent-reviews");
+  const socialRecommendationsEl = document.getElementById("social-recommendations");
+  const socialCurrentlyReadingEl = document.getElementById("social-currently-reading");
+  const socialRecentlyCompletedEl = document.getElementById("social-recently-completed");
+
+  async function loadSocialFeed() {
+    try {
+      const res = await fetch("/api/social/feed");
+      if (!res.ok) throw new Error("Falha ao carregar Nossa Biblioteca");
+      const feed = await res.json();
+
+      renderSharedAnnotationsCards(feed.shared_annotations || [], socialSharedAnnotationsEl, loadSocialFeed);
+
+      if (socialRecentReviewsEl) {
+        const reviews = (feed.recent_reviews || []).filter(r => r.rating || r.review_text);
+        if (reviews.length === 0) {
+          socialRecentReviewsEl.innerHTML = `<p class="text-muted-empty">Nenhuma avaliação pública registrada ainda.</p>`;
+        } else {
+          socialRecentReviewsEl.innerHTML = reviews.map(r => `
+            <div class="social-quote-card" data-book-id="${r.book_id}" style="cursor: pointer;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                  <strong>${escapeHtml(r.display_name || r.username)}</strong>
+                  <span style="font-size: 0.82rem; color: var(--text-muted);"> avaliou <strong>${escapeHtml(r.book_title)}</strong></span>
+                </div>
+                <span style="color: #fbbf24; font-size: 0.88rem;">${r.rating ? "★".repeat(r.rating) : ""}</span>
+              </div>
+              ${r.review_text ? `<p style="font-size: 0.85rem; margin-top: 0.35rem; color: var(--text-main);">${escapeHtml(r.review_text)}</p>` : ""}
+            </div>
+          `).join("");
+          socialRecentReviewsEl.querySelectorAll("[data-book-id]").forEach(el => {
+            el.addEventListener("click", () => openBookDetails(el.getAttribute("data-book-id")));
+          });
+        }
+      }
+
+      if (socialRecommendationsEl) {
+        const recs = feed.recommendations || [];
+        if (recs.length === 0) {
+          socialRecommendationsEl.innerHTML = `<p class="text-muted-empty">Nenhuma recomendação no mural.</p>`;
+        } else {
+          socialRecommendationsEl.innerHTML = recs.map(rc => `
+            <div class="social-mini-item" data-book-id="${rc.book_id}" style="cursor: pointer;">
+              <div>
+                <strong style="font-size: 0.84rem;">${escapeHtml(rc.book_title)}</strong>
+                <div style="font-size: 0.76rem; color: var(--text-muted);">
+                  Indicado por <strong>${escapeHtml(rc.sender_display_name || rc.sender_username)}</strong>
+                </div>
+                ${rc.message ? `<div style="font-size: 0.8rem; margin-top: 0.2rem; color: var(--text-main);">&ldquo;${escapeHtml(rc.message)}&rdquo;</div>` : ""}
+              </div>
+            </div>
+          `).join("");
+          socialRecommendationsEl.querySelectorAll("[data-book-id]").forEach(el => {
+            el.addEventListener("click", () => openBookDetails(el.getAttribute("data-book-id")));
+          });
+        }
+      }
+
+      if (socialCurrentlyReadingEl) {
+        const list = feed.currently_reading || [];
+        if (list.length === 0) {
+          socialCurrentlyReadingEl.innerHTML = `<p class="text-muted-empty">Nenhum leitor compartilhou leituras em andamento no momento.</p>`;
+        } else {
+          socialCurrentlyReadingEl.innerHTML = list.map(item => `
+            <div class="social-mini-item" data-book-id="${item.book_id}" style="cursor: pointer;">
+              <div style="display: flex; justify-content: space-between;">
+                <strong style="font-size: 0.83rem;">${escapeHtml(item.display_name || item.username)}</strong>
+                <span class="social-badge-pill">${Math.round(item.percentage || 0)}%</span>
+              </div>
+              <div style="font-size: 0.8rem; color: var(--text-muted);">${escapeHtml(item.title)}</div>
+            </div>
+          `).join("");
+          socialCurrentlyReadingEl.querySelectorAll("[data-book-id]").forEach(el => {
+            el.addEventListener("click", () => openBookDetails(el.getAttribute("data-book-id")));
+          });
+        }
+      }
+
+      if (socialRecentlyCompletedEl) {
+        const list = feed.recently_completed || [];
+        if (list.length === 0) {
+          socialRecentlyCompletedEl.innerHTML = `<p class="text-muted-empty">Nenhuma leitura concluída compartilhada ainda.</p>`;
+        } else {
+          socialRecentlyCompletedEl.innerHTML = list.map(item => `
+            <div class="social-mini-item" data-book-id="${item.book_id}" style="cursor: pointer;">
+              <strong style="font-size: 0.83rem;">${escapeHtml(item.display_name || item.username)}</strong>
+              <span style="font-size: 0.8rem; color: var(--text-muted);"> concluiu <strong>${escapeHtml(item.title)}</strong></span>
+            </div>
+          `).join("");
+          socialRecentlyCompletedEl.querySelectorAll("[data-book-id]").forEach(el => {
+            el.addEventListener("click", () => openBookDetails(el.getAttribute("data-book-id")));
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("Erro ao carregar feed social:", e);
+    }
+  }
+
+  // --- 4. Modal de Perfil e Privacidade Granular ---
+  const modalUserProfile = document.getElementById("modal-user-profile");
+  const btnCloseProfileModal = document.getElementById("btn-close-profile-modal");
+  const btnCancelProfileModal = document.getElementById("btn-cancel-profile-modal");
+  const btnSaveProfileModal = document.getElementById("btn-save-profile-modal");
+  const btnSocialOpenPrivacy = document.getElementById("btn-social-open-privacy");
+  const profileDisplayName = document.getElementById("profile-display-name");
+  const profileAvatarColor = document.getElementById("profile-avatar-color");
+  const profileAvatarPreview = document.getElementById("profile-avatar-preview");
+  const profileBio = document.getElementById("profile-bio");
+  const privShareCurrent = document.getElementById("priv-share-current");
+  const privShareHistory = document.getElementById("priv-share-history");
+  const privShareReviews = document.getElementById("priv-share-reviews");
+  const privShareLists = document.getElementById("priv-share-lists");
+  const privShareAnnotations = document.getElementById("priv-share-annotations");
+  const profileSaveFeedback = document.getElementById("profile-save-feedback");
+
+  async function openProfileModal() {
+    if (!modalUserProfile) return;
+    if (profileSaveFeedback) profileSaveFeedback.style.display = "none";
+    try {
+      const res = await fetch("/api/profile/me");
+      if (res.status === 401) {
+        modalAuth.classList.add("active");
+        return;
+      }
+      if (res.ok) {
+        const data = await res.json();
+        const prof = data.profile || {};
+        const priv = prof.privacy || {};
+        if (profileDisplayName) profileDisplayName.value = prof.display_name || "";
+        if (profileAvatarColor) profileAvatarColor.value = prof.avatar_color || "#6366f1";
+        if (profileAvatarPreview) {
+          profileAvatarPreview.style.background = prof.avatar_color || "#6366f1";
+          profileAvatarPreview.textContent = (prof.display_name || prof.username || "U").charAt(0).toUpperCase();
+        }
+        if (profileBio) profileBio.value = prof.bio || "";
+        if (privShareCurrent) privShareCurrent.checked = Boolean(priv.share_current_reading);
+        if (privShareHistory) privShareHistory.checked = Boolean(priv.share_reading_history);
+        if (privShareReviews) privShareReviews.checked = Boolean(priv.share_reviews);
+        if (privShareLists) privShareLists.checked = Boolean(priv.share_lists);
+        if (privShareAnnotations) privShareAnnotations.checked = Boolean(priv.share_annotations_default);
+        modalUserProfile.classList.add("active");
+      }
+    } catch (e) {
+      alert("Erro ao abrir perfil.");
+    }
+  }
+
+  if (btnOpenProfile) btnOpenProfile.addEventListener("click", openProfileModal);
+  if (btnSocialOpenPrivacy) btnSocialOpenPrivacy.addEventListener("click", openProfileModal);
+  if (btnCloseProfileModal) btnCloseProfileModal.addEventListener("click", () => modalUserProfile.classList.remove("active"));
+  if (btnCancelProfileModal) btnCancelProfileModal.addEventListener("click", () => modalUserProfile.classList.remove("active"));
+
+  if (btnSaveProfileModal) {
+    btnSaveProfileModal.addEventListener("click", async () => {
+      try {
+        btnSaveProfileModal.disabled = true;
+        await fetch("/api/profile/me", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            display_name: profileDisplayName ? profileDisplayName.value.trim() : "",
+            avatar_color: profileAvatarColor ? profileAvatarColor.value : "#6366f1",
+            bio: profileBio ? profileBio.value.trim() : "",
+          }),
+        });
+        await fetch("/api/profile/privacy", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            share_current_reading: privShareCurrent ? privShareCurrent.checked : false,
+            share_reading_history: privShareHistory ? privShareHistory.checked : false,
+            share_reviews: privShareReviews ? privShareReviews.checked : false,
+            share_lists: privShareLists ? privShareLists.checked : false,
+            share_annotations_default: privShareAnnotations ? privShareAnnotations.checked : false,
+          }),
+        });
+        btnSaveProfileModal.disabled = false;
+        if (profileSaveFeedback) {
+          profileSaveFeedback.textContent = "Perfil e preferências de privacidade salvos com sucesso!";
+          profileSaveFeedback.style.display = "block";
+        }
+        if (currentMainTab === "social") loadSocialFeed();
+      } catch (e) {
+        btnSaveProfileModal.disabled = false;
+        alert("Erro ao salvar configurações de perfil.");
+      }
+    });
+  }
+
+  // --- 5. Modal de Compartilhar Citação e Modal de Recomendar Livro ---
+  const modalShareAnnotation = document.getElementById("modal-share-annotation");
+  const btnSocialNewQuote = document.getElementById("btn-social-new-quote");
+  const btnCloseShareAnnModal = document.getElementById("btn-close-share-ann-modal");
+  const btnCancelShareAnn = document.getElementById("btn-cancel-share-ann");
+  const btnSubmitShareAnn = document.getElementById("btn-submit-share-ann");
+  const shareAnnBookSelect = document.getElementById("share-ann-book-select");
+  const shareAnnPage = document.getElementById("share-ann-page");
+  const shareAnnVisibility = document.getElementById("share-ann-visibility");
+  const shareAnnQuote = document.getElementById("share-ann-quote");
+  const shareAnnContent = document.getElementById("share-ann-content");
+  const shareAnnError = document.getElementById("share-ann-error");
+
+  async function populateBookSelectDropdown(selectEl, preselectId) {
+    if (!selectEl) return;
+    const res = await fetch("/api/books");
+    if (!res.ok) return;
+    const data = await res.json();
+    const books = data.books || [];
+    selectEl.innerHTML = books.map(b => `
+      <option value="${b.id}" ${String(b.id) === String(preselectId) ? "selected" : ""}>
+        ${escapeHtml(b.title)} — ${escapeHtml(b.author || "Autor não informado")}
+      </option>
+    `).join("");
+  }
+
+  async function openShareAnnotationModal(preselectBookId = null) {
+    if (!modalShareAnnotation) return;
+    if (shareAnnError) shareAnnError.style.display = "none";
+    await populateBookSelectDropdown(shareAnnBookSelect, preselectBookId);
+    if (shareAnnPage) shareAnnPage.value = "";
+    if (shareAnnQuote) shareAnnQuote.value = "";
+    if (shareAnnContent) shareAnnContent.value = "";
+    modalShareAnnotation.classList.add("active");
+  }
+
+  if (btnSocialNewQuote) btnSocialNewQuote.addEventListener("click", () => openShareAnnotationModal());
+  if (btnCloseShareAnnModal) btnCloseShareAnnModal.addEventListener("click", () => modalShareAnnotation.classList.remove("active"));
+  if (btnCancelShareAnn) btnCancelShareAnn.addEventListener("click", () => modalShareAnnotation.classList.remove("active"));
+
+  if (btnSubmitShareAnn) {
+    btnSubmitShareAnn.addEventListener("click", async () => {
+      const bookId = shareAnnBookSelect ? parseInt(shareAnnBookSelect.value, 10) : 0;
+      const quote = shareAnnQuote ? shareAnnQuote.value.trim() : "";
+      const content = shareAnnContent ? shareAnnContent.value.trim() : "";
+      const pageNum = shareAnnPage && shareAnnPage.value ? parseInt(shareAnnPage.value, 10) : null;
+      const vis = shareAnnVisibility ? shareAnnVisibility.value : "all_users";
+
+      if (!bookId || (!quote && !content)) {
+        if (shareAnnError) {
+          shareAnnError.textContent = "Informe uma citação ou comentário para publicar.";
+          shareAnnError.style.display = "block";
+        }
+        return;
+      }
+
+      const res = await fetch("/api/shared-annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          book_id: bookId,
+          page_number: pageNum,
+          quote_text: quote,
+          content: content,
+          visibility: vis,
+        }),
+      });
+      if (res.ok) {
+        modalShareAnnotation.classList.remove("active");
+        if (currentMainTab === "social") loadSocialFeed();
+        if (activeBookForDetails && activeBookForDetails.id === bookId) loadBookDetailsSocial(bookId);
+      } else {
+        const err = await res.json();
+        if (shareAnnError) {
+          shareAnnError.textContent = err.detail || "Falha ao compartilhar.";
+          shareAnnError.style.display = "block";
+        }
+      }
+    });
+  }
+
+  // Modal de Recomendar Livro
+  const modalRecommendBook = document.getElementById("modal-recommend-book");
+  const btnSocialSendRec = document.getElementById("btn-social-send-rec");
+  const btnCloseRecModal = document.getElementById("btn-close-rec-modal");
+  const btnCancelRecModal = document.getElementById("btn-cancel-rec-modal");
+  const btnSubmitRecModal = document.getElementById("btn-submit-rec-modal");
+  const recBookSelect = document.getElementById("rec-book-select");
+  const recMessage = document.getElementById("rec-message");
+  const recError = document.getElementById("rec-error");
+
+  async function openRecommendModal(preselectBookId = null) {
+    if (!modalRecommendBook) return;
+    if (recError) recError.style.display = "none";
+    await populateBookSelectDropdown(recBookSelect, preselectBookId);
+    if (recMessage) recMessage.value = "";
+    modalRecommendBook.classList.add("active");
+  }
+
+  if (btnSocialSendRec) btnSocialSendRec.addEventListener("click", () => openRecommendModal());
+  if (btnCloseRecModal) btnCloseRecModal.addEventListener("click", () => modalRecommendBook.classList.remove("active"));
+  if (btnCancelRecModal) btnCancelRecModal.addEventListener("click", () => modalRecommendBook.classList.remove("active"));
+
+  if (btnSubmitRecModal) {
+    btnSubmitRecModal.addEventListener("click", async () => {
+      const bookId = recBookSelect ? parseInt(recBookSelect.value, 10) : 0;
+      const msg = recMessage ? recMessage.value.trim() : "";
+      if (!bookId) return;
+      const res = await fetch("/api/recommendations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ book_id: bookId, message: msg }),
+      });
+      if (res.ok) {
+        modalRecommendBook.classList.remove("active");
+        if (currentMainTab === "social") loadSocialFeed();
+      } else {
+        const err = await res.json();
+        if (recError) {
+          recError.textContent = err.detail || "Falha ao enviar recomendação.";
+          recError.style.display = "block";
+        }
+      }
+    });
+  }
+
+  // --- 6. Painel Administrativo Dedicado (6 Seções) ---
+  let currentAdminTab = "dashboard";
+
+  function switchAdminTab(tabName) {
+    currentAdminTab = tabName;
+    document.querySelectorAll(".admin-tab-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.getAttribute("data-admintab") === tabName);
+    });
+    document.querySelectorAll(".admin-tab-pane").forEach(pane => {
+      pane.style.display = pane.id === `admin-pane-${tabName}` ? "block" : "none";
+    });
+    loadAdminPanel();
+  }
+
+  document.querySelectorAll(".admin-tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchAdminTab(btn.getAttribute("data-admintab")));
+  });
+
+  const btnAdminRefresh = document.getElementById("btn-admin-refresh");
+  if (btnAdminRefresh) btnAdminRefresh.addEventListener("click", () => loadAdminPanel());
+
+  async function loadAdminPanel() {
+    if (!currentUser || currentUser.role !== "admin") return;
+    if (currentAdminTab === "dashboard") await loadAdminDashboard();
+    else if (currentAdminTab === "library") await loadAdminLibraryTab();
+    else if (currentAdminTab === "users") await loadAdminUsersTab();
+    else if (currentAdminTab === "automation") await loadAdminAutomationTab();
+    else if (currentAdminTab === "metadata") await loadAdminMetadataReviewTab();
+    else if (currentAdminTab === "maintenance") await loadAdminMaintenanceTab();
+  }
+
+  async function loadAdminDashboard() {
+    const cardsEl = document.getElementById("admin-dashboard-cards");
+    const idBreakdownEl = document.getElementById("admin-id-breakdown");
+    const providersEl = document.getElementById("admin-providers-health");
+    if (!cardsEl) return;
+
+    try {
+      const res = await fetch("/api/admin/dashboard");
+      if (!res.ok) return;
+      const d = await res.json();
+      const lib = d.library || {};
+      const cov = d.covers || {};
+      const usr = d.users || {};
+      const stg = d.storage || {};
+
+      cardsEl.innerHTML = `
+        <div class="admin-metric-card">
+          <div class="metric-label">Total de Livros</div>
+          <div class="metric-value">${lib.total_books || 0}</div>
+          <div class="metric-sub">${lib.pdf_books || 0} PDFs &bull; ${lib.epub_books || 0} EPUBs</div>
+        </div>
+        <div class="admin-metric-card">
+          <div class="metric-label">Capas Validadas</div>
+          <div class="metric-value">${(cov.custom || 0) + (cov.extracted || 0)}</div>
+          <div class="metric-sub">${cov.custom || 0} personalizadas &bull; ${cov.editorial_fallback || 0} editoriais</div>
+        </div>
+        <div class="admin-metric-card">
+          <div class="metric-label">Usuários &amp; Sessões</div>
+          <div class="metric-value">${usr.active_users || 0} / ${usr.total_users || 0}</div>
+          <div class="metric-sub">${usr.active_sessions || 0} sessões ativas</div>
+        </div>
+        <div class="admin-metric-card">
+          <div class="metric-label">Armazenamento</div>
+          <div class="metric-value">${formatBytes(stg.books_bytes || 0)}</div>
+          <div class="metric-sub">DB: ${formatBytes(stg.db_bytes || 0)} &bull; Livre: ${formatBytes(stg.disk_free_bytes || 0)}</div>
+        </div>
+      `;
+
+      if (idBreakdownEl) {
+        const byStatus = lib.by_identification_status || {};
+        const labels = {
+          identified: "Identificados Automaticamente",
+          manual_override: "Revisados / Editados Manualmente",
+          needs_review: "Revisão Necessária",
+          ambiguous: "Ambíguos (Múltiplas Edições)",
+          not_found: "Não Encontrados nas Bases",
+          rate_limited: "Pausados por Rate Limit",
+          technical_error: "Erro Técnico de Rede/Parser",
+          pending: "Pendentes de Enriquecimento",
+        };
+        idBreakdownEl.innerHTML = Object.entries(labels).map(([k, label]) => `
+          <div class="admin-stat-row">
+            <span>${label}</span>
+            <strong>${byStatus[k] || 0}</strong>
+          </div>
+        `).join("");
+      }
+
+      if (providersEl) {
+        const provs = (d.providers && d.providers.providers) || [];
+        if (provs.length === 0) {
+          providersEl.innerHTML = `<p style="font-size: 0.83rem; color: var(--text-muted);">Nenhuma chamada externa realizada ainda.</p>`;
+        } else {
+          providersEl.innerHTML = provs.map(p => `
+            <div class="admin-stat-row">
+              <span><strong style="text-transform: capitalize;">${escapeHtml(p.provider)}</strong> (${p.total_requests} reqs)</span>
+              <span>✓ ${p.success_count} | RL: ${p.rate_limit_count} | Lat: ${Math.round(p.avg_latency_ms || 0)}ms</span>
+            </div>
+          `).join("");
+        }
+      }
+    } catch (e) {
+      console.warn("Erro no dashboard admin:", e);
+    }
+  }
+
+  async function loadAdminLibraryTab() {
+    const diagEl = document.getElementById("admin-library-diagnostics");
+    if (!diagEl) return;
+    try {
+      const res = await fetch("/api/admin/library/diagnostics");
+      if (!res.ok) return;
+      const d = await res.json();
+      const s = d.summary || {};
+      diagEl.innerHTML = `
+        <div class="admin-metrics-grid">
+          <div class="admin-metric-card">
+            <div class="metric-label">Arquivos Ausentes no Disco</div>
+            <div class="metric-value">${s.missing_files_count || 0}</div>
+          </div>
+          <div class="admin-metric-card">
+            <div class="metric-label">Grupos de Duplicatas (Hash)</div>
+            <div class="metric-value">${s.duplicate_groups_count || 0}</div>
+          </div>
+          <div class="admin-metric-card">
+            <div class="metric-label">Metadados Incompletos</div>
+            <div class="metric-value">${s.incomplete_metadata_count || 0}</div>
+          </div>
+          <div class="admin-metric-card">
+            <div class="metric-label">Arquivos Não Suportados</div>
+            <div class="metric-value">${s.unrecognized_files_count || 0}</div>
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      console.warn("Erro em diagnósticos da biblioteca:", e);
+    }
+  }
+
+  const btnAdminOpenSources = document.getElementById("btn-admin-open-sources");
+  if (btnAdminOpenSources) {
+    btnAdminOpenSources.addEventListener("click", async () => {
+      modalSources.classList.add("active");
+      await loadSources();
+    });
+  }
+
+  const btnAdminScanNow = document.getElementById("btn-admin-scan-now");
+  if (btnAdminScanNow) {
+    btnAdminScanNow.addEventListener("click", async () => {
+      btnAdminScanNow.disabled = true;
+      btnAdminScanNow.textContent = "Escaneando...";
+      await fetch("/api/scan", { method: "POST" });
+      btnAdminScanNow.disabled = false;
+      btnAdminScanNow.textContent = "Escanear Acervo Agora";
+      loadAdminLibraryTab();
+      loadBooks();
+    });
+  }
+
+  const btnAdminBatchApply = document.getElementById("btn-admin-batch-apply");
+  if (btnAdminBatchApply) {
+    btnAdminBatchApply.addEventListener("click", async () => {
+      const idsRaw = (document.getElementById("batch-book-ids")?.value || "").split(",");
+      const bookIds = idsRaw.map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n > 0);
+      const cat = document.getElementById("batch-category")?.value.trim() || undefined;
+      const lang = document.getElementById("batch-language")?.value.trim() || undefined;
+      const pub = document.getElementById("batch-publisher")?.value.trim() || undefined;
+      const fb = document.getElementById("batch-update-feedback");
+
+      if (bookIds.length === 0) {
+        if (fb) fb.textContent = "Informe pelo menos um ID de livro válido.";
+        return;
+      }
+
+      const res = await fetch("/api/metadata/batch-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ book_ids: bookIds, primary_category: cat, language: lang, publisher: pub }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (fb) fb.textContent = `Atualizados ${data.updated_count} livros com sucesso.`;
+        loadBooks();
+      }
+    });
+  }
+
+  async function loadAdminUsersTab() {
+    const container = document.getElementById("admin-users-table-container");
+    if (!container) return;
+    const res = await fetch("/api/users");
+    if (!res.ok) return;
+    const data = await res.json();
+    const users = data.users || [];
+    container.innerHTML = users.map(u => `
+      <div class="admin-stat-row" style="padding: 0.65rem 0;">
+        <div>
+          <strong>${escapeHtml(u.display_name || u.username)}</strong>
+          <code style="font-size: 0.78rem; color: var(--text-muted); margin-left: 0.35rem;">@${escapeHtml(u.username)}</code>
+          <span class="user-role-tag ${u.role === 'admin' ? 'role-admin' : 'role-reader'}" style="margin-left: 0.4rem;">${u.role}</span>
+        </div>
+        <div style="display: flex; gap: 0.4rem;">
+          <button class="btn btn-subtle btn-revoke-user-sessions" data-id="${u.id}" style="font-size: 0.76rem;">Encerrar Sessões</button>
+        </div>
+      </div>
+    `).join("");
+
+    container.querySelectorAll(".btn-revoke-user-sessions").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const uid = btn.getAttribute("data-id");
+        const r = await fetch(`/api/users/${uid}/revoke-sessions`, { method: "POST" });
+        if (r.ok) {
+          const d = await r.json();
+          alert(`Sessões encerradas: ${d.revoked_sessions}`);
+        }
+      });
+    });
+  }
+
+  const btnAdminOpenCreateUser = document.getElementById("btn-admin-open-create-user");
+  if (btnAdminOpenCreateUser) {
+    btnAdminOpenCreateUser.addEventListener("click", async () => {
+      modalUsers.classList.add("active");
+      await loadUsers();
+    });
+  }
+
+  async function loadAdminAutomationTab() {
+    const schedEl = document.getElementById("admin-schedules-list");
+    const jobsEl = document.getElementById("admin-jobs-list");
+    if (!schedEl || !jobsEl) return;
+
+    const [sRes, jRes] = await Promise.all([
+      fetch("/api/automation/schedules"),
+      fetch("/api/automation/jobs?limit=25"),
+    ]);
+
+    if (sRes.ok) {
+      const sData = await sRes.json();
+      const schedules = sData.schedules || [];
+      schedEl.innerHTML = schedules.map(sc => `
+        <div class="admin-schedule-card" data-job-type="${escapeHtml(sc.job_type)}">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <strong>${escapeHtml(sc.job_type)}</strong>
+            <label style="font-size: 0.8rem; display: flex; align-items: center; gap: 0.3rem;">
+              <input type="checkbox" class="sched-enabled" ${sc.enabled ? "checked" : ""}> Ativo
+            </label>
+          </div>
+          <div style="display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
+            <select class="form-input sched-mode" style="flex: 1; min-width: 110px; font-size: 0.8rem;">
+              <option value="manual" ${sc.schedule_mode === "manual" ? "selected" : ""}>Manual</option>
+              <option value="interval" ${sc.schedule_mode === "interval" ? "selected" : ""}>Intervalo (min)</option>
+              <option value="daily" ${sc.schedule_mode === "daily" ? "selected" : ""}>Diário</option>
+              <option value="weekly" ${sc.schedule_mode === "weekly" ? "selected" : ""}>Semanal</option>
+            </select>
+            <input type="number" class="form-input sched-interval" value="${sc.interval_minutes || 60}" min="5" style="width: 80px; font-size: 0.8rem;" title="Intervalo em minutos">
+            <input type="time" class="form-input sched-time" value="${escapeHtml(sc.run_time || '03:00')}" style="width: 100px; font-size: 0.8rem;" title="Horário de execução">
+          </div>
+          <div style="font-size: 0.74rem; color: var(--text-muted); margin-bottom: 0.5rem;">
+            Última: ${sc.last_run_at ? formatDate(sc.last_run_at) : "Nunca"} (${escapeHtml(sc.last_status || "idle")})
+          </div>
+          <div style="display: flex; gap: 0.4rem; justify-content: flex-end;">
+            <button class="btn btn-subtle btn-save-schedule" data-job-type="${escapeHtml(sc.job_type)}" style="font-size: 0.76rem;">Salvar</button>
+            <button class="btn btn-primary btn-run-job-now" data-job-type="${escapeHtml(sc.job_type)}" style="font-size: 0.76rem;">Executar Agora</button>
+          </div>
+        </div>
+      `).join("");
+
+      schedEl.querySelectorAll(".btn-save-schedule").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const jt = btn.getAttribute("data-job-type");
+          const card = schedEl.querySelector(`.admin-schedule-card[data-job-type="${jt}"]`);
+          const enabled = card.querySelector(".sched-enabled").checked;
+          const mode = card.querySelector(".sched-mode").value;
+          const interval = parseInt(card.querySelector(".sched-interval").value, 10) || 60;
+          const runTime = card.querySelector(".sched-time").value || "03:00";
+
+          const r = await fetch(`/api/automation/schedules/${encodeURIComponent(jt)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled, schedule_mode: mode, interval_minutes: interval, run_time: runTime }),
+          });
+          if (r.ok) loadAdminAutomationTab();
+        });
+      });
+
+      schedEl.querySelectorAll(".btn-run-job-now").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const jt = btn.getAttribute("data-job-type");
+          btn.disabled = true;
+          await fetch("/api/automation/jobs/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ job_type: jt }),
+          });
+          setTimeout(() => loadAdminAutomationTab(), 800);
+        });
+      });
+    }
+
+    if (jRes.ok) {
+      const jData = await jRes.json();
+      const jobs = jData.jobs || [];
+      if (jobs.length === 0) {
+        jobsEl.innerHTML = `<p style="font-size: 0.83rem; color: var(--text-muted);">Nenhuma tarefa executada ainda.</p>`;
+      } else {
+        jobsEl.innerHTML = jobs.map(j => `
+          <div class="admin-stat-row">
+            <div>
+              <strong>#${j.id} — ${escapeHtml(j.job_type)}</strong>
+              <span class="source-badge" style="margin-left: 0.4rem;">${escapeHtml(j.status)}</span>
+              <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 0.4rem;">
+                (${j.processed_items || 0}/${j.total_items || 0} itens)
+              </span>
+            </div>
+            <div style="display: flex; gap: 0.4rem; align-items: center;">
+              <span style="font-size: 0.74rem; color: var(--text-faint);">${formatDate(j.created_at)}</span>
+              ${(j.status === "running" || j.status === "pending") ? `<button class="btn btn-danger btn-cancel-bg-job" data-id="${j.id}" style="font-size: 0.72rem; padding: 0.15rem 0.4rem;">Cancelar</button>` : ""}
+            </div>
+          </div>
+        `).join("");
+
+        jobsEl.querySelectorAll(".btn-cancel-bg-job").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            const jid = btn.getAttribute("data-id");
+            await fetch(`/api/automation/jobs/${jid}/cancel`, { method: "POST" });
+            loadAdminAutomationTab();
+          });
+        });
+      }
+    }
+  }
+
+  const btnAdminRefreshJobs = document.getElementById("btn-admin-refresh-jobs");
+  if (btnAdminRefreshJobs) btnAdminRefreshJobs.addEventListener("click", loadAdminAutomationTab);
+
+  async function loadAdminMetadataReviewTab() {
+    const listEl = document.getElementById("admin-metadata-review-list");
+    const filterEl = document.getElementById("admin-meta-filter-status");
+    if (!listEl) return;
+
+    const statusFilter = filterEl ? filterEl.value : "needs_review";
+    const res = await fetch("/api/books");
+    if (!res.ok) return;
+    const data = await res.json();
+    let books = data.books || [];
+
+    if (statusFilter === "needs_review") {
+      books = books.filter(b => b.identification_status === "needs_review" || b.identification_status === "ambiguous");
+    } else if (statusFilter !== "all") {
+      books = books.filter(b => b.identification_status === statusFilter);
+    }
+
+    if (books.length === 0) {
+      listEl.innerHTML = `<p style="font-size: 0.85rem; color: var(--text-muted); padding: 1rem 0;">Nenhum livro encontrado com este filtro de revisão.</p>`;
+      return;
+    }
+
+    listEl.innerHTML = books.slice(0, 40).map(b => `
+      <div class="admin-review-card" data-book-id="${b.id}">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 0.75rem; flex-wrap: wrap;">
+          <div>
+            <strong style="font-size: 0.92rem;">${escapeHtml(b.title)}</strong>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">
+              Autor: ${escapeHtml(b.author || "Não informado")} &bull; Arquivo: <code>${escapeHtml(b.filename)}</code>
+            </div>
+            <div style="font-size: 0.76rem; color: var(--text-faint); margin-top: 0.2rem;">
+              Status: <strong>${escapeHtml(b.identification_status || "pending")}</strong> (${Math.round(b.identification_score || 0)}%)
+              ${b.last_error_reason ? ` &bull; Diagnóstico: ${escapeHtml(b.last_error_reason)}` : ""}
+            </div>
+          </div>
+          <div style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
+            <button class="btn btn-subtle btn-review-open-details" data-id="${b.id}" style="font-size: 0.76rem;">Comparar / Editar</button>
+            <button class="btn btn-subtle btn-review-reprocess" data-id="${b.id}" style="font-size: 0.76rem;">Reprocessar</button>
+            <button class="btn btn-subtle btn-review-reject" data-id="${b.id}" style="font-size: 0.76rem;">Rejeitar Sugestões</button>
+            <button class="btn btn-primary btn-review-approve" data-id="${b.id}" style="font-size: 0.76rem;">Marcar Revisado</button>
+          </div>
+        </div>
+      </div>
+    `).join("");
+
+    listEl.querySelectorAll(".btn-review-open-details").forEach(btn => {
+      btn.addEventListener("click", () => openBookDetails(btn.getAttribute("data-id")));
+    });
+    listEl.querySelectorAll(".btn-review-reprocess").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const bid = btn.getAttribute("data-id");
+        btn.disabled = true;
+        await fetch(`/api/books/${bid}/metadata/reprocess`, { method: "POST" });
+        loadAdminMetadataReviewTab();
+      });
+    });
+    listEl.querySelectorAll(".btn-review-reject").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const bid = btn.getAttribute("data-id");
+        await fetch(`/api/books/${bid}/metadata/reject-candidates`, { method: "POST" });
+        loadAdminMetadataReviewTab();
+      });
+    });
+    listEl.querySelectorAll(".btn-review-approve").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const bid = btn.getAttribute("data-id");
+        await fetch(`/api/books/${bid}/metadata/review`, { method: "POST" });
+        loadAdminMetadataReviewTab();
+      });
+    });
+  }
+
+  const adminMetaFilterStatus = document.getElementById("admin-meta-filter-status");
+  if (adminMetaFilterStatus) adminMetaFilterStatus.addEventListener("change", loadAdminMetadataReviewTab);
+
+  const btnAdminEnqueuePending = document.getElementById("btn-admin-enqueue-pending");
+  if (btnAdminEnqueuePending) {
+    btnAdminEnqueuePending.addEventListener("click", async () => {
+      await fetch("/api/metadata/queue/enqueue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ only_pending: true }),
+      });
+      openMetadataCenter();
+    });
+  }
+
+  const btnAdminEnqueueAll = document.getElementById("btn-admin-enqueue-all");
+  if (btnAdminEnqueueAll) {
+    btnAdminEnqueueAll.addEventListener("click", async () => {
+      await fetch("/api/metadata/queue/enqueue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ only_pending: false }),
+      });
+      openMetadataCenter();
+    });
+  }
+
+  async function loadAdminMaintenanceTab() {
+    const statusEl = document.getElementById("admin-maintenance-status");
+    const logsEl = document.getElementById("admin-audit-logs-list");
+    if (!statusEl) return;
+
+    const [mRes, lRes] = await Promise.all([
+      fetch("/api/admin/maintenance/status"),
+      fetch("/api/admin/audit-logs?limit=25"),
+    ]);
+
+    if (mRes.ok) {
+      const m = await mRes.json();
+      statusEl.innerHTML = `
+        <div class="admin-stat-row"><span>Versão do Schema SQLite</span><strong>v${m.schema_version || 8}</strong></div>
+        <div class="admin-stat-row"><span>Integridade do Banco</span><strong>${escapeHtml(m.db_integrity || "ok")}</strong></div>
+        <div class="admin-stat-row"><span>Tamanho do Banco</span><strong>${formatBytes(m.db_size_bytes || 0)}</strong></div>
+        <div class="admin-stat-row"><span>Cache de Consultas Externas</span><strong>${m.external_cache_entries || 0} entradas</strong></div>
+        <div class="admin-stat-row"><span>Capas em Disco</span><strong>${formatBytes(m.covers_size_bytes || 0)} (${m.covers_files_count || 0} arqs)</strong></div>
+        <div class="admin-stat-row"><span>Espaço Livre no Servidor</span><strong>${formatBytes(m.disk_free_bytes || 0)}</strong></div>
+      `;
+    }
+
+    if (lRes.ok && logsEl) {
+      const lData = await lRes.json();
+      const logs = lData.logs || [];
+      if (logs.length === 0) {
+        logsEl.innerHTML = `<p style="font-size: 0.83rem; color: var(--text-muted);">Nenhuma ação administrativa registrada ainda.</p>`;
+      } else {
+        logsEl.innerHTML = logs.map(lg => `
+          <div class="admin-stat-row" style="font-size: 0.8rem;">
+            <div>
+              <strong>${escapeHtml(lg.action)}</strong>
+              ${lg.target_type ? `<span style="color: var(--text-muted);"> (${escapeHtml(lg.target_type)})</span>` : ""}
+            </div>
+            <span style="color: var(--text-faint); font-size: 0.74rem;">${formatDate(lg.created_at)}</span>
+          </div>
+        `).join("");
+      }
+    }
+  }
+
+  const btnAdminClearApiCache = document.getElementById("btn-admin-clear-api-cache");
+  if (btnAdminClearApiCache) {
+    btnAdminClearApiCache.addEventListener("click", async () => {
+      await fetch("/api/admin/maintenance/clear-cache", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clear_api_cache: true, clear_auto_covers: false }),
+      });
+      loadAdminMaintenanceTab();
+    });
+  }
+
+  const btnAdminClearAutoCovers = document.getElementById("btn-admin-clear-auto-covers");
+  if (btnAdminClearAutoCovers) {
+    btnAdminClearAutoCovers.addEventListener("click", async () => {
+      await fetch("/api/admin/maintenance/clear-cache", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clear_api_cache: false, clear_auto_covers: true }),
+      });
+      loadAdminMaintenanceTab();
+      loadBooks();
+    });
+  }
+
+  const btnAdminRunDbMaint = document.getElementById("btn-admin-run-db-maint");
+  if (btnAdminRunDbMaint) {
+    btnAdminRunDbMaint.addEventListener("click", async () => {
+      await fetch("/api/automation/jobs/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_type: "db_maintenance" }),
+      });
+      setTimeout(() => loadAdminMaintenanceTab(), 500);
+    });
+  }
+
+  const btnAdminCreateBackup = document.getElementById("btn-admin-create-backup");
+  if (btnAdminCreateBackup) {
+    btnAdminCreateBackup.addEventListener("click", async () => {
+      const res = await fetch("/api/backup", { method: "POST" });
+      if (res.ok) {
+        const d = await res.json();
+        alert(`Backup criado: ${d.backup.filename}`);
+        loadAdminMaintenanceTab();
+      }
     });
   }
 
