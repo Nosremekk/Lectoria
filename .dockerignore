@@ -1,0 +1,55 @@
+# Git e CI
+.git
+.gitignore
+.github
+
+# Ambientes virtuais e caches Python
+.venv
+venv
+ENV
+env
+**/__pycache__
+**/*.py[cod]
+*$py.class
+
+# Testes, cobertura e logs
+.pytest_cache
+.coverage
+htmlcov
+tests
+*.log
+
+# Editores e sistema operacional
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Dados persistentes locais, livros, backups e pacotes de distribuição
+data
+books
+backups
+dist
+build
+cache
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.wal
+*.shm
+*.db.bak
+*.bak
+*.tar.gz
+*.zip
+*.sha256
+
+# Segredos e variáveis de ambiente locais
+.env
+.env.*
+!.env.example
