@@ -7,6 +7,43 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.5.0] - 2026-11-07
+
+### Adicionado
+- **Lectoria v1.5.0 — Biblioteca Viva (Pipeline Bibliográfico de 5 Estágios, Automação Persistente, Painel Administrativo Dedicado e Camada Social "Nossa Biblioteca")**:
+- **Pipeline Progressivo de Identificação Bibliográfica em 5 Estágios (`metadata_service.py`, `background_enricher.py`)**:
+  - **Estágio 1 (Extração Local Profunda)**: Varredura expandida de PDFs (páginas 1 a 10 + últimas 2 páginas de ficha catalográfica/colofão), EPUB OPF e normalização reversível de nomes de arquivos (`Autor - Título (Edição) [Coleção]`), preservando `raw_filename`, `raw_parent_dir` e `extracted_title/author` na tabela `books`.
+  - **Estágio 2 (Normalização Reversível)**: Extração estruturada de autor, título limpo, subtítulo e edição sem perda dos dados originais do arquivo.
+  - **Estágio 3 (Adapters Multi-Provedor com Diagnóstico)**: Integração com **Open Library**, **Google Books** e **Crossref API** (novo provedor para obras acadêmicas e técnicas), com registro de métricas de latência, rate limit (HTTP 429) e falhas na tabela `metadata_provider_stats`.
+  - **Estágio 4 (Pontuação Explicável e Coerência Multi-Fonte)**: `score_candidate_detailed()` com retorno detalhado do breakdown de pontos (`isbn_points`, `title_points`, `author_points`, `edition_points`, `completeness_points`, `coherence_bonus`) e suporte a correspondência de alta precisão para títulos clássicos ou sem autor no nome do arquivo.
+  - **Estágio 5 (Estados de Decisão e Proveniência por Campo)**: Novos status `identified`, `needs_review`, `ambiguous`, `not_found`, `rate_limited`, `technical_error` e `manual_override`, com rastreabilidade completa na tabela `metadata_provenance`.
+- **Validação Visual Pura de Capas e Prevenção de Capas Pretas/CMYK Invertidas (`covers_service.py`)**:
+  - Inspeção binária em Python puro (`struct` + `zlib`) de marcadores JPEG (`SOF0/SOF1/SOF2`, `APP14 Adobe`) e buffers de pixels brutos (`FlateDecode`), rejeitando automaticamente imagens CMYK/YCCK de 4 canais ou máscaras `/SMask` pretas extraídas de PDFs.
+  - Fallback imediato para capa externa validada ou **Capa Editorial SVG Determinística** enriquecida com Categoria, Título, Autor e paleta cromática editorial.
+- **Reconciliação Inteligente de Arquivos Movidos ou Renomeados (`library.py`)**:
+  - Detecção de livros movidos ou renomeados via `file_hash` + `filesize` durante `scan_library()`, atualizando `filepath` e `filename` **sem recriar o `book_id`**, preservando 100% do progresso de leitura, destaques, anotações, desenhos, resenhas e coleções.
+  - Proteção por `threading.Lock` (`_scan_lock`) contra varreduras concorrentes.
+- **Automação da Biblioteca e Fila Persistente de Tarefas (`automation_service.py`)**:
+  - Agendador configurável persistido em `scheduled_jobs` com modos `manual`, `interval`, `daily`, `weekly` e `custom_days`, horário preferencial (`run_time`) e detecção automática de mudanças nas pastas monitoradas.
+  - Seis rotinas automatizadas: `scan_library`, `enrich_metadata`, `update_missing_covers`, `rebuild_search_index`, `db_maintenance` e `auto_backup`.
+  - Fila persistente em `background_jobs` com recuperação automática de tarefas interrompidas (`running` -> `interrupted`) ao iniciar o servidor e cancelamento seguro.
+- **Painel Administrativo Dedicado de 6 Seções (`#admin-section`)**:
+  - Substituição dos modais fragmentados por uma área administrativa dedicada com 6 abas completas: *Dashboard*, *Gestão da Biblioteca*, *Gestão de Usuários*, *Automação & Fila*, *Revisão Bibliográfica* e *Manutenção & Auditoria*.
+  - Registro de ações administrativas na tabela `admin_audit_log`.
+- **Camada Multiusuário e Social "Nossa Biblioteca" com Privacidade por Padrão (`social_service.py`)**:
+  - Perfis de usuário (`user_profiles`) com nome de exibição, bio, cor de avatar e livro favorito.
+  - Controles granulares de privacidade (`user_privacy_settings`) **100% desativados por padrão (`0`)**: compartilhamento de atividade de leitura, progresso, avaliações, citações e perfil visível apenas mediante consentimento explícito.
+  - Isolamento estrito de anotações privadas: administradores **não** possuem acesso irrestrito às anotações privadas de outros usuários; apenas trechos explicitamente compartilhados em `shared_annotations` ficam visíveis na comunidade.
+  - Compartilhamento opcional de citações/anotações com visibilidade `private`, `users` ou `selected_users`, comentários em trechos compartilhados (`annotation_comments`), avaliações de 1 a 5 estrelas + resenhas + *Quero Ler* + *Favorito* (`book_reviews`), recomendações diretas entre leitores (`book_recommendations`) e feed comunitário **"Nossa Biblioteca"** (`reading_activity`).
+- **Migração Automática e Segura SQLite Schema v7 → v8 (`database.py`)**:
+  - Backup preventivo automático pré-migração (`lectoria_pre_migration_v7_to_v8_*.db.bak`) e criação idempotente de 13 novas tabelas e índices.
+- **Suíte Completa de Testes (169 Testes Aprovados)**:
+  - Novos testes unitários e de integração em `tests/test_v150_biblioteca_viva.py` cobrindo migração v7→v8, pipeline bibliográfico, validação anti-CMYK de capas, reconciliação de arquivos movidos, agendador/fila de tarefas, isolamento de privacidade por padrão e recursos sociais.
+
+### Corrigido
+- **Prateleiras de Descoberta (`"Erro ao carregar prateleiras de descoberta"`)**:
+  - Correção da condição de corrida no frontend (`initAuth()` agora recarrega as prateleiras após confirmar a sessão autenticada) e eliminação do gargalo N+1 em `library.get_discovery_shelves()`, reduzindo ~60 queries SQL por requisição para uma única leitura em memória com isolamento `try/except` por prateleira.
+
 ## [1.4.0] - 2026-11-06
 
 ### Adicionado

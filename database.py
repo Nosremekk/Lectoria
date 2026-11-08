@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Generator, Optional
 import config
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -123,6 +123,10 @@ def init_db(db_path: Optional[Path] = None) -> None:
             if current_version < 7:
                 _apply_migration_v7(cursor)
                 cursor.execute("INSERT INTO schema_migrations (version) VALUES (7);")
+
+            if current_version < 8:
+                _apply_migration_v8(cursor)
+                cursor.execute("INSERT INTO schema_migrations (version) VALUES (8);")
 
             conn.commit()
         finally:
@@ -680,6 +684,326 @@ def _apply_migration_v7(cursor: sqlite3.Cursor) -> None:
         )
     except sqlite3.OperationalError:
         pass
+
+
+def _apply_migration_v8(cursor: sqlite3.Cursor) -> None:
+    """
+    Schema V8 — Lectoria v1.5.0 (Biblioteca Viva):
+    - Novos atributos na tabela books: subtitle, volume, reviewed_at, reviewed_by, last_error_reason.
+    - Proveniência e diagnóstico de metadados:
+      * metadata_provenance (origem e confiança por campo)
+      * metadata_provider_stats (métricas de chamadas, sucessos, falhas, rate limits por provedor)
+    - Automação e fila persistente de tarefas:
+      * scheduled_jobs (agendamento configurável sobrevivendo a reinicializações)
+      * background_jobs (fila e histórico de tarefas com recuperação de interrupção)
+    - Multiusuário, privacidade por padrão e recursos sociais ('Nossa Biblioteca'):
+      * user_profiles (avatar, bio, preferências de leitura)
+      * user_privacy_settings (controles explícitos, tudo privado=0 por padrão)
+      * book_reviews (avaliações 1-5 estrelas, resenhas, favoritos e lista 'quero ler')
+      * book_recommendations (recomendações diretas entre usuários)
+      * shared_annotations (anotações, destaques, citações e desenhos compartilhados)
+      * annotation_comments (comentários e respostas em anotações compartilhadas)
+      * reading_activity (feed de atividades consentidas)
+    - Administração e auditoria:
+      * admin_audit_log (registro de ações administrativas)
+      * system_settings (configurações persistentes da instância)
+    """
+    # 1. Colunas adicionais na tabela books
+    cursor.execute("PRAGMA table_info(books);")
+    book_cols = [r["name"] for r in cursor.fetchall()]
+
+    v8_book_cols = [
+        ("subtitle", "TEXT"),
+        ("volume", "TEXT"),
+        ("reviewed_at", "TIMESTAMP"),
+        ("reviewed_by", "INTEGER"),
+        ("last_error_reason", "TEXT"),
+    ]
+    for col_name, col_type in v8_book_cols:
+        if col_name not in book_cols:
+            cursor.execute(f"ALTER TABLE books ADD COLUMN {col_name} {col_type};")
+
+    # 2. Proveniência de metadados e estatísticas de provedores
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS metadata_provenance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            field_name TEXT NOT NULL,
+            field_value TEXT,
+            source TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 100.0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(book_id, field_name)
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_provenance_book ON metadata_provenance(book_id);")
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS metadata_provider_stats (
+            provider TEXT PRIMARY KEY,
+            total_requests INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            not_found_count INTEGER NOT NULL DEFAULT 0,
+            error_count INTEGER NOT NULL DEFAULT 0,
+            rate_limit_count INTEGER NOT NULL DEFAULT 0,
+            parse_error_count INTEGER NOT NULL DEFAULT 0,
+            last_status TEXT NOT NULL DEFAULT 'healthy',
+            last_error TEXT,
+            cooldown_until TIMESTAMP,
+            last_call_at TIMESTAMP
+        );
+        """
+    )
+    for prov in ("openlibrary", "googlebooks", "crossref"):
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO metadata_provider_stats (provider, last_status)
+            VALUES (?, 'healthy');
+            """,
+            (prov,),
+        )
+
+    # 3. Agendamento e fila persistente de tarefas (Automação)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS scheduled_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_type TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL DEFAULT '',
+            schedule_mode TEXT NOT NULL DEFAULT 'manual',
+            interval_minutes INTEGER NOT NULL DEFAULT 360,
+            days_of_week TEXT NOT NULL DEFAULT '[0,1,2,3,4,5,6]',
+            run_time TEXT NOT NULL DEFAULT '03:00',
+            timezone TEXT NOT NULL DEFAULT 'America/Sao_Paulo',
+            is_enabled INTEGER NOT NULL DEFAULT 0,
+            config_json TEXT NOT NULL DEFAULT '{}',
+            last_run_at TIMESTAMP,
+            last_status TEXT,
+            next_run_at TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    default_schedules = [
+        ("scan_library", "Varredura de novos livros", "interval", 60, "[0,1,2,3,4,5,6]", "02:00", 0),
+        ("enrich_metadata", "Enriquecimento bibliográfico", "daily", 1440, "[0,1,2,3,4,5,6]", "03:00", 0),
+        ("update_missing_covers", "Atualização de capas ausentes", "daily", 1440, "[0,1,2,3,4,5,6]", "03:30", 0),
+        ("rebuild_search_index", "Reconstrução de índices de busca", "weekly", 10080, "[6]", "04:00", 0),
+        ("db_maintenance", "Manutenção do banco SQLite", "weekly", 10080, "[6]", "04:30", 0),
+        ("auto_backup", "Backups automáticos", "daily", 1440, "[0,1,2,3,4,5,6]", "05:00", 0),
+    ]
+    for j_type, j_name, s_mode, int_min, days, r_time, enabled in default_schedules:
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO scheduled_jobs (
+                job_type, name, schedule_mode, interval_minutes, days_of_week, run_time, is_enabled
+            ) VALUES (?, ?, ?, ?, ?, ?, ?);
+            """,
+            (j_type, j_name, s_mode, int_min, days, r_time, enabled),
+        )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS background_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            trigger_source TEXT NOT NULL DEFAULT 'manual',
+            triggered_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            total_items INTEGER NOT NULL DEFAULT 0,
+            processed_items INTEGER NOT NULL DEFAULT 0,
+            success_items INTEGER NOT NULL DEFAULT 0,
+            review_items INTEGER NOT NULL DEFAULT 0,
+            not_found_items INTEGER NOT NULL DEFAULT 0,
+            failed_items INTEGER NOT NULL DEFAULT 0,
+            progress_pct REAL NOT NULL DEFAULT 0.0,
+            details_json TEXT NOT NULL DEFAULT '{}',
+            error_message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            started_at TIMESTAMP,
+            finished_at TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_bg_jobs_status ON background_jobs(status);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_bg_jobs_type_status ON background_jobs(job_type, status);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_bg_jobs_created ON background_jobs(created_at DESC);")
+
+    # 4. Perfis de usuário e configurações de privacidade (Privado por padrão)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            display_name TEXT,
+            avatar_color TEXT NOT NULL DEFAULT '#d4a853',
+            avatar_url TEXT,
+            bio TEXT NOT NULL DEFAULT '',
+            reading_prefs_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_privacy_settings (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            share_current_reading INTEGER NOT NULL DEFAULT 0,
+            share_reading_history INTEGER NOT NULL DEFAULT 0,
+            share_reviews INTEGER NOT NULL DEFAULT 0,
+            share_lists INTEGER NOT NULL DEFAULT 0,
+            share_annotations_default INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    # Inicializa perfil e privacidade (100% privada por padrão) para todos os usuários existentes
+    try:
+        cursor.execute("SELECT id, username FROM users;")
+        for u_row in cursor.fetchall():
+            uid = u_row["id"]
+            uname = u_row["username"]
+            cursor.execute(
+                "INSERT OR IGNORE INTO user_profiles (user_id, display_name) VALUES (?, ?);",
+                (uid, uname),
+            )
+            cursor.execute("INSERT OR IGNORE INTO user_privacy_settings (user_id) VALUES (?);", (uid,))
+    except sqlite3.OperationalError:
+        pass
+
+    # 5. Avaliações, resenhas, favoritos, lista 'Quero Ler' e recomendações
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS book_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            rating INTEGER CHECK (rating IS NULL OR (rating >= 1 AND rating <= 5)),
+            review_text TEXT,
+            is_favorite INTEGER NOT NULL DEFAULT 0,
+            want_to_read INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(book_id, user_id)
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_book ON book_reviews(book_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_user ON book_reviews(user_id);")
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS book_recommendations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            to_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            message TEXT NOT NULL DEFAULT '',
+            is_read INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_rec_recipient ON book_recommendations(to_user_id, is_read);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_rec_book ON book_recommendations(book_id);")
+
+    # 6. Anotações compartilhadas, comentários e feed de atividades ('Nossa Biblioteca')
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS shared_annotations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            note_id TEXT,
+            page_number INTEGER,
+            chapter_name TEXT,
+            progress_locator TEXT,
+            quote_text TEXT,
+            comment_text TEXT,
+            color TEXT NOT NULL DEFAULT 'yellow',
+            visibility TEXT NOT NULL DEFAULT 'public',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_shared_ann_book ON shared_annotations(book_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_shared_ann_user ON shared_annotations(user_id);")
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS annotation_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            shared_annotation_id INTEGER NOT NULL REFERENCES shared_annotations(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            parent_id INTEGER REFERENCES annotation_comments(id) ON DELETE CASCADE,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ann_comments_shared ON annotation_comments(shared_annotation_id);")
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reading_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            book_id TEXT REFERENCES books(id) ON DELETE CASCADE,
+            activity_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_created ON reading_activity(created_at DESC);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_user ON reading_activity(user_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_book ON reading_activity(book_id);")
+
+    # 7. Auditoria administrativa e configurações do sistema
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id TEXT,
+            details_json TEXT NOT NULL DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_created ON admin_audit_log(created_at DESC);")
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS system_settings (
+            key TEXT PRIMARY KEY,
+            value_json TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    default_settings = [
+        ("max_concurrent_jobs", "1"),
+        ("backup_retention_count", "10"),
+        ("allow_social_sharing", "true"),
+        ("auto_scan_on_startup", "true"),
+    ]
+    for s_key, s_val in default_settings:
+        cursor.execute(
+            "INSERT OR IGNORE INTO system_settings (key, value_json) VALUES (?, ?);",
+            (s_key, s_val),
+        )
+
 
 
 

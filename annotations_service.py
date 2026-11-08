@@ -227,7 +227,7 @@ def update_note(note_id: str, content: str, color: Optional[str] = None, user_id
                 (clean_content, note_id),
             )
 
-        return get_note_by_id(note_id, cursor=cursor)
+        return get_note_by_id(note_id, user_id=user_id, cursor=cursor)
 
 
 def delete_note(note_id: str, user_id: Optional[int] = None) -> bool:

@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 import json
 from pathlib import Path
 import secrets
+import shutil
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -18,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
 import config
-from database import get_db, init_db
+from database import SCHEMA_VERSION, get_db, init_db
 from auth_service import (
     SESSION_COOKIE_NAME,
     AuthError,
@@ -32,7 +33,10 @@ from auth_service import (
     destroy_session,
     get_user_from_session,
     has_admin_user,
+    list_admin_audit_logs,
     list_users,
+    log_admin_action,
+    revoke_user_sessions,
     update_user,
 )
 from sources_service import (
@@ -60,6 +64,7 @@ from covers_service import (
     get_or_create_book_cover,
     save_custom_cover,
     save_rendered_cover_cache,
+    validate_cover_image,
 )
 from library import (
     BookNotFoundError,
@@ -67,6 +72,7 @@ from library import (
     get_book,
     get_books,
     get_discovery_shelves,
+    get_library_diagnostics,
     update_book_metadata,
     resolve_book_path,
     scan_library,
@@ -74,11 +80,17 @@ from library import (
 from taxonomy_service import get_taxonomy_tree
 from background_enricher import enricher
 from metadata_service import (
+    CrossrefClient,
     OpenLibraryClient,
     GoogleBooksClient,
+    get_providers_diagnostics,
     score_candidate,
+    score_candidate_detailed,
     identify_book_metadata,
 )
+import automation_service
+import social_service
+from social_service import SocialNotFoundError, SocialPermissionError
 from progress import get_progress, save_progress
 from collections_service import (
     CollectionNotFoundError,
@@ -111,6 +123,7 @@ from backup_service import (
     create_backup,
     list_backups,
     restore_backup,
+    verify_sqlite_integrity,
 )
 from export_service import (
     ImportError,
@@ -124,11 +137,18 @@ from export_service import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Executado na inicialização e encerramento da aplicação."""
-    # Garante que as tabelas SQLite existem
+    # Garante que as tabelas SQLite existem e migrações estão aplicadas
     init_db()
+    # Recupera tarefas em segundo plano que foram interrompidas por reinício anterior
+    automation_service.recover_interrupted_jobs_on_startup()
     # Executa uma varredura inicial rápida para registrar arquivos existentes
     scan_library()
-    yield
+    # Inicia loop leve do agendador e monitor de diretórios
+    automation_service.scheduler_loop.start()
+    try:
+        yield
+    finally:
+        automation_service.scheduler_loop.stop()
 
 
 app = FastAPI(
@@ -322,6 +342,8 @@ class MetadataApplyPayload(BaseModel):
 class MetadataUpdatePayload(BaseModel):
     title: Optional[str] = None
     author: Optional[str] = None
+    subtitle: Optional[str] = None
+    volume: Optional[str] = None
     isbn10: Optional[str] = None
     isbn13: Optional[str] = None
     publisher: Optional[str] = None
@@ -331,6 +353,7 @@ class MetadataUpdatePayload(BaseModel):
     original_title: Optional[str] = None
     work_id: Optional[str] = None
     edition: Optional[str] = None
+    identification_status: Optional[str] = None
     taxonomy: Optional[Dict[str, Any]] = None
     lock_fields: Optional[List[str]] = None
 
@@ -338,6 +361,88 @@ class MetadataUpdatePayload(BaseModel):
 class MetadataQueueEnqueuePayload(BaseModel):
     book_ids: Optional[List[str]] = None
     only_pending: bool = True
+
+
+class MetadataReviewPayload(BaseModel):
+    status: str = "manual_override"
+
+
+class BatchMetadataUpdatePayload(BaseModel):
+    book_ids: List[str]
+    publisher: Optional[str] = None
+    language: Optional[str] = None
+    category: Optional[str] = None
+    identification_status: Optional[str] = None
+
+
+class ScheduleUpdatePayload(BaseModel):
+    schedule_mode: Optional[str] = None
+    interval_minutes: Optional[int] = None
+    run_time: Optional[str] = None
+    days_of_week: Optional[List[int]] = None
+    timezone: Optional[str] = None
+    is_enabled: Optional[bool] = None
+    config: Optional[Dict[str, Any]] = None
+
+
+class JobRunPayload(BaseModel):
+    job_type: str
+    run_async: bool = False
+
+
+class ProfileUpdatePayload(BaseModel):
+    display_name: Optional[str] = None
+    avatar_color: Optional[str] = None
+    bio: Optional[str] = None
+    reading_prefs: Optional[Dict[str, Any]] = None
+
+
+class PrivacyUpdatePayload(BaseModel):
+    share_current_reading: Optional[bool] = None
+    share_reading_history: Optional[bool] = None
+    share_reviews: Optional[bool] = None
+    share_lists: Optional[bool] = None
+    share_annotations_default: Optional[bool] = None
+
+
+class BookReviewPayload(BaseModel):
+    rating: Optional[int] = None
+    review_text: Optional[str] = None
+    is_favorite: Optional[bool] = None
+    want_to_read: Optional[bool] = None
+
+
+class SharedAnnotationCreatePayload(BaseModel):
+    book_id: str
+    quote_text: Optional[str] = None
+    comment_text: Optional[str] = None
+    page_number: Optional[int] = None
+    chapter_name: Optional[str] = None
+    progress_locator: Optional[str] = None
+    color: str = "yellow"
+    visibility: str = "public"
+    note_id: Optional[str] = None
+
+
+class SharedAnnotationUpdatePayload(BaseModel):
+    comment_text: Optional[str] = None
+    visibility: Optional[str] = None
+
+
+class AnnotationCommentPayload(BaseModel):
+    content: str = Field(min_length=1, max_length=2000)
+    parent_id: Optional[int] = None
+
+
+class RecommendationCreatePayload(BaseModel):
+    to_user_id: int
+    book_id: str
+    message: Optional[str] = None
+
+
+class ClearCachePayload(BaseModel):
+    clear_api_cache: bool = True
+    clear_extracted_covers: bool = False
 
 
 # =========================================================================
@@ -1015,13 +1120,24 @@ async def search_book_metadata_endpoint(book_id: str, payload: MetadataSearchPay
             gb_res = GoogleBooksClient.search(q_title, author=q_author, limit=5)
             raw_candidates.extend(gb_res)
 
+    # 3. Consulta Crossref
+    if payload.provider in (None, "", "crossref", "all"):
+        if q_isbn:
+            cr_isbn_res = CrossrefClient.lookup_isbn(q_isbn)
+            if cr_isbn_res:
+                raw_candidates.append(cr_isbn_res)
+        if q_title:
+            cr_res = CrossrefClient.search(q_title, author=q_author, limit=5)
+            raw_candidates.extend(cr_res)
+
     scored_candidates = []
     with get_db() as conn:
         cursor = conn.cursor()
         for cand in raw_candidates:
-            score, match_status = score_candidate(book, cand)
+            score, match_status, reasons = score_candidate_detailed(book, cand)
             cand["confidence_score"] = score
             cand["match_status"] = match_status
+            cand["score_reasons"] = reasons
 
             cursor.execute(
                 """
@@ -1085,10 +1201,12 @@ async def apply_book_metadata_candidate_endpoint(book_id: str, payload: Metadata
             pass
 
     cand_desc = raw_info.get("description")
+    cand_subtitle = raw_info.get("subtitle")
     cand_provider = candidate.get("source") or raw_info.get("provider", "external")
 
     updates: Dict[str, Any] = {
         "title": candidate["title"] or book["title"],
+        "subtitle": cand_subtitle or book.get("subtitle"),
         "author": candidate["author"] or book["author"],
         "isbn10": candidate["isbn10"] or book.get("isbn10"),
         "isbn13": candidate["isbn13"] or book.get("isbn13"),
@@ -1097,36 +1215,17 @@ async def apply_book_metadata_candidate_endpoint(book_id: str, payload: Metadata
         "description": cand_desc or book.get("description"),
         "identification_status": "identified",
         "metadata_source": cand_provider,
+        "reviewed_by": user["id"],
+        "last_error_reason": None,
     }
     if payload.lock_fields:
         updates["lock_fields"] = payload.lock_fields
 
-    updated_book = update_book_metadata(book_id, updates, user_id=user["id"])
+    update_book_metadata(book_id, updates, user_id=user["id"])
 
     # Se solicitado, tenta baixar e validar a capa externa
     if payload.apply_cover and candidate.get("cover_url") and book.get("cover_type") != "custom":
-        from background_enricher import is_safe_external_url
-        if is_safe_external_url(candidate["cover_url"]):
-            try:
-                import httpx
-                with httpx.Client(timeout=10.0, follow_redirects=True) as http_client:
-                    res = http_client.get(candidate["cover_url"])
-                    if res.status_code == 200 and len(res.content) > 100:
-                        ext, mime, w, h = validate_cover_image(res.content)
-                        config.COVERS_DIR.mkdir(parents=True, exist_ok=True)
-                        cover_filename = f"{book_id}_extracted.{ext}"
-                        (config.COVERS_DIR / cover_filename).write_bytes(res.content)
-                        with get_db() as conn:
-                            conn.execute(
-                                """
-                                UPDATE books
-                                SET cover_type = 'extracted', cover_path = ?, cover_updated_at = CURRENT_TIMESTAMP
-                                WHERE id = ? AND cover_type != 'custom'
-                                """,
-                                (cover_filename, book_id),
-                            )
-            except Exception:
-                pass
+        enricher._download_external_cover_safely(book_id, candidate["cover_url"])
 
     return {"status": "success", "book": get_book(book_id, user_id=user["id"])}
 
@@ -1520,6 +1619,12 @@ async def update_progress(book_id: str, request: Request):
         user_id=user["id"],
         progress_locator=progress_locator,
     )
+    social_service.record_reading_milestone(
+        user_id=user["id"],
+        book_id=book_id,
+        percentage=updated.get("percentage", 0.0),
+        current_page=current_page,
+    )
     return {"status": "success", "progress": updated}
 
 
@@ -1660,6 +1765,748 @@ async def get_available_backups(request: Request):
     require_admin(request)
     backups = list_backups()
     return {"status": "success", "backups": backups}
+
+
+# =========================================================================
+# ENDPOINTS DE REVISÃO BIBLIOGRÁFICA E DIAGNÓSTICO DE METADADOS (v1.5.0)
+# =========================================================================
+
+@app.get("/api/metadata/diagnostics")
+async def metadata_diagnostics_endpoint(request: Request):
+    """
+    Retorna métricas detalhadas por provedor (Open Library, Google Books, Crossref),
+    contagem de obras por status de identificação e lista de obras pendentes de revisão.
+    """
+    require_admin(request)
+    providers = get_providers_diagnostics()
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT COALESCE(identification_status, 'pending') as st, COUNT(*) as cnt
+            FROM books
+            WHERE is_missing = 0
+            GROUP BY st;
+            """
+        )
+        status_counts = {r["st"]: r["cnt"] for r in cursor.fetchall()}
+
+        cursor.execute(
+            """
+            SELECT id, title, author, subtitle, volume, edition, filename, rel_path,
+                   isbn10, isbn13, publisher, publish_year, language,
+                   identification_status, identification_score, metadata_source,
+                   last_error_reason, reviewed_at
+            FROM books
+            WHERE is_missing = 0
+              AND COALESCE(identification_status, 'pending') IN ('needs_review', 'ambiguous', 'not_found', 'rate_limited', 'technical_error', 'pending')
+            ORDER BY
+              CASE COALESCE(identification_status, 'pending')
+                WHEN 'ambiguous' THEN 1
+                WHEN 'needs_review' THEN 2
+                WHEN 'rate_limited' THEN 3
+                WHEN 'technical_error' THEN 4
+                WHEN 'not_found' THEN 5
+                ELSE 6
+              END,
+              identification_score DESC,
+              title COLLATE NOCASE ASC
+            LIMIT 100;
+            """
+        )
+        review_books = [dict(r) for r in cursor.fetchall()]
+
+        if review_books:
+            r_ids = [b["id"] for b in review_books]
+            placeholders = ",".join("?" for _ in r_ids)
+            cursor.execute(
+                f"""
+                SELECT id, book_id, source, external_id, title, author, publisher,
+                       publish_year, isbn10, isbn13, cover_url, score, confidence_level, raw_json
+                FROM metadata_candidates
+                WHERE book_id IN ({placeholders})
+                ORDER BY score DESC;
+                """,
+                r_ids,
+            )
+            cand_map: Dict[str, List[Dict[str, Any]]] = {}
+            for cr in cursor.fetchall():
+                cd = dict(cr)
+                try:
+                    raw = json.loads(cd.get("raw_json") or "{}")
+                    cd["score_reasons"] = raw.get("_score_reasons", [])
+                except Exception:
+                    cd["score_reasons"] = []
+                cand_map.setdefault(cd["book_id"], []).append(cd)
+            for b in review_books:
+                b["candidates"] = cand_map.get(b["id"], [])[:5]
+
+    return {
+        "providers": providers,
+        "status_counts": status_counts,
+        "queue": enricher.get_status(),
+        "review_books": review_books,
+    }
+
+
+@app.post("/api/books/{book_id}/metadata/review")
+async def mark_book_metadata_reviewed_endpoint(
+    book_id: str,
+    payload: MetadataReviewPayload,
+    request: Request,
+):
+    """Marca um livro como revisado manualmente pelo administrador/usuário."""
+    user = require_user(request)
+    try:
+        get_book(book_id, user_id=user["id"])
+    except (SecurityError, BookNotFoundError) as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    with get_db() as conn:
+        conn.execute(
+            """
+            UPDATE books
+            SET identification_status = ?,
+                reviewed_at = CURRENT_TIMESTAMP,
+                reviewed_by = ?,
+                last_error_reason = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?;
+            """,
+            (payload.status or "manual_override", user["id"], book_id),
+        )
+    return {"status": "success", "book": get_book(book_id, user_id=user["id"])}
+
+
+@app.post("/api/books/{book_id}/metadata/reject-candidates")
+async def reject_book_metadata_candidates_endpoint(book_id: str, request: Request):
+    """Rejeita os candidatos automáticos de um livro e marca como revisado (manual_override)."""
+    user = require_user(request)
+    try:
+        get_book(book_id, user_id=user["id"])
+    except (SecurityError, BookNotFoundError) as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    with get_db() as conn:
+        conn.execute("DELETE FROM metadata_candidates WHERE book_id = ?;", (book_id,))
+        conn.execute(
+            """
+            UPDATE books
+            SET identification_status = 'manual_override',
+                reviewed_at = CURRENT_TIMESTAMP,
+                reviewed_by = ?,
+                last_error_reason = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?;
+            """,
+            (user["id"], book_id),
+        )
+    return {"status": "success", "book": get_book(book_id, user_id=user["id"])}
+
+
+@app.post("/api/books/{book_id}/metadata/reprocess")
+async def reprocess_single_book_metadata_endpoint(book_id: str, request: Request):
+    """Reprocessa imediatamente a identificação bibliográfica de um livro específico."""
+    user = require_admin(request)
+    try:
+        get_book(book_id, user_id=user["id"])
+    except (SecurityError, BookNotFoundError) as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    enricher._enrich_single_book_sync(book_id)
+    return {"status": "success", "book": get_book(book_id, user_id=user["id"])}
+
+
+@app.post("/api/metadata/batch-update")
+async def batch_update_metadata_endpoint(payload: BatchMetadataUpdatePayload, request: Request):
+    """Edição em lote de categoria, editora, idioma ou status para múltiplos livros (Admin)."""
+    admin = require_admin(request)
+    if not payload.book_ids:
+        raise HTTPException(status_code=400, detail="Nenhum livro selecionado.")
+
+    updated_count = 0
+    for bid in payload.book_ids[:200]:
+        try:
+            updates: Dict[str, Any] = {}
+            if payload.publisher is not None and payload.publisher.strip():
+                updates["publisher"] = payload.publisher.strip()
+            if payload.language is not None and payload.language.strip():
+                updates["language"] = payload.language.strip()
+            if payload.identification_status is not None and payload.identification_status.strip():
+                updates["identification_status"] = payload.identification_status.strip()
+            if payload.category is not None and payload.category.strip():
+                updates["taxonomy"] = {
+                    "categories": [payload.category.strip()],
+                    "subcategories": [],
+                    "genre": None,
+                    "origin": None,
+                    "period": None,
+                }
+            if updates:
+                update_book_metadata(bid, updates, user_id=admin["id"])
+                updated_count += 1
+        except Exception:
+            pass
+
+    log_admin_action(admin["id"], "batch_update_metadata", f"{updated_count} livros", f"Campos: {payload.model_dump(exclude_none=True)}")
+    return {"status": "success", "updated_count": updated_count}
+
+
+# =========================================================================
+# ENDPOINTS DE AUTOMAÇÃO E FILA PERSISTENTE DE TAREFAS (Seção 4)
+# =========================================================================
+
+@app.get("/api/automation/schedules")
+async def list_automation_schedules_endpoint(request: Request):
+    """Lista todas as rotinas agendadas configuráveis (Admin)."""
+    require_admin(request)
+    return {"schedules": automation_service.list_schedules()}
+
+
+@app.put("/api/automation/schedules/{job_type}")
+async def update_automation_schedule_endpoint(
+    job_type: str,
+    payload: ScheduleUpdatePayload,
+    request: Request,
+):
+    """Atualiza o modo de agendamento, horário, dias da semana ou intervalo de uma rotina (Admin)."""
+    admin = require_admin(request)
+    try:
+        updated = automation_service.update_schedule(job_type, payload.model_dump(exclude_none=True))
+        log_admin_action(admin["id"], "update_schedule", job_type, json.dumps(payload.model_dump(exclude_none=True)))
+        return {"status": "success", "schedule": updated}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/api/automation/jobs")
+async def list_automation_jobs_endpoint(
+    request: Request,
+    limit: int = 50,
+    status: Optional[str] = None,
+):
+    """Lista o histórico persistente de execuções de tarefas em segundo plano (Admin)."""
+    require_admin(request)
+    return {"jobs": automation_service.list_jobs(limit=limit, status_filter=status)}
+
+
+@app.post("/api/automation/jobs/run")
+async def run_automation_job_endpoint(payload: JobRunPayload, request: Request):
+    """Dispara imediatamente uma tarefa da fila persistente (Admin)."""
+    admin = require_admin(request)
+    try:
+        job = automation_service.run_job(
+            job_type=payload.job_type,
+            trigger_source="manual",
+            run_async=payload.run_async,
+        )
+        log_admin_action(admin["id"], "run_job", payload.job_type, f"Job ID #{job.get('id')}")
+        return {"status": "success", "job": job}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/api/automation/jobs/{job_id}/cancel")
+async def cancel_automation_job_endpoint(job_id: int, request: Request):
+    """Cancela com segurança uma tarefa pendente ou em andamento (Admin)."""
+    admin = require_admin(request)
+    try:
+        job = automation_service.cancel_job(job_id)
+        log_admin_action(admin["id"], "cancel_job", f"job #{job_id}", "")
+        return {"status": "success", "job": job}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+# =========================================================================
+# ENDPOINTS DO PAINEL ADMINISTRATIVO DEDICADO (Seção 6)
+# =========================================================================
+
+@app.get("/api/admin/dashboard")
+async def admin_dashboard_endpoint(request: Request):
+    """Retorna todas as métricas operacionais consolidadas para o Dashboard Administrativo."""
+    require_admin(request)
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) FROM books WHERE is_missing = 0;")
+        total_books = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM books WHERE is_missing = 0 AND format = 'pdf';")
+        pdf_count = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM books WHERE is_missing = 0 AND format = 'epub';")
+        epub_count = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM books WHERE is_missing = 1;")
+        missing_count = cursor.fetchone()[0]
+
+        cursor.execute(
+            """
+            SELECT COALESCE(identification_status, 'pending') as st, COUNT(*) as cnt
+            FROM books WHERE is_missing = 0
+            GROUP BY st;
+            """
+        )
+        id_stats = {r["st"]: r["cnt"] for r in cursor.fetchall()}
+
+        cursor.execute(
+            """
+            SELECT COALESCE(cover_type, 'none') as ct, COUNT(*) as cnt
+            FROM books WHERE is_missing = 0
+            GROUP BY ct;
+            """
+        )
+        cover_stats = {r["ct"]: r["cnt"] for r in cursor.fetchall()}
+
+        cursor.execute("SELECT COUNT(*) FROM users WHERE COALESCE(is_active, 1) = 1;")
+        active_users = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM sessions WHERE expires_at > CURRENT_TIMESTAMP;")
+        active_sessions = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM shared_annotations WHERE visibility IN ('public', 'users');")
+        shared_notes_count = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM book_reviews WHERE rating IS NOT NULL;")
+        reviews_count = cursor.fetchone()[0]
+
+    db_size = config.DB_PATH.stat().st_size if config.DB_PATH.exists() else 0
+    covers_size = 0
+    if config.COVERS_DIR.exists():
+        for f in config.COVERS_DIR.glob("*"):
+            if f.is_file():
+                try:
+                    covers_size += f.stat().st_size
+                except OSError:
+                    pass
+
+    backups_size = 0
+    if config.BACKUPS_DIR.exists():
+        for f in config.BACKUPS_DIR.rglob("*"):
+            if f.is_file():
+                try:
+                    backups_size += f.stat().st_size
+                except OSError:
+                    pass
+
+    try:
+        disk_usage = shutil.disk_usage(str(config.DATA_DIR))
+        free_disk = disk_usage.free
+        total_disk = disk_usage.total
+    except Exception:
+        free_disk = 0
+        total_disk = 0
+
+    prov_list = get_providers_diagnostics()
+    return {
+        "version": config.APP_VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "library": {
+            "total_books": total_books,
+            "pdf_count": pdf_count,
+            "pdf_books": pdf_count,
+            "epub_count": epub_count,
+            "epub_books": epub_count,
+            "missing_count": missing_count,
+            "identification": id_stats,
+            "by_identification_status": id_stats,
+            "covers": cover_stats,
+        },
+        "covers": {
+            "custom": cover_stats.get("custom", 0),
+            "extracted": cover_stats.get("extracted", 0),
+            "editorial_fallback": cover_stats.get("none", 0),
+        },
+        "users": {
+            "total_users": active_users,
+            "active_users": active_users,
+            "active_sessions": active_sessions,
+            "shared_annotations": shared_notes_count,
+            "reviews_count": reviews_count,
+        },
+        "storage": {
+            "db_size_bytes": db_size,
+            "db_bytes": db_size,
+            "covers_size_bytes": covers_size,
+            "backups_size_bytes": backups_size,
+            "free_disk_bytes": free_disk,
+            "disk_free_bytes": free_disk,
+            "total_disk_bytes": total_disk,
+        },
+        "providers": {"providers": prov_list},
+        "recent_jobs": automation_service.list_jobs(limit=10),
+        "schedules": automation_service.list_schedules(),
+    }
+
+
+@app.get("/api/admin/library/diagnostics")
+async def admin_library_diagnostics_endpoint(request: Request):
+    """Retorna diagnósticos detalhados de arquivos ausentes, duplicatas, metadados incompletos e formatos não reconhecidos."""
+    require_admin(request)
+    return get_library_diagnostics()
+
+
+@app.post("/api/users/{user_id}/revoke-sessions")
+async def revoke_user_sessions_endpoint(user_id: int, request: Request):
+    """Encerra todas as sessões ativas de um usuário específico (Admin)."""
+    admin = require_admin(request)
+    count = revoke_user_sessions(user_id)
+    log_admin_action(admin["id"], "revoke_user_sessions", f"user_id={user_id}", f"{count} sessões encerradas")
+    return {"status": "success", "revoked_sessions": count}
+
+
+@app.get("/api/admin/audit-logs")
+async def admin_audit_logs_endpoint(request: Request, limit: int = 100):
+    """Retorna os logs de auditoria administrativa."""
+    require_admin(request)
+    return {"logs": list_admin_audit_logs(limit=limit)}
+
+
+@app.get("/api/admin/maintenance/status")
+async def admin_maintenance_status_endpoint(request: Request):
+    """Retorna status detalhado do banco SQLite, cache, disco e integridade para a aba Manutenção."""
+    require_admin(request)
+    integrity_ok = verify_sqlite_integrity(config.DB_PATH)
+    with get_db() as conn:
+        api_cache_count = conn.execute("SELECT COUNT(*) FROM metadata_api_cache;").fetchone()[0]
+        fts_count = conn.execute("SELECT COUNT(*) FROM books_fts;").fetchone()[0]
+
+    extracted_covers = list(config.COVERS_DIR.glob("*_extracted.*")) if config.COVERS_DIR.exists() else []
+    custom_covers = list(config.COVERS_DIR.glob("*_custom.*")) if config.COVERS_DIR.exists() else []
+
+    try:
+        disk = shutil.disk_usage(str(config.DATA_DIR))
+        free_bytes = disk.free
+        total_bytes = disk.total
+    except Exception:
+        free_bytes = 0
+        total_bytes = 0
+
+    return {
+        "version": config.APP_VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "sqlite_integrity": "ok" if integrity_ok else "error",
+        "db_integrity": "ok" if integrity_ok else "error",
+        "db_path": str(config.DB_PATH),
+        "db_size_bytes": config.DB_PATH.stat().st_size if config.DB_PATH.exists() else 0,
+        "api_cache_entries": api_cache_count,
+        "external_cache_entries": api_cache_count,
+        "fts_indexed_books": fts_count,
+        "extracted_covers_count": len(extracted_covers),
+        "custom_covers_count": len(custom_covers),
+        "covers_files_count": len(extracted_covers) + len(custom_covers),
+        "free_disk_bytes": free_bytes,
+        "disk_free_bytes": free_bytes,
+        "total_disk_bytes": total_bytes,
+        "backups": list_backups(),
+        "providers": get_providers_diagnostics(),
+    }
+
+
+@app.post("/api/admin/maintenance/clear-cache")
+async def admin_clear_cache_endpoint(payload: ClearCachePayload, request: Request):
+    """Limpa o cache de consultas externas e/ou o cache de capas extraídas (preservando capas customizadas)."""
+    admin = require_admin(request)
+    cleared_api = 0
+    cleared_covers = 0
+
+    with get_db() as conn:
+        if payload.clear_api_cache:
+            cur = conn.execute("DELETE FROM metadata_api_cache;")
+            cleared_api = cur.rowcount
+        if payload.clear_extracted_covers:
+            if config.COVERS_DIR.exists():
+                for f in config.COVERS_DIR.glob("*_extracted.*"):
+                    try:
+                        f.unlink()
+                        cleared_covers += 1
+                    except OSError:
+                        pass
+            conn.execute(
+                """
+                UPDATE books
+                SET cover_type = 'none', cover_path = NULL, cover_source_hash = NULL
+                WHERE cover_type = 'extracted';
+                """
+            )
+
+    log_admin_action(
+        admin["id"],
+        "clear_cache",
+        "system_cache",
+        f"api_cache={cleared_api}, extracted_covers={cleared_covers}",
+    )
+    return {
+        "status": "success",
+        "cleared_api_cache": cleared_api,
+        "cleared_extracted_covers": cleared_covers,
+    }
+
+
+# =========================================================================
+# ENDPOINTS MULTIUSUÁRIO, PRIVACIDADE E "NOSSA BIBLIOTECA" (Seção 5)
+# =========================================================================
+
+@app.get("/api/profile/me")
+async def get_my_profile_endpoint(request: Request):
+    """Retorna o perfil completo, estatísticas e configurações de privacidade do usuário logado."""
+    user = require_user(request)
+    return social_service.get_user_profile(user["id"], viewer_user_id=user["id"])
+
+
+@app.put("/api/profile/me")
+async def update_my_profile_endpoint(payload: ProfileUpdatePayload, request: Request):
+    """Atualiza nome de exibição, cor de avatar, bio e preferências de leitura do usuário logado."""
+    user = require_user(request)
+    updated = social_service.update_user_profile(user["id"], payload.model_dump(exclude_none=True))
+    return {"status": "success", "profile": updated}
+
+
+@app.get("/api/profile/privacy")
+async def get_my_privacy_endpoint(request: Request):
+    """Retorna as configurações de privacidade do usuário logado (privado por padrão)."""
+    user = require_user(request)
+    return {"privacy": social_service.get_privacy_settings(user["id"])}
+
+
+@app.put("/api/profile/privacy")
+async def update_my_privacy_endpoint(payload: PrivacyUpdatePayload, request: Request):
+    """Atualiza as permissões de compartilhamento do usuário logado."""
+    user = require_user(request)
+    updated = social_service.update_privacy_settings(user["id"], payload.model_dump(exclude_none=True))
+    return {"status": "success", "privacy": updated}
+
+
+@app.get("/api/users/{target_user_id}/profile")
+async def get_other_user_profile_endpoint(target_user_id: int, request: Request):
+    """Retorna o perfil de outro usuário filtrando estritamente pelos controles de privacidade dele."""
+    user = require_user(request)
+    try:
+        return social_service.get_user_profile(target_user_id, viewer_user_id=user["id"])
+    except SocialNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@app.get("/api/books/{book_id}/reviews")
+async def get_book_reviews_endpoint(book_id: str, request: Request):
+    """Retorna avaliações (1 a 5 estrelas) e resenhas compartilhadas de um livro."""
+    user = require_user(request)
+    return social_service.get_book_reviews_summary(book_id, viewer_user_id=user["id"])
+
+
+@app.post("/api/books/{book_id}/reviews")
+async def upsert_book_review_endpoint(book_id: str, payload: BookReviewPayload, request: Request):
+    """Salva avaliação de 1 a 5 estrelas, resenha curta, favorito ou 'Quero ler' para um livro."""
+    user = require_user(request)
+    try:
+        res = social_service.upsert_book_review(
+            user_id=user["id"],
+            book_id=book_id,
+            rating=payload.rating,
+            review_text=payload.review_text,
+            is_favorite=payload.is_favorite,
+            want_to_read=payload.want_to_read,
+        )
+        return {"status": "success", **res}
+    except SocialNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/api/books/{book_id}/shared-annotations")
+async def list_book_shared_annotations_endpoint(book_id: str, request: Request):
+    """Lista todas as anotações e citações compartilhadas de um livro."""
+    user = require_user(request)
+    items = social_service.list_shared_annotations(viewer_user_id=user["id"], book_id=book_id)
+    return {"annotations": items, "count": len(items)}
+
+
+@app.get("/api/shared-annotations")
+async def list_all_shared_annotations_endpoint(
+    request: Request,
+    book_id: Optional[str] = None,
+    user_id: Optional[int] = None,
+    limit: int = 50,
+):
+    """Lista anotações e citações compartilhadas na biblioteca."""
+    user = require_user(request)
+    items = social_service.list_shared_annotations(
+        viewer_user_id=user["id"],
+        book_id=book_id,
+        author_user_id=user_id,
+        limit=limit,
+    )
+    return {"annotations": items, "count": len(items)}
+
+
+@app.post("/api/shared-annotations", status_code=status.HTTP_201_CREATED)
+async def create_shared_annotation_endpoint(
+    payload: SharedAnnotationCreatePayload,
+    request: Request,
+):
+    """Compartilha um trecho destacado ou anotação na biblioteca (com proteção anti-IDOR)."""
+    user = require_user(request)
+    try:
+        created = social_service.share_annotation(
+            user_id=user["id"],
+            book_id=payload.book_id,
+            quote_text=payload.quote_text,
+            comment_text=payload.comment_text,
+            page_number=payload.page_number,
+            chapter_name=payload.chapter_name,
+            progress_locator=payload.progress_locator,
+            color=payload.color,
+            visibility=payload.visibility,
+            note_id=payload.note_id,
+        )
+        return {"status": "success", "annotation": created}
+    except SocialPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except SocialNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.put("/api/shared-annotations/{shared_id}")
+async def update_shared_annotation_endpoint(
+    shared_id: int,
+    payload: SharedAnnotationUpdatePayload,
+    request: Request,
+):
+    """Atualiza o comentário ou visibilidade de uma anotação compartilhada pelo próprio autor."""
+    user = require_user(request)
+    try:
+        updated = social_service.update_shared_annotation(
+            shared_id=shared_id,
+            user_id=user["id"],
+            updates=payload.model_dump(exclude_none=True),
+        )
+        return {"status": "success", "annotation": updated}
+    except SocialPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except SocialNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@app.delete("/api/shared-annotations/{shared_id}")
+async def delete_shared_annotation_endpoint(shared_id: int, request: Request):
+    """Remove o compartilhamento de uma anotação (autor ou moderação admin em item público)."""
+    user = require_user(request)
+    try:
+        social_service.delete_shared_annotation(
+            shared_id=shared_id,
+            user_id=user["id"],
+            is_admin=(user.get("role") == "admin"),
+        )
+        return {"status": "success"}
+    except SocialPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except SocialNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@app.post("/api/shared-annotations/{shared_id}/comments", status_code=status.HTTP_201_CREATED)
+async def add_comment_to_shared_annotation_endpoint(
+    shared_id: int,
+    payload: AnnotationCommentPayload,
+    request: Request,
+):
+    """Adiciona um comentário ou resposta a uma anotação compartilhada."""
+    user = require_user(request)
+    try:
+        comment = social_service.add_annotation_comment(
+            shared_annotation_id=shared_id,
+            user_id=user["id"],
+            content=payload.content,
+            parent_id=payload.parent_id,
+        )
+        return {"status": "success", "comment": comment}
+    except SocialPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except SocialNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.put("/api/annotation-comments/{comment_id}")
+async def edit_annotation_comment_endpoint(
+    comment_id: int,
+    payload: AnnotationCommentPayload,
+    request: Request,
+):
+    """Edita o próprio comentário em uma anotação compartilhada."""
+    user = require_user(request)
+    try:
+        updated = social_service.update_annotation_comment(
+            comment_id=comment_id,
+            user_id=user["id"],
+            content=payload.content,
+        )
+        return {"status": "success", "comment": updated}
+    except SocialPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except SocialNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.delete("/api/annotation-comments/{comment_id}")
+async def delete_annotation_comment_endpoint(comment_id: int, request: Request):
+    """Exclui um comentário (próprio autor ou moderação admin)."""
+    user = require_user(request)
+    try:
+        social_service.delete_annotation_comment(
+            comment_id=comment_id,
+            user_id=user["id"],
+            is_admin=(user.get("role") == "admin"),
+        )
+        return {"status": "success"}
+    except SocialPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except SocialNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@app.get("/api/recommendations")
+async def list_recommendations_endpoint(request: Request):
+    """Lista recomendações de leitura recebidas e enviadas pelo usuário."""
+    user = require_user(request)
+    return social_service.list_user_recommendations(user["id"])
+
+
+@app.post("/api/recommendations", status_code=status.HTTP_201_CREATED)
+async def create_recommendation_endpoint(
+    payload: RecommendationCreatePayload,
+    request: Request,
+):
+    """Envia uma recomendação de livro para outro usuário."""
+    user = require_user(request)
+    try:
+        rec = social_service.create_recommendation(
+            from_user_id=user["id"],
+            to_user_id=payload.to_user_id,
+            book_id=payload.book_id,
+            message=payload.message,
+        )
+        return {"status": "success", "recommendation": rec}
+    except SocialNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/api/social/feed")
+async def get_nossa_biblioteca_feed_endpoint(request: Request):
+    """Retorna o mural consolidado 'Nossa Biblioteca' respeitando as permissões de privacidade."""
+    user = require_user(request)
+    return social_service.get_nossa_biblioteca_feed(viewer_user_id=user["id"])
 
 
 if __name__ == "__main__":

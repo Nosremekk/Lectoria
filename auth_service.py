@@ -133,8 +133,8 @@ def create_user(
         raise ValueError("O nome de usuário deve ter pelo menos 3 caracteres alfanuméricos.")
     if not clean_user.replace("_", "").replace("-", "").isalnum():
         raise ValueError("O nome de usuário deve conter apenas letras, números, '_' ou '-'.")
-    if role not in ("admin", "reader"):
-        raise ValueError("Papel de usuário inválido. Escolha 'admin' ou 'reader'.")
+    if role not in ("admin", "reader", "user"):
+        raise ValueError("Papel de usuário inválido. Escolha 'admin', 'user' ou 'reader'.")
 
     pw_hash = hash_password(password)
     disp = display_name.strip() if display_name else clean_user.capitalize()
@@ -153,6 +153,11 @@ def create_user(
             (clean_user, disp, pw_hash, role),
         )
         user_id = cursor.lastrowid
+        try:
+            cursor.execute("INSERT OR IGNORE INTO user_profiles (user_id) VALUES (?)", (user_id,))
+            cursor.execute("INSERT OR IGNORE INTO user_privacy_settings (user_id) VALUES (?)", (user_id,))
+        except Exception:
+            pass
         return {
             "id": user_id,
             "username": clean_user,
@@ -257,7 +262,7 @@ def update_user(
             params.append(clean_disp)
 
         if role is not None:
-            if role not in ("admin", "reader"):
+            if role not in ("admin", "reader", "user"):
                 raise ValueError("Papel inválido.")
             updates.append("role = ?")
             params.append(role)
@@ -387,3 +392,70 @@ def cleanup_expired_sessions() -> int:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM sessions WHERE expires_at <= ?", (now_iso,))
         return cursor.rowcount
+
+
+def revoke_user_sessions(user_id: int) -> int:
+    """Revoga todas as sessões ativas de um usuário específico."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
+        if not cursor.fetchone():
+            raise UserNotFoundError(f"Usuário #{user_id} não encontrado.")
+        cursor.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        return cursor.rowcount
+
+
+def log_admin_action(
+    admin_user_id: Optional[int],
+    action: str,
+    target_type: Optional[str] = None,
+    target_id: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Registra uma ação administrativa no log de auditoria."""
+    import json
+    try:
+        with get_db() as conn:
+            conn.execute(
+                """
+                INSERT INTO admin_audit_log (admin_user_id, action, target_type, target_id, details_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    admin_user_id,
+                    action,
+                    target_type,
+                    str(target_id) if target_id is not None else None,
+                    json.dumps(details or {}, ensure_ascii=False),
+                ),
+            )
+    except Exception:
+        pass
+
+
+def list_admin_audit_logs(limit: int = 50) -> List[Dict[str, Any]]:
+    """Lista os registros mais recentes de auditoria administrativa."""
+    import json
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT a.id, a.admin_user_id, u.username as admin_username, u.display_name as admin_display_name,
+                   a.action, a.target_type, a.target_id, a.details_json, a.created_at
+            FROM admin_audit_log a
+            LEFT JOIN users u ON a.admin_user_id = u.id
+            ORDER BY a.id DESC
+            LIMIT ?
+            """,
+            (max(1, min(limit, 500)),),
+        )
+        rows = []
+        for r in cursor.fetchall():
+            d = dict(r)
+            try:
+                d["details"] = json.loads(d.get("details_json") or "{}")
+            except Exception:
+                d["details"] = {}
+            rows.append(d)
+        return rows
+

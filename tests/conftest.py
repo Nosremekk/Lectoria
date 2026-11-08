@@ -47,6 +47,7 @@ def test_env():
     test_data.mkdir(parents=True, exist_ok=True)
 
     # Configura variáveis globais no módulo config
+    os.environ.pop("LECTORIA_APP_NAME", None)
     config.BASE_DIR = tmp_path
     config.LIBRARY_DIR = test_lib
     config.DATA_DIR = test_data

@@ -1,6 +1,6 @@
-# Lectoria — Servidor Pessoal de Livros Digitais (v1.4.0)
+# Lectoria — Servidor Pessoal de Livros Digitais (v1.5.0 — Biblioteca Viva)
 
-O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para organização, identificação e leitura de documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
+O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para organização, identificação inteligente, automação e leitura colaborativa de documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
 
 Foi concebido para operar perfeitamente mesmo em hardware modesto — como computadores antigos e mini-PCs domésticos com processadores de baixo consumo (ex: Intel Celeron), convivendo de forma estável e silenciosa com serviços de mídia como o Jellyfin.
 
@@ -8,7 +8,21 @@ Foi concebido para operar perfeitamente mesmo em hardware modesto — como compu
 
 ## 1. Principais Recursos
 
-- **Descoberta Inteligente e Prateleiras Horizontais (Estilo Streaming / Jellyfin — v1.4.0)**:
+- **Biblioteca Viva: Camada Multiusuário e Social "Nossa Biblioteca" (v1.5.0)**:
+  - Espaço comunitário opcional (**Nossa Biblioteca**) com feed de atividades de leitura, avaliações (1 a 5 estrelas), resenhas, listas de *Favoritos* e *Quero Ler*, recomendações diretas entre leitores e mural de citações/anotações compartilhadas com comentários.
+  - **Privacidade Estrita por Padrão (`user_privacy_settings`)**: Todos os recursos de compartilhamento nascem desativados (`0`). Anotações, destaques, desenhos e progresso permanecem 100% privados por usuário, e nem mesmo administradores têm acesso irrestrito às anotações privadas de outros leitores.
+- **Pipeline Bibliográfico Progressivo de 5 Estágios e Proveniência (v1.5.0)**:
+  - Extração local profunda (páginas 1 a 10 + últimas 2 páginas de ficha catalográfica/colofão de PDFs, EPUB OPF e normalização reversível de nomes de arquivos preservando `raw_filename` e `raw_parent_dir`).
+  - Integração multi-provedor com **Open Library**, **Google Books** e **Crossref API**, com telemetria de latência, rate limit e falhas por provedor (`metadata_provider_stats`).
+  - Pontuação explicável (`score_candidate_detailed`) com bônus de coerência multi-fonte e rastreabilidade por campo na tabela `metadata_provenance`.
+- **Validação Visual Pura de Capas Anti-CMYK e Reconciliação de Arquivos Movidos (v1.5.0)**:
+  - Rejeição automática em Python puro (`struct` + `zlib`) de capas PDF extraídas com canais CMYK/YCCK invertidos ou máscaras `/SMask` pretas, com fallback automático para capa externa ou Capa Editorial SVG com Categoria, Título e Autor.
+  - Reconciliação automática de arquivos movidos ou renomeados via `file_hash` + `filesize` sem recriar o `book_id`, preservando todo o progresso, anotações e histórico.
+- **Automação da Biblioteca, Fila Persistente e Painel Administrativo Dedicado (v1.5.0)**:
+  - Agendador persistente (`scheduled_jobs`) com suporte a intervalos, execução diária/semanal, horário preferencial e detecção automática de mudanças nas pastas para 6 rotinas (`scan_library`, `enrich_metadata`, `update_missing_covers`, `rebuild_search_index`, `db_maintenance`, `auto_backup`).
+  - Fila de tarefas (`background_jobs`) com recuperação automática de jobs interrompidos no boot.
+  - **Painel Administrativo Dedicado** em tela cheia com 6 seções: *Dashboard*, *Gestão da Biblioteca*, *Gestão de Usuários*, *Automação & Fila*, *Revisão Bibliográfica* e *Manutenção & Auditoria*.
+- **Descoberta Inteligente e Prateleiras Horizontais (Estilo Streaming / Jellyfin — v1.4.0+)**:
   - Experiência visual rica com carrosséis horizontais dinâmicos: *Continuar Lendo*, *Adicionados Recentemente*, *Categorias do Acervo*, *Autores em Destaque*, *Para Começar a Ler*, *Leituras Concluídas* e *Coleções*.
   - Garantia estrita de que nenhuma prateleira vazia é renderizada.
   - Alternância instantânea de visão entre a aba de **Descoberta** e a visão clássica de **Biblioteca & Explorar** (Grade e Lista).
