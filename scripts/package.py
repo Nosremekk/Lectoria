@@ -30,9 +30,9 @@ DEFAULT_OUTPUT_BASE_DIR = PROJECT_ROOT / "dist"
 sys.path.insert(0, str(PROJECT_ROOT))
 try:
     import config
-    PACKAGE_VERSION = getattr(config, "APP_VERSION", "1.5.0")
+    PACKAGE_VERSION = getattr(config, "APP_VERSION", "1.5.1")
 except Exception:
-    PACKAGE_VERSION = "1.5.0"
+    PACKAGE_VERSION = "1.5.1"
 
 TARGET_NAME = f"Lectoria-{PACKAGE_VERSION}-linux-x86_64"
 MIGRATION_NAME = f"Lectoria-{PACKAGE_VERSION}-migration-bundle"

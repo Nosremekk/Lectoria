@@ -1,7 +1,32 @@
 /**
- * Lectoria — Aplicação da Biblioteca (Iteração 2)
+ * Lectoria — Aplicação da Biblioteca (v1.5.1)
  * JavaScript puro (Vanilla ES6), rápido e sem dependências pesadas.
  */
+window.LECTORIA_FRONTEND_VERSION = "1.5.1";
+
+function formatApiError(err, fallbackMsg = "Ocorreu um erro ao processar a solicitação.") {
+  if (!err) return fallbackMsg;
+  if (typeof err === "string") return err;
+  const detail = err.detail !== undefined ? err.detail : err.message;
+  if (!detail) return fallbackMsg;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map(item => {
+        if (!item) return "";
+        if (typeof item === "string") return item;
+        const loc = Array.isArray(item.loc) ? item.loc[item.loc.length - 1] : "";
+        const msg = item.msg || item.message || JSON.stringify(item);
+        return loc ? `Campo '${loc}': ${msg}` : msg;
+      })
+      .filter(Boolean);
+    return msgs.length > 0 ? msgs.join("; ") : fallbackMsg;
+  }
+  if (typeof detail === "object") {
+    return detail.message || detail.msg || JSON.stringify(detail);
+  }
+  return String(detail);
+}
 
 // Utilitário de segurança CSRF com Double Submit Cookie
 function getCsrfToken() {
@@ -2260,7 +2285,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (revRes.ok) {
         const revData = await revRes.json();
-        currentBookUserReview = revData.user_review || null;
+        currentBookUserReview = revData.user_review || revData.my_review || null;
         const avg = revData.average_rating;
         const count = revData.ratings_count || 0;
         if (detailsAvgRatingBadge) {
@@ -2283,7 +2308,9 @@ document.addEventListener("DOMContentLoaded", () => {
           detailsReviewText.value = (currentBookUserReview && currentBookUserReview.review_text) || "";
         }
         if (detailsReviewPublic) {
-          detailsReviewPublic.checked = Boolean(currentBookUserReview && currentBookUserReview.is_public);
+          detailsReviewPublic.checked = currentBookUserReview && currentBookUserReview.is_public !== undefined
+            ? Boolean(currentBookUserReview.is_public)
+            : Boolean(revData.user_share_reviews_default);
         }
 
         if (detailsSocialReviewsList) {
@@ -2314,47 +2341,59 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  async function saveBookReviewQuick(overrides = {}) {
+  async function saveBookReviewQuick(overrides = {}, includePublicPref = false) {
     if (!activeBookForDetails) return;
     const payload = {
       rating: detailsRatingSelect && detailsRatingSelect.value ? parseInt(detailsRatingSelect.value, 10) : (currentBookUserReview ? currentBookUserReview.rating : null),
       review_text: detailsReviewText ? detailsReviewText.value.trim() : (currentBookUserReview ? currentBookUserReview.review_text : ""),
       is_favorite: currentBookUserReview ? Boolean(currentBookUserReview.is_favorite) : false,
       want_to_read: currentBookUserReview ? Boolean(currentBookUserReview.want_to_read) : false,
-      is_public: detailsReviewPublic ? detailsReviewPublic.checked : undefined,
+      ...(includePublicPref && detailsReviewPublic ? { is_public: detailsReviewPublic.checked } : {}),
       ...overrides,
     };
-    const res = await fetch(`/api/books/${encodeURIComponent(activeBookForDetails.id)}/reviews`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) {
-      await loadBookDetailsSocial(activeBookForDetails.id);
-      if (currentMainTab === "library") loadBooks();
-      else if (currentMainTab === "discovery") loadShelves();
-    } else if (res.status === 401) {
-      alert("Entre na sua conta para avaliar ou favoritar livros.");
+    try {
+      const res = await fetch(`/api/books/${encodeURIComponent(activeBookForDetails.id)}/reviews`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const savedData = await res.json();
+        if (savedData.user_review || savedData.my_review) {
+          currentBookUserReview = savedData.user_review || savedData.my_review;
+        }
+        await loadBookDetailsSocial(activeBookForDetails.id);
+        if (currentMainTab === "library") loadBooks();
+        else if (currentMainTab === "discovery") loadShelves();
+        else if (currentMainTab === "social") loadSocialFeed();
+      } else if (res.status === 401) {
+        alert("Entre na sua conta para avaliar ou favoritar livros.");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(formatApiError(err, "Não foi possível salvar sua avaliação."));
+      }
+    } catch (e) {
+      alert("Erro de comunicação ao salvar avaliação.");
     }
   }
 
   if (btnDetailsFavorite) {
     btnDetailsFavorite.addEventListener("click", () => {
       const nextFav = !(currentBookUserReview && currentBookUserReview.is_favorite);
-      saveBookReviewQuick({ is_favorite: nextFav });
+      saveBookReviewQuick({ is_favorite: nextFav }, false);
     });
   }
 
   if (btnDetailsWantToRead) {
     btnDetailsWantToRead.addEventListener("click", () => {
       const nextWtr = !(currentBookUserReview && currentBookUserReview.want_to_read);
-      saveBookReviewQuick({ want_to_read: nextWtr });
+      saveBookReviewQuick({ want_to_read: nextWtr }, false);
     });
   }
 
   if (btnDetailsSaveReview) {
     btnDetailsSaveReview.addEventListener("click", () => {
-      saveBookReviewQuick({});
+      saveBookReviewQuick({}, true);
     });
   }
 
@@ -2502,21 +2541,28 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       if (socialRecommendationsEl) {
-        const recs = feed.recommendations || [];
+        const rawRecs = feed.recommendations;
+        const recs = Array.isArray(rawRecs)
+          ? rawRecs
+          : (rawRecs && Array.isArray(rawRecs.received) ? rawRecs.received : []);
         if (recs.length === 0) {
           socialRecommendationsEl.innerHTML = `<p class="text-muted-empty">Nenhuma recomendação no mural.</p>`;
         } else {
-          socialRecommendationsEl.innerHTML = recs.map(rc => `
-            <div class="social-mini-item" data-book-id="${rc.book_id}" style="cursor: pointer;">
+          socialRecommendationsEl.innerHTML = recs.map(rc => {
+            const senderName = rc.sender_display_name || rc.from_display_name || rc.sender_username || rc.from_username || "Leitor";
+            const recipientName = rc.recipient_display_name || rc.to_display_name || rc.recipient_username || rc.to_username || "";
+            return `
+            <div class="social-mini-item" data-book-id="${escapeHtml(String(rc.book_id))}" style="cursor: pointer;">
               <div>
                 <strong style="font-size: 0.84rem;">${escapeHtml(rc.book_title)}</strong>
                 <div style="font-size: 0.76rem; color: var(--text-muted);">
-                  Indicado por <strong>${escapeHtml(rc.sender_display_name || rc.sender_username)}</strong>
+                  Indicado por <strong>${escapeHtml(senderName)}</strong>${recipientName && recipientName !== senderName ? ` para <strong>${escapeHtml(recipientName)}</strong>` : ""}
                 </div>
                 ${rc.message ? `<div style="font-size: 0.8rem; margin-top: 0.2rem; color: var(--text-main);">&ldquo;${escapeHtml(rc.message)}&rdquo;</div>` : ""}
               </div>
             </div>
-          `).join("");
+          `;
+          }).join("");
           socialRecommendationsEl.querySelectorAll("[data-book-id]").forEach(el => {
             el.addEventListener("click", () => openBookDetails(el.getAttribute("data-book-id")));
           });
@@ -2585,15 +2631,15 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!modalUserProfile) return;
     if (profileSaveFeedback) profileSaveFeedback.style.display = "none";
     try {
-      const res = await fetch("/api/profile/me");
+      const res = await fetch("/api/profile/me", { cache: "no-store" });
       if (res.status === 401) {
         modalAuth.classList.add("active");
         return;
       }
       if (res.ok) {
         const data = await res.json();
-        const prof = data.profile || {};
-        const priv = prof.privacy || {};
+        const prof = data.profile || data || {};
+        const priv = prof.privacy || data.privacy || {};
         if (profileDisplayName) profileDisplayName.value = prof.display_name || "";
         if (profileAvatarColor) profileAvatarColor.value = prof.avatar_color || "#6366f1";
         if (profileAvatarPreview) {
@@ -2622,7 +2668,7 @@ document.addEventListener("DOMContentLoaded", () => {
     btnSaveProfileModal.addEventListener("click", async () => {
       try {
         btnSaveProfileModal.disabled = true;
-        await fetch("/api/profile/me", {
+        const profRes = await fetch("/api/profile/me", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -2631,7 +2677,7 @@ document.addEventListener("DOMContentLoaded", () => {
             bio: profileBio ? profileBio.value.trim() : "",
           }),
         });
-        await fetch("/api/profile/privacy", {
+        const privRes = await fetch("/api/profile/privacy", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -2643,7 +2689,25 @@ document.addEventListener("DOMContentLoaded", () => {
           }),
         });
         btnSaveProfileModal.disabled = false;
+        if (!profRes.ok || !privRes.ok) {
+          const errObj = !profRes.ok ? await profRes.json().catch(() => ({})) : await privRes.json().catch(() => ({}));
+          if (profileSaveFeedback) {
+            profileSaveFeedback.style.color = "var(--danger)";
+            profileSaveFeedback.textContent = formatApiError(errObj, "Erro ao salvar configurações de perfil e privacidade.");
+            profileSaveFeedback.style.display = "block";
+          }
+          return;
+        }
+        const privData = await privRes.json().catch(() => ({}));
+        const savedPriv = privData.privacy || privData || {};
+        if (privShareCurrent && savedPriv.share_current_reading !== undefined) privShareCurrent.checked = Boolean(savedPriv.share_current_reading);
+        if (privShareHistory && savedPriv.share_reading_history !== undefined) privShareHistory.checked = Boolean(savedPriv.share_reading_history);
+        if (privShareReviews && savedPriv.share_reviews !== undefined) privShareReviews.checked = Boolean(savedPriv.share_reviews);
+        if (privShareLists && savedPriv.share_lists !== undefined) privShareLists.checked = Boolean(savedPriv.share_lists);
+        if (privShareAnnotations && savedPriv.share_annotations_default !== undefined) privShareAnnotations.checked = Boolean(savedPriv.share_annotations_default);
+
         if (profileSaveFeedback) {
+          profileSaveFeedback.style.color = "var(--success)";
           profileSaveFeedback.textContent = "Perfil e preferências de privacidade salvos com sucesso!";
           profileSaveFeedback.style.display = "block";
         }
@@ -2675,7 +2739,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const data = await res.json();
     const books = data.books || [];
     selectEl.innerHTML = books.map(b => `
-      <option value="${b.id}" ${String(b.id) === String(preselectId) ? "selected" : ""}>
+      <option value="${escapeHtml(String(b.id))}" ${String(b.id) === String(preselectId) ? "selected" : ""}>
         ${escapeHtml(b.title)} — ${escapeHtml(b.author || "Autor não informado")}
       </option>
     `).join("");
@@ -2697,7 +2761,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (btnSubmitShareAnn) {
     btnSubmitShareAnn.addEventListener("click", async () => {
-      const bookId = shareAnnBookSelect ? parseInt(shareAnnBookSelect.value, 10) : 0;
+      const bookId = shareAnnBookSelect ? String(shareAnnBookSelect.value || "").trim() : "";
       const quote = shareAnnQuote ? shareAnnQuote.value.trim() : "";
       const content = shareAnnContent ? shareAnnContent.value.trim() : "";
       const pageNum = shareAnnPage && shareAnnPage.value ? parseInt(shareAnnPage.value, 10) : null;
@@ -2718,6 +2782,7 @@ document.addEventListener("DOMContentLoaded", () => {
           book_id: bookId,
           page_number: pageNum,
           quote_text: quote,
+          comment_text: content,
           content: content,
           visibility: vis,
         }),
@@ -2725,11 +2790,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (res.ok) {
         modalShareAnnotation.classList.remove("active");
         if (currentMainTab === "social") loadSocialFeed();
-        if (activeBookForDetails && activeBookForDetails.id === bookId) loadBookDetailsSocial(bookId);
+        if (activeBookForDetails && String(activeBookForDetails.id) === bookId) loadBookDetailsSocial(bookId);
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         if (shareAnnError) {
-          shareAnnError.textContent = err.detail || "Falha ao compartilhar.";
+          shareAnnError.textContent = formatApiError(err, "Falha ao compartilhar citação.");
           shareAnnError.style.display = "block";
         }
       }
@@ -2743,13 +2808,33 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnCancelRecModal = document.getElementById("btn-cancel-rec-modal");
   const btnSubmitRecModal = document.getElementById("btn-submit-rec-modal");
   const recBookSelect = document.getElementById("rec-book-select");
+  const recRecipientSelect = document.getElementById("rec-recipient-select");
   const recMessage = document.getElementById("rec-message");
   const recError = document.getElementById("rec-error");
+
+  async function populateRecipientDropdown() {
+    if (!recRecipientSelect) return;
+    try {
+      const res = await fetch("/api/social/users");
+      if (!res.ok) return;
+      const data = await res.json();
+      const users = data.users || [];
+      const myId = data.current_user_id || (currentUser && currentUser.id);
+      const otherUsers = users.filter(u => u.id !== myId);
+      recRecipientSelect.innerHTML = `<option value="">Toda a Comunidade (Mural Geral)</option>` +
+        otherUsers.map(u => `<option value="${u.id}">${escapeHtml(u.display_name || u.username)} (@${escapeHtml(u.username)})</option>`).join("");
+    } catch (e) {
+      console.warn("Não foi possível carregar lista de destinatários:", e);
+    }
+  }
 
   async function openRecommendModal(preselectBookId = null) {
     if (!modalRecommendBook) return;
     if (recError) recError.style.display = "none";
-    await populateBookSelectDropdown(recBookSelect, preselectBookId);
+    await Promise.all([
+      populateBookSelectDropdown(recBookSelect, preselectBookId),
+      populateRecipientDropdown(),
+    ]);
     if (recMessage) recMessage.value = "";
     modalRecommendBook.classList.add("active");
   }
@@ -2760,21 +2845,32 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (btnSubmitRecModal) {
     btnSubmitRecModal.addEventListener("click", async () => {
-      const bookId = recBookSelect ? parseInt(recBookSelect.value, 10) : 0;
+      const bookId = recBookSelect ? String(recBookSelect.value || "").trim() : "";
+      const toUserId = recRecipientSelect && recRecipientSelect.value ? parseInt(recRecipientSelect.value, 10) : null;
       const msg = recMessage ? recMessage.value.trim() : "";
-      if (!bookId) return;
+      if (!bookId) {
+        if (recError) {
+          recError.textContent = "Selecione um livro para recomendar.";
+          recError.style.display = "block";
+        }
+        return;
+      }
       const res = await fetch("/api/recommendations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ book_id: bookId, message: msg }),
+        body: JSON.stringify({
+          book_id: bookId,
+          to_user_id: toUserId,
+          message: msg,
+        }),
       });
       if (res.ok) {
         modalRecommendBook.classList.remove("active");
         if (currentMainTab === "social") loadSocialFeed();
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         if (recError) {
-          recError.textContent = err.detail || "Falha ao enviar recomendação.";
+          recError.textContent = formatApiError(err, "Falha ao enviar recomendação.");
           recError.style.display = "block";
         }
       }
@@ -2946,7 +3042,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (btnAdminBatchApply) {
     btnAdminBatchApply.addEventListener("click", async () => {
       const idsRaw = (document.getElementById("batch-book-ids")?.value || "").split(",");
-      const bookIds = idsRaw.map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n > 0);
+      const bookIds = idsRaw.map(s => s.trim()).filter(Boolean);
       const cat = document.getElementById("batch-category")?.value.trim() || undefined;
       const lang = document.getElementById("batch-language")?.value.trim() || undefined;
       const pub = document.getElementById("batch-publisher")?.value.trim() || undefined;

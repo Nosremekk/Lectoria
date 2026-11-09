@@ -1,4 +1,4 @@
-# Lectoria — Servidor Pessoal de Livros Digitais (v1.5.0 — Biblioteca Viva)
+# Lectoria — Servidor Pessoal de Livros Digitais (v1.5.1 — Biblioteca Viva)
 
 O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para organização, identificação inteligente, automação e leitura colaborativa de documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
 

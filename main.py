@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import secrets
 import shutil
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
@@ -368,10 +368,11 @@ class MetadataReviewPayload(BaseModel):
 
 
 class BatchMetadataUpdatePayload(BaseModel):
-    book_ids: List[str]
+    book_ids: List[Union[str, int]]
     publisher: Optional[str] = None
     language: Optional[str] = None
     category: Optional[str] = None
+    primary_category: Optional[str] = None
     identification_status: Optional[str] = None
 
 
@@ -382,6 +383,7 @@ class ScheduleUpdatePayload(BaseModel):
     days_of_week: Optional[List[int]] = None
     timezone: Optional[str] = None
     is_enabled: Optional[bool] = None
+    enabled: Optional[bool] = None
     config: Optional[Dict[str, Any]] = None
 
 
@@ -410,22 +412,26 @@ class BookReviewPayload(BaseModel):
     review_text: Optional[str] = None
     is_favorite: Optional[bool] = None
     want_to_read: Optional[bool] = None
+    is_public: Optional[bool] = None
 
 
 class SharedAnnotationCreatePayload(BaseModel):
-    book_id: str
+    book_id: Union[str, int]
     quote_text: Optional[str] = None
     comment_text: Optional[str] = None
+    content: Optional[str] = None
     page_number: Optional[int] = None
     chapter_name: Optional[str] = None
     progress_locator: Optional[str] = None
     color: str = "yellow"
     visibility: str = "public"
-    note_id: Optional[str] = None
+    note_id: Optional[Union[str, int]] = None
+    source_note_id: Optional[Union[str, int]] = None
 
 
 class SharedAnnotationUpdatePayload(BaseModel):
     comment_text: Optional[str] = None
+    content: Optional[str] = None
     visibility: Optional[str] = None
 
 
@@ -435,14 +441,16 @@ class AnnotationCommentPayload(BaseModel):
 
 
 class RecommendationCreatePayload(BaseModel):
-    to_user_id: int
-    book_id: str
+    book_id: Union[str, int]
+    to_user_id: Optional[int] = None
+    recipient_user_id: Optional[int] = None
     message: Optional[str] = None
 
 
 class ClearCachePayload(BaseModel):
     clear_api_cache: bool = True
     clear_extracted_covers: bool = False
+    clear_auto_covers: bool = False
 
 
 # =========================================================================
@@ -498,7 +506,10 @@ def require_admin(request: Request) -> dict:
 @app.api_route("/", methods=["GET", "HEAD"], response_class=FileResponse)
 async def serve_library_page():
     """Entrega a página principal da biblioteca."""
-    return FileResponse(static_path / "index.html")
+    return FileResponse(
+        static_path / "index.html",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @app.api_route("/reader/{book_id}", methods=["GET", "HEAD"], response_class=FileResponse)
@@ -541,6 +552,7 @@ async def auth_status(request: Request):
             "has_admin": False,
             "user": user,
             "setup_required": True,
+            "version": config.APP_VERSION,
         }
 
     # Se há admin cadastrado, verifica se o usuário autenticado realmente tem sessão
@@ -554,6 +566,7 @@ async def auth_status(request: Request):
         "has_admin": True,
         "user": real_user,
         "setup_required": False,
+        "version": config.APP_VERSION,
     }
 
 
@@ -1853,8 +1866,8 @@ async def metadata_diagnostics_endpoint(request: Request):
 @app.post("/api/books/{book_id}/metadata/review")
 async def mark_book_metadata_reviewed_endpoint(
     book_id: str,
-    payload: MetadataReviewPayload,
     request: Request,
+    payload: Optional[MetadataReviewPayload] = None,
 ):
     """Marca um livro como revisado manualmente pelo administrador/usuário."""
     user = require_user(request)
@@ -1863,6 +1876,7 @@ async def mark_book_metadata_reviewed_endpoint(
     except (SecurityError, BookNotFoundError) as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
+    target_status = (payload.status if payload and payload.status else "manual_override")
     with get_db() as conn:
         conn.execute(
             """
@@ -1874,7 +1888,7 @@ async def mark_book_metadata_reviewed_endpoint(
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?;
             """,
-            (payload.status or "manual_override", user["id"], book_id),
+            (target_status, user["id"], book_id),
         )
     return {"status": "success", "book": get_book(book_id, user_id=user["id"])}
 
@@ -1926,7 +1940,9 @@ async def batch_update_metadata_endpoint(payload: BatchMetadataUpdatePayload, re
         raise HTTPException(status_code=400, detail="Nenhum livro selecionado.")
 
     updated_count = 0
-    for bid in payload.book_ids[:200]:
+    chosen_cat = payload.category or payload.primary_category
+    for raw_bid in payload.book_ids[:200]:
+        bid = str(raw_bid).strip()
         try:
             updates: Dict[str, Any] = {}
             if payload.publisher is not None and payload.publisher.strip():
@@ -1935,9 +1951,9 @@ async def batch_update_metadata_endpoint(payload: BatchMetadataUpdatePayload, re
                 updates["language"] = payload.language.strip()
             if payload.identification_status is not None and payload.identification_status.strip():
                 updates["identification_status"] = payload.identification_status.strip()
-            if payload.category is not None and payload.category.strip():
+            if chosen_cat is not None and chosen_cat.strip():
                 updates["taxonomy"] = {
-                    "categories": [payload.category.strip()],
+                    "categories": [chosen_cat.strip()],
                     "subcategories": [],
                     "genre": None,
                     "origin": None,
@@ -2217,7 +2233,7 @@ async def admin_clear_cache_endpoint(payload: ClearCachePayload, request: Reques
         if payload.clear_api_cache:
             cur = conn.execute("DELETE FROM metadata_api_cache;")
             cleared_api = cur.rowcount
-        if payload.clear_extracted_covers:
+        if payload.clear_extracted_covers or payload.clear_auto_covers:
             if config.COVERS_DIR.exists():
                 for f in config.COVERS_DIR.glob("*_extracted.*"):
                     try:
@@ -2254,7 +2270,8 @@ async def admin_clear_cache_endpoint(payload: ClearCachePayload, request: Reques
 async def get_my_profile_endpoint(request: Request):
     """Retorna o perfil completo, estatísticas e configurações de privacidade do usuário logado."""
     user = require_user(request)
-    return social_service.get_user_profile(user["id"], viewer_user_id=user["id"])
+    prof = social_service.get_user_profile(user["id"], viewer_user_id=user["id"])
+    return {"profile": prof, **prof}
 
 
 @app.put("/api/profile/me")
@@ -2262,22 +2279,25 @@ async def update_my_profile_endpoint(payload: ProfileUpdatePayload, request: Req
     """Atualiza nome de exibição, cor de avatar, bio e preferências de leitura do usuário logado."""
     user = require_user(request)
     updated = social_service.update_user_profile(user["id"], payload.model_dump(exclude_none=True))
-    return {"status": "success", "profile": updated}
+    return {"status": "success", "profile": updated, **updated}
 
 
 @app.get("/api/profile/privacy")
+@app.get("/api/profile/me/privacy")
 async def get_my_privacy_endpoint(request: Request):
     """Retorna as configurações de privacidade do usuário logado (privado por padrão)."""
     user = require_user(request)
-    return {"privacy": social_service.get_privacy_settings(user["id"])}
+    priv = social_service.get_privacy_settings(user["id"])
+    return {"privacy": priv, **priv}
 
 
 @app.put("/api/profile/privacy")
+@app.put("/api/profile/me/privacy")
 async def update_my_privacy_endpoint(payload: PrivacyUpdatePayload, request: Request):
     """Atualiza as permissões de compartilhamento do usuário logado."""
     user = require_user(request)
     updated = social_service.update_privacy_settings(user["id"], payload.model_dump(exclude_none=True))
-    return {"status": "success", "privacy": updated}
+    return {"status": "success", "privacy": updated, **updated}
 
 
 @app.get("/api/users/{target_user_id}/profile")
@@ -2285,9 +2305,18 @@ async def get_other_user_profile_endpoint(target_user_id: int, request: Request)
     """Retorna o perfil de outro usuário filtrando estritamente pelos controles de privacidade dele."""
     user = require_user(request)
     try:
-        return social_service.get_user_profile(target_user_id, viewer_user_id=user["id"])
+        prof = social_service.get_user_profile(target_user_id, viewer_user_id=user["id"])
+        return {"profile": prof, **prof}
     except SocialNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@app.get("/api/social/users")
+async def list_social_users_endpoint(request: Request):
+    """Lista os membros ativos da biblioteca para seleção em recomendações comunitárias."""
+    user = require_user(request)
+    feed = social_service.get_nossa_biblioteca_feed(viewer_user_id=user["id"])
+    return {"users": feed.get("members", []), "current_user_id": user["id"]}
 
 
 @app.get("/api/books/{book_id}/reviews")
@@ -2298,6 +2327,8 @@ async def get_book_reviews_endpoint(book_id: str, request: Request):
 
 
 @app.post("/api/books/{book_id}/reviews")
+@app.put("/api/books/{book_id}/reviews")
+@app.put("/api/books/{book_id}/reviews/me")
 async def upsert_book_review_endpoint(book_id: str, payload: BookReviewPayload, request: Request):
     """Salva avaliação de 1 a 5 estrelas, resenha curta, favorito ou 'Quero ler' para um livro."""
     user = require_user(request)
@@ -2309,6 +2340,7 @@ async def upsert_book_review_endpoint(book_id: str, payload: BookReviewPayload, 
             review_text=payload.review_text,
             is_favorite=payload.is_favorite,
             want_to_read=payload.want_to_read,
+            is_public=payload.is_public,
         )
         return {"status": "success", **res}
     except SocialNotFoundError as e:
@@ -2326,6 +2358,7 @@ async def list_book_shared_annotations_endpoint(book_id: str, request: Request):
 
 
 @app.get("/api/shared-annotations")
+@app.get("/api/social/annotations")
 async def list_all_shared_annotations_endpoint(
     request: Request,
     book_id: Optional[str] = None,
@@ -2344,6 +2377,7 @@ async def list_all_shared_annotations_endpoint(
 
 
 @app.post("/api/shared-annotations", status_code=status.HTTP_201_CREATED)
+@app.post("/api/social/annotations", status_code=status.HTTP_201_CREATED)
 async def create_shared_annotation_endpoint(
     payload: SharedAnnotationCreatePayload,
     request: Request,
@@ -2353,15 +2387,17 @@ async def create_shared_annotation_endpoint(
     try:
         created = social_service.share_annotation(
             user_id=user["id"],
-            book_id=payload.book_id,
+            book_id=str(payload.book_id).strip(),
             quote_text=payload.quote_text,
             comment_text=payload.comment_text,
+            content=payload.content,
             page_number=payload.page_number,
             chapter_name=payload.chapter_name,
             progress_locator=payload.progress_locator,
             color=payload.color,
             visibility=payload.visibility,
-            note_id=payload.note_id,
+            note_id=str(payload.note_id) if payload.note_id is not None else None,
+            source_note_id=str(payload.source_note_id) if payload.source_note_id is not None else None,
         )
         return {"status": "success", "annotation": created}
     except SocialPermissionError as e:
@@ -2373,6 +2409,7 @@ async def create_shared_annotation_endpoint(
 
 
 @app.put("/api/shared-annotations/{shared_id}")
+@app.put("/api/social/annotations/{shared_id}")
 async def update_shared_annotation_endpoint(
     shared_id: int,
     payload: SharedAnnotationUpdatePayload,
@@ -2381,10 +2418,13 @@ async def update_shared_annotation_endpoint(
     """Atualiza o comentário ou visibilidade de uma anotação compartilhada pelo próprio autor."""
     user = require_user(request)
     try:
+        updates = payload.model_dump(exclude_none=True)
+        if "comment_text" not in updates and "content" in updates:
+            updates["comment_text"] = updates["content"]
         updated = social_service.update_shared_annotation(
             shared_id=shared_id,
             user_id=user["id"],
-            updates=payload.model_dump(exclude_none=True),
+            updates=updates,
         )
         return {"status": "success", "annotation": updated}
     except SocialPermissionError as e:
@@ -2394,6 +2434,7 @@ async def update_shared_annotation_endpoint(
 
 
 @app.delete("/api/shared-annotations/{shared_id}")
+@app.delete("/api/social/annotations/{shared_id}")
 async def delete_shared_annotation_endpoint(shared_id: int, request: Request):
     """Remove o compartilhamento de uma anotação (autor ou moderação admin em item público)."""
     user = require_user(request)
@@ -2411,6 +2452,7 @@ async def delete_shared_annotation_endpoint(shared_id: int, request: Request):
 
 
 @app.post("/api/shared-annotations/{shared_id}/comments", status_code=status.HTTP_201_CREATED)
+@app.post("/api/social/annotations/{shared_id}/comments", status_code=status.HTTP_201_CREATED)
 async def add_comment_to_shared_annotation_endpoint(
     shared_id: int,
     payload: AnnotationCommentPayload,
@@ -2435,6 +2477,7 @@ async def add_comment_to_shared_annotation_endpoint(
 
 
 @app.put("/api/annotation-comments/{comment_id}")
+@app.put("/api/social/comments/{comment_id}")
 async def edit_annotation_comment_endpoint(
     comment_id: int,
     payload: AnnotationCommentPayload,
@@ -2458,6 +2501,7 @@ async def edit_annotation_comment_endpoint(
 
 
 @app.delete("/api/annotation-comments/{comment_id}")
+@app.delete("/api/social/comments/{comment_id}")
 async def delete_annotation_comment_endpoint(comment_id: int, request: Request):
     """Exclui um comentário (próprio autor ou moderação admin)."""
     user = require_user(request)
@@ -2475,6 +2519,7 @@ async def delete_annotation_comment_endpoint(comment_id: int, request: Request):
 
 
 @app.get("/api/recommendations")
+@app.get("/api/social/recommendations")
 async def list_recommendations_endpoint(request: Request):
     """Lista recomendações de leitura recebidas e enviadas pelo usuário."""
     user = require_user(request)
@@ -2482,17 +2527,19 @@ async def list_recommendations_endpoint(request: Request):
 
 
 @app.post("/api/recommendations", status_code=status.HTTP_201_CREATED)
+@app.post("/api/social/recommendations", status_code=status.HTTP_201_CREATED)
 async def create_recommendation_endpoint(
     payload: RecommendationCreatePayload,
     request: Request,
 ):
-    """Envia uma recomendação de livro para outro usuário."""
+    """Envia uma recomendação de livro para outro usuário ou para toda a comunidade."""
     user = require_user(request)
     try:
         rec = social_service.create_recommendation(
             from_user_id=user["id"],
             to_user_id=payload.to_user_id,
-            book_id=payload.book_id,
+            recipient_user_id=payload.recipient_user_id,
+            book_id=str(payload.book_id).strip(),
             message=payload.message,
         )
         return {"status": "success", "recommendation": rec}

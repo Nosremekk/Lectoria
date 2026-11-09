@@ -7,6 +7,18 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.5.1] - 2026-11-09
+
+### Corrigido
+- **Alinhamento de Contratos das Funcionalidades Sociais (`main.py`, `static/js/app.js`, `social_service.py`, `auth_service.py`)**:
+  - **Avaliações, Favoritos e "Quero Ler" (`405 Method Not Allowed`)**: Adicionado suporte explícito aos métodos `PUT /api/books/{book_id}/reviews` e `PUT /api/books/{book_id}/reviews/me` além de `POST`, com persistência de `is_public` no `BookReviewPayload` sem sobrescrever `share_reviews` ao alternar apenas *Favorito* ou *Quero Ler*.
+  - **Compartilhamento de Citações e Anotações (`422 Unprocessable Entity` / `[object Object]`)**: Removido `parseInt(..., 10)` sobre `book_id` hexadecimal de 16 caracteres em `app.js`, alinhado o schema `SharedAnnotationCreatePayload` para aceitar `book_id` textual (`str`) e `content`/`comment_text`, e criado `formatApiError()` no frontend para formatar listas de validação do FastAPI/Pydantic em mensagens legíveis em vez de `[object Object]`.
+  - **Recomendações de Leitura (`422 Unprocessable Entity`)**: Removido `parseInt` do `book_id` no modal de recomendação, adicionado carregamento de destinatários via `GET /api/social/users` com suporte a recomendação direta (`to_user_id`) ou para o mural da comunidade, e normalizado `feed.recommendations` como lista no endpoint `GET /api/social/feed`.
+  - **Persistência Visual de Perfil e Privacidade ao Reabrir Modal**: Corrigido contrato de `GET /api/profile/me` e `openProfileModal()` (`data.profile.privacy` e `data.privacy` com `cache: "no-store"`), garantindo que os checkboxes de privacidade (`share_current_reading`, `share_reading_history`, `share_reviews`, `share_lists`, `share_annotations_default`) reflitam fielmente o estado salvo no SQLite ao reabrir o painel ou recarregar a página.
+  - **Sincronização de Versão Frontend/Backend (`1.5.1`)**: Atualizado `APP_VERSION = "1.5.1"`, `window.LECTORIA_FRONTEND_VERSION = "1.5.1"` e query strings de cache-busting (`?v=1.5.1`) em `static/index.html`.
+- **Testes de Integração e E2E de Contratos Sociais (`tests/test_v151_social_contracts.py`)**:
+  - Adicionados 5 novos testes cobrindo os contratos reais entre dois usuários distintos e teste E2E em navegador real (Playwright Chromium), totalizando **174 testes aprovados**.
+
 ## [1.5.0] - 2026-11-07
 
 ### Adicionado

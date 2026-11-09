@@ -154,7 +154,10 @@ def create_user(
         )
         user_id = cursor.lastrowid
         try:
-            cursor.execute("INSERT OR IGNORE INTO user_profiles (user_id) VALUES (?)", (user_id,))
+            cursor.execute(
+                "INSERT OR IGNORE INTO user_profiles (user_id, display_name) VALUES (?, ?)",
+                (user_id, disp),
+            )
             cursor.execute("INSERT OR IGNORE INTO user_privacy_settings (user_id) VALUES (?)", (user_id,))
         except Exception:
             pass

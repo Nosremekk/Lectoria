@@ -43,16 +43,31 @@ def ensure_user_profile_and_privacy(user_id: int, username: Optional[str] = None
     """Garante que o usuário possua registros em `user_profiles` e `user_privacy_settings` (tudo privado por padrão)."""
     with get_db() as conn:
         cursor = conn.cursor()
+        row = cursor.execute(
+            "SELECT username, display_name FROM users WHERE id = ?;", (user_id,)
+        ).fetchone()
         if not username:
-            row = cursor.execute("SELECT username FROM users WHERE id = ?;", (user_id,)).fetchone()
             username = row["username"] if row else f"user_{user_id}"
+        default_display = (
+            row["display_name"]
+            if (row and row["display_name"])
+            else username
+        )
 
         cursor.execute(
             """
             INSERT OR IGNORE INTO user_profiles (user_id, display_name, avatar_color, bio, reading_prefs_json)
             VALUES (?, ?, '#d4a853', '', '{}');
             """,
-            (user_id, username),
+            (user_id, default_display),
+        )
+        cursor.execute(
+            """
+            UPDATE user_profiles
+            SET display_name = ?
+            WHERE user_id = ? AND (display_name IS NULL OR TRIM(display_name) = '');
+            """,
+            (default_display, user_id),
         )
         cursor.execute(
             """
@@ -307,7 +322,9 @@ def upsert_book_review(
         update_privacy_settings(user_id, {"share_reviews": bool(is_public)})
     if rating is not None:
         rating = int(rating)
-        if rating < 1 or rating > 5:
+        if rating == 0:
+            rating = None
+        elif rating < 1 or rating > 5:
             raise ValueError("A avaliação deve ser de 1 a 5 estrelas.")
 
     with get_db() as conn:
@@ -389,6 +406,7 @@ def get_book_reviews_summary(book_id: str, viewer_user_id: int) -> Dict[str, Any
     visible_reviews = []
     my_review = None
     ratings = []
+    viewer_privacy = get_privacy_settings(viewer_user_id) if viewer_user_id else {"share_reviews": False}
 
     for r in rows:
         is_mine = (r["user_id"] == viewer_user_id)
@@ -404,6 +422,7 @@ def get_book_reviews_summary(book_id: str, viewer_user_id: int) -> Dict[str, Any
             "review_text": r.get("review_text") or "",
             "is_favorite": bool(r.get("is_favorite")),
             "want_to_read": bool(r.get("want_to_read")),
+            "is_public": bool(r.get("share_reviews")),
             "updated_at": r.get("updated_at"),
             "is_mine": is_mine,
         }
@@ -421,6 +440,7 @@ def get_book_reviews_summary(book_id: str, viewer_user_id: int) -> Dict[str, Any
         "ratings_count": len(ratings),
         "my_review": my_review,
         "user_review": my_review,
+        "user_share_reviews_default": bool(viewer_privacy.get("share_reviews", False)),
         "reviews": visible_reviews,
     }
 
@@ -448,6 +468,7 @@ def share_annotation(
     Se `note_id` (ou `source_note_id`) for fornecido, verifica estritamente se a nota pertence a `user_id` (anti-IDOR).
     """
     ensure_user_profile_and_privacy(user_id)
+    book_id = str(book_id).strip()
     if comment_text is None and content is not None:
         comment_text = content
     if note_id is None and source_note_id is not None:
@@ -816,40 +837,86 @@ def create_recommendation(
     sender_user_id: Optional[int] = None,
     recipient_user_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Envia uma recomendação de leitura para outro usuário da biblioteca."""
+    """Envia uma recomendação de leitura para outro usuário ou para toda a comunidade da biblioteca."""
     if from_user_id is None and sender_user_id is not None:
         from_user_id = sender_user_id
     if to_user_id is None and recipient_user_id is not None:
         to_user_id = recipient_user_id
     if from_user_id is None:
         raise ValueError("Usuário remetente não informado.")
-    ensure_user_profile_and_privacy(from_user_id)
-    if to_user_id is None:
-        with get_db() as conn:
-            other = conn.execute("SELECT id FROM users WHERE id != ? ORDER BY id ASC LIMIT 1;", (from_user_id,)).fetchone()
-            to_user_id = other["id"] if other else from_user_id
-    if from_user_id == to_user_id:
-        raise ValueError("Você não pode enviar uma recomendação para si mesmo.")
 
+    book_id = str(book_id).strip()
+    if not book_id:
+        raise ValueError("Livro não informado.")
+
+    ensure_user_profile_and_privacy(from_user_id)
     clean_msg = (message or "").strip()[:1000]
+
     with get_db() as conn:
         cursor = conn.cursor()
-        target_u = cursor.execute("SELECT id, username FROM users WHERE id = ?;", (to_user_id,)).fetchone()
-        if not target_u:
-            raise SocialNotFoundError("Usuário destinatário não encontrado.")
-
         book_row = cursor.execute("SELECT id, title, author FROM books WHERE id = ?;", (book_id,)).fetchone()
         if not book_row:
             raise SocialNotFoundError("Livro não encontrado.")
 
-        cursor.execute(
+        sender_row = cursor.execute(
             """
-            INSERT INTO book_recommendations (from_user_id, to_user_id, book_id, message, is_read)
-            VALUES (?, ?, ?, ?, 0);
+            SELECT u.id, u.username,
+                   COALESCE(NULLIF(up.display_name, ''), NULLIF(u.display_name, ''), u.username) as display_name
+            FROM users u
+            LEFT JOIN user_profiles up ON u.id = up.user_id
+            WHERE u.id = ?;
             """,
-            (from_user_id, to_user_id, book_id, clean_msg),
-        )
-        rec_id = int(cursor.lastrowid)
+            (from_user_id,),
+        ).fetchone()
+        sender_username = sender_row["username"] if sender_row else f"user_{from_user_id}"
+        sender_display_name = (sender_row["display_name"] if sender_row and sender_row["display_name"] else sender_username)
+
+        if to_user_id is not None:
+            to_user_id = int(to_user_id)
+            if from_user_id == to_user_id:
+                raise ValueError("Você não pode enviar uma recomendação diretamente para si mesmo.")
+            target_u = cursor.execute(
+                """
+                SELECT u.id, u.username,
+                       COALESCE(NULLIF(up.display_name, ''), NULLIF(u.display_name, ''), u.username) as display_name
+                FROM users u
+                LEFT JOIN user_profiles up ON u.id = up.user_id
+                WHERE u.id = ?;
+                """,
+                (to_user_id,),
+            ).fetchone()
+            if not target_u:
+                raise SocialNotFoundError("Usuário destinatário não encontrado.")
+            targets = [target_u]
+        else:
+            # Recomendação para toda a comunidade (Mural Geral): envia para os demais leitores ativos,
+            # ou registra no mural geral caso exista apenas 1 usuário na instância.
+            others = cursor.execute(
+                """
+                SELECT u.id, u.username,
+                       COALESCE(NULLIF(up.display_name, ''), NULLIF(u.display_name, ''), u.username) as display_name
+                FROM users u
+                LEFT JOIN user_profiles up ON u.id = up.user_id
+                WHERE u.id != ? AND COALESCE(u.is_active, 1) = 1
+                ORDER BY u.id ASC;
+                """,
+                (from_user_id,),
+            ).fetchall()
+            targets = list(others) if others else [sender_row]
+
+        first_rec_id = 0
+        first_target = targets[0]
+        for target_u in targets:
+            tid = int(target_u["id"])
+            cursor.execute(
+                """
+                INSERT INTO book_recommendations (from_user_id, to_user_id, book_id, message, is_read)
+                VALUES (?, ?, ?, ?, 0);
+                """,
+                (from_user_id, tid, book_id, clean_msg),
+            )
+            if not first_rec_id:
+                first_rec_id = int(cursor.lastrowid)
 
         _record_activity(
             cursor,
@@ -857,18 +924,29 @@ def create_recommendation(
             book_id=book_id,
             activity_type="recommended_book",
             payload={
-                "to_user_id": to_user_id,
-                "to_username": target_u["username"],
+                "to_user_id": int(first_target["id"]),
+                "to_username": first_target["username"],
                 "message": clean_msg[:300],
             },
         )
 
+        to_uname = first_target["username"]
+        to_dname = first_target["display_name"] or to_uname
         return {
-            "id": rec_id,
+            "id": first_rec_id,
             "from_user_id": from_user_id,
-            "to_user_id": to_user_id,
+            "to_user_id": int(first_target["id"]),
+            "sender_username": sender_username,
+            "sender_display_name": sender_display_name,
+            "from_username": sender_username,
+            "from_display_name": sender_display_name,
+            "to_username": to_uname,
+            "to_display_name": to_dname,
+            "recipient_username": to_uname,
+            "recipient_display_name": to_dname,
             "book_id": book_id,
             "book_title": book_row["title"],
+            "book_author": book_row["author"],
             "message": clean_msg,
             "is_read": False,
         }
@@ -881,12 +959,17 @@ def list_user_recommendations(user_id: int) -> Dict[str, List[Dict[str, Any]]]:
         cursor.execute(
             """
             SELECT r.*, b.title as book_title, b.author as book_author,
-                   u_from.username as from_username, up_from.display_name as from_display_name,
-                   up_from.avatar_color as from_avatar_color
+                   u_from.username as from_username,
+                   COALESCE(NULLIF(up_from.display_name, ''), NULLIF(u_from.display_name, ''), u_from.username) as from_display_name,
+                   up_from.avatar_color as from_avatar_color,
+                   u_to.username as to_username,
+                   COALESCE(NULLIF(up_to.display_name, ''), NULLIF(u_to.display_name, ''), u_to.username) as to_display_name
             FROM book_recommendations r
             JOIN books b ON r.book_id = b.id
             JOIN users u_from ON r.from_user_id = u_from.id
             LEFT JOIN user_profiles up_from ON u_from.id = up_from.user_id
+            JOIN users u_to ON r.to_user_id = u_to.id
+            LEFT JOIN user_profiles up_to ON u_to.id = up_to.user_id
             WHERE r.to_user_id = ? AND b.is_missing = 0
             ORDER BY r.created_at DESC LIMIT 50;
             """,
@@ -895,14 +978,25 @@ def list_user_recommendations(user_id: int) -> Dict[str, List[Dict[str, Any]]]:
         received = [dict(row) for row in cursor.fetchall()]
         for item in received:
             item["from_display_name"] = item.get("from_display_name") or item["from_username"]
+            item["to_display_name"] = item.get("to_display_name") or item["to_username"]
+            item["sender_username"] = item["from_username"]
+            item["sender_display_name"] = item["from_display_name"]
+            item["recipient_username"] = item["to_username"]
+            item["recipient_display_name"] = item["to_display_name"]
             item["is_read"] = bool(item.get("is_read"))
 
         cursor.execute(
             """
             SELECT r.*, b.title as book_title, b.author as book_author,
-                   u_to.username as to_username, up_to.display_name as to_display_name
+                   u_from.username as from_username,
+                   COALESCE(NULLIF(up_from.display_name, ''), NULLIF(u_from.display_name, ''), u_from.username) as from_display_name,
+                   up_from.avatar_color as from_avatar_color,
+                   u_to.username as to_username,
+                   COALESCE(NULLIF(up_to.display_name, ''), NULLIF(u_to.display_name, ''), u_to.username) as to_display_name
             FROM book_recommendations r
             JOIN books b ON r.book_id = b.id
+            JOIN users u_from ON r.from_user_id = u_from.id
+            LEFT JOIN user_profiles up_from ON u_from.id = up_from.user_id
             JOIN users u_to ON r.to_user_id = u_to.id
             LEFT JOIN user_profiles up_to ON u_to.id = up_to.user_id
             WHERE r.from_user_id = ? AND b.is_missing = 0
@@ -912,7 +1006,12 @@ def list_user_recommendations(user_id: int) -> Dict[str, List[Dict[str, Any]]]:
         )
         sent = [dict(row) for row in cursor.fetchall()]
         for item in sent:
+            item["from_display_name"] = item.get("from_display_name") or item["from_username"]
             item["to_display_name"] = item.get("to_display_name") or item["to_username"]
+            item["sender_username"] = item["from_username"]
+            item["sender_display_name"] = item["from_display_name"]
+            item["recipient_username"] = item["to_username"]
+            item["recipient_display_name"] = item["to_display_name"]
             item["is_read"] = bool(item.get("is_read"))
 
     return {"received": received, "sent": sent}
@@ -1105,13 +1204,20 @@ def get_nossa_biblioteca_feed(viewer_user_id: int) -> Dict[str, Any]:
         ]
 
     shared_annotations = list_shared_annotations(viewer_user_id=viewer_user_id, limit=30)
-    recommendations = list_user_recommendations(viewer_user_id)
+    recs_by_dir = list_user_recommendations(viewer_user_id)
+    seen_rec_ids = set()
+    recommendations_list = []
+    for rec_item in recs_by_dir["received"] + recs_by_dir["sent"]:
+        if rec_item["id"] not in seen_rec_ids:
+            seen_rec_ids.add(rec_item["id"])
+            recommendations_list.append(rec_item)
 
     return {
         "currently_reading": currently_reading,
         "recently_completed": recently_completed,
         "shared_annotations": shared_annotations,
         "recent_reviews": recent_reviews,
-        "recommendations": recommendations,
+        "recommendations": recommendations_list,
+        "recommendations_by_direction": recs_by_dir,
         "members": members,
     }
