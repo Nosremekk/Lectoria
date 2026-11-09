@@ -840,7 +840,9 @@ class AutomationSchedulerLoop:
                 if not self._running:
                     break
                 await asyncio.to_thread(check_and_run_due_schedules)
-                await asyncio.to_thread(check_directory_changes_and_auto_scan)
+                scan_sched = await asyncio.to_thread(get_schedule, "scan_library")
+                if scan_sched and scan_sched.get("enabled"):
+                    await asyncio.to_thread(check_directory_changes_and_auto_scan)
             except asyncio.CancelledError:
                 break
             except Exception as e:

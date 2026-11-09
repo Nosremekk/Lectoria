@@ -20,8 +20,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
-    name: Run Automated Test Suite
+  test-and-publish:
+    name: Test Suite & Publish to GHCR
     runs-on: ubuntu-latest
 
     steps:
@@ -49,15 +49,6 @@ jobs:
       - name: Run full automated test suite
         run: |
           pytest -v tests/
-
-  publish:
-    name: Build and Push to GHCR
-    runs-on: ubuntu-latest
-    needs: test
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
       - name: Extract version metadata
         id: meta

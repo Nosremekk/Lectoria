@@ -211,6 +211,7 @@ def test_automation_schedules_and_persistent_jobs(test_env):
     job_id = automation_service.create_job_record("db_maintenance", trigger_source="test")
     result = automation_service.execute_job_sync(job_id)
     assert result["status"] == "completed"
+    automation_service.update_schedule("scan_library", enabled=False, schedule_mode="manual")
 
 
 # ---------------------------------------------------------------------------
