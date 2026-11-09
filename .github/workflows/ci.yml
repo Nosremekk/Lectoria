@@ -25,8 +25,11 @@ jobs:
 
       - name: Install dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends sqlite3
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
+          playwright install --with-deps chromium
 
       - name: Run automated test suite
         run: |
