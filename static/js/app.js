@@ -1,8 +1,8 @@
 /**
- * Lectoria — Aplicação da Biblioteca (v1.5.1)
+ * Lectoria — Aplicação da Biblioteca (v1.5.2)
  * JavaScript puro (Vanilla ES6), rápido e sem dependências pesadas.
  */
-window.LECTORIA_FRONTEND_VERSION = "1.5.1";
+window.LECTORIA_FRONTEND_VERSION = "1.5.2";
 
 function formatApiError(err, fallbackMsg = "Ocorreu um erro ao processar a solicitação.") {
   if (!err) return fallbackMsg;
@@ -154,6 +154,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const idStatusSelect = document.getElementById("id-status-select");
   const btnClearFilters = document.getElementById("btn-clear-filters");
 
+  // Mobile drawer e filtros colapsáveis
+  const btnToggleFiltersMobile = document.getElementById("btn-toggle-filters-mobile");
+  const activeFiltersCountBadge = document.getElementById("active-filters-count-badge");
+  const collapsibleFiltersPanel = document.getElementById("collapsible-filters-panel");
+  const taxonomyFiltersContainer = document.getElementById("taxonomy-filters-container");
+
   // Modal: Detalhes da Obra
   const modalBookDetails = document.getElementById("modal-book-details");
   const btnCloseDetailsModal = document.getElementById("btn-close-details-modal");
@@ -163,6 +169,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnDetailsEditCover = document.getElementById("btn-details-edit-cover");
   const btnDetailsCollections = document.getElementById("btn-details-collections");
   const btnDetailsDownload = document.getElementById("btn-details-download");
+  const btnDetailsToggleStatus = document.getElementById("btn-details-toggle-status");
+  const detailsEditCategoriesChips = document.getElementById("details-edit-categories-chips");
+  const detailsAddCategorySelect = document.getElementById("details-add-category-select");
+  const btnDetailsAddCategory = document.getElementById("btn-details-add-category");
   const detailsIdStatusBadge = document.getElementById("details-id-status-badge");
   const detailsTitle = document.getElementById("details-title");
   const detailsAuthor = document.getElementById("details-author");
@@ -408,11 +418,19 @@ document.addEventListener("DOMContentLoaded", () => {
     if (currentCollectionId) params.set("collection_id", currentCollectionId);
     if (currentFormat) params.set("format", currentFormat);
 
-    if (categorySelect && categorySelect.value) params.set("category", categorySelect.value);
+    if (categorySelect && categorySelect.value) {
+      if (categorySelect.value === "__uncategorized__") {
+        params.set("uncategorized", "true");
+      } else {
+        params.set("category", categorySelect.value);
+      }
+    }
     if (subcategorySelect && subcategorySelect.value) params.set("subcategory", subcategorySelect.value);
     if (genreSelect && genreSelect.value) params.set("genre", genreSelect.value);
     if (originSelect && originSelect.value) params.set("origin", originSelect.value);
     if (idStatusSelect && idStatusSelect.value) params.set("identification_status", idStatusSelect.value);
+
+    updateActiveFiltersBadge();
 
     try {
       booksCountEl.textContent = "Carregando acervo...";
@@ -754,6 +772,42 @@ document.addEventListener("DOMContentLoaded", () => {
     formatSelect.addEventListener("change", () => {
       currentFormat = formatSelect.value;
       loadBooks();
+    });
+  }
+
+  // Mobile drawer toggle e contador de filtros ativos
+  function updateActiveFiltersBadge() {
+    if (!activeFiltersCountBadge) return;
+    let count = 0;
+    if (currentStatus && currentStatus !== "all") count++;
+    if (currentCollectionId) count++;
+    if (currentFormat) count++;
+    if (categorySelect && categorySelect.value) count++;
+    if (subcategorySelect && subcategorySelect.value) count++;
+    if (genreSelect && genreSelect.value) count++;
+    if (originSelect && originSelect.value) count++;
+    if (idStatusSelect && idStatusSelect.value) count++;
+    if (searchInput && searchInput.value.trim()) count++;
+
+    if (count > 0) {
+      activeFiltersCountBadge.textContent = String(count);
+      activeFiltersCountBadge.style.display = "inline-flex";
+    } else {
+      activeFiltersCountBadge.style.display = "none";
+    }
+  }
+
+  if (btnToggleFiltersMobile) {
+    btnToggleFiltersMobile.addEventListener("click", () => {
+      const isExpanded = btnToggleFiltersMobile.getAttribute("aria-expanded") === "true";
+      const nextState = !isExpanded;
+      btnToggleFiltersMobile.setAttribute("aria-expanded", String(nextState));
+      if (collapsibleFiltersPanel) {
+        collapsibleFiltersPanel.classList.toggle("active", nextState);
+      }
+      if (taxonomyFiltersContainer) {
+        taxonomyFiltersContainer.classList.toggle("active", nextState);
+      }
     });
   }
 
@@ -1715,6 +1769,11 @@ document.addEventListener("DOMContentLoaded", () => {
           `;
         }).join("");
 
+        const filterActionStr = shelf.filter_action ? JSON.stringify(shelf.filter_action).replace(/"/g, "&quot;") : "";
+        const seeAllButtonHtml = filterActionStr
+          ? `<button class="shelf-see-all-btn" data-action="${filterActionStr}">Ver todos &rarr;</button>`
+          : "";
+
         return `
           <section class="shelf-wrapper" data-shelf-id="${escapeHtml(shelf.id)}">
             <div class="shelf-header">
@@ -1723,6 +1782,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${shelf.subtitle ? `<div class="shelf-subtitle">${escapeHtml(shelf.subtitle)}</div>` : ""}
               </div>
               <div class="shelf-nav-buttons">
+                ${seeAllButtonHtml}
                 <button class="shelf-nav-btn btn-shelf-prev" title="Rolar para esquerda" aria-label="Rolar para esquerda">&larr;</button>
                 <button class="shelf-nav-btn btn-shelf-next" title="Rolar para direita" aria-label="Rolar para direita">&rarr;</button>
               </div>
@@ -1733,6 +1793,37 @@ document.addEventListener("DOMContentLoaded", () => {
           </section>
         `;
       }).join("");
+
+      // Vincula ação do botão "Ver todos" para navegar diretamente aos filtros da biblioteca
+      shelvesContainer.querySelectorAll(".shelf-see-all-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          try {
+            const raw = btn.getAttribute("data-action");
+            if (!raw) return;
+            const action = JSON.parse(raw);
+            setMainTab("library");
+            if (action.type === "category") {
+              if (categorySelect) {
+                categorySelect.value = action.value;
+                categorySelect.dispatchEvent(new Event("change"));
+              }
+            } else if (action.type === "status") {
+              statusTabs.forEach(t => {
+                if (t.getAttribute("data-status") === action.value) {
+                  t.click();
+                }
+              });
+            } else if (action.type === "sort") {
+              if (sortSelect) {
+                sortSelect.value = action.value;
+                loadBooks();
+              }
+            }
+          } catch (e) {
+            console.error("Erro ao aplicar filtro de prateleira:", e);
+          }
+        });
+      });
 
       // Vincula navegação horizontal suave por botões
       shelvesContainer.querySelectorAll(".shelf-wrapper").forEach(wrapper => {
@@ -1783,10 +1874,14 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!res.ok) return;
       const data = await res.json();
       const tree = data.tree || [];
+      const uncatCount = data.uncategorized_count !== undefined ? data.uncategorized_count : 0;
 
       if (categorySelect) {
+        const prevCatVal = categorySelect.value;
         categorySelect.innerHTML = `<option value="">Todas as Categorias</option>` +
+          `<option value="__uncategorized__">Sem categoria (${uncatCount})</option>` +
           tree.map(cat => `<option value="${escapeHtml(cat.category)}">${escapeHtml(cat.category)} (${cat.total_books})</option>`).join("");
+        if (prevCatVal) categorySelect.value = prevCatVal;
       }
 
       // Atualiza subcategorias dinamicamente ao selecionar categoria
@@ -1928,6 +2023,8 @@ document.addEventListener("DOMContentLoaded", () => {
       switchDetailsSubtab("overview");
       loadBookCandidates(book.id);
       loadBookDetailsSocial(book.id);
+      loadBookDetailsCategories(book);
+      updateDetailsReadingStatusBtn(book);
 
       modalBookDetails.classList.add("active");
     } catch (e) {
@@ -2408,6 +2505,153 @@ document.addEventListener("DOMContentLoaded", () => {
     btnDetailsRecommend.addEventListener("click", () => {
       if (!activeBookForDetails) return;
       openRecommendModal(activeBookForDetails.id);
+    });
+  }
+
+  // Alternância manual de status de leitura (não lido / concluído) no modal de detalhes
+  function updateDetailsReadingStatusBtn(book) {
+    if (!btnDetailsToggleStatus) return;
+    const isCompleted = book.is_completed || book.is_completed_manual || (book.progress_percentage >= 100);
+    const inProgress = (book.current_page > 1 && !isCompleted);
+    if (isCompleted) {
+      btnDetailsToggleStatus.textContent = "✓ Status: Concluído";
+      btnDetailsToggleStatus.classList.add("btn-active");
+    } else if (inProgress) {
+      btnDetailsToggleStatus.textContent = "⏳ Status: Lendo";
+      btnDetailsToggleStatus.classList.remove("btn-active");
+    } else {
+      btnDetailsToggleStatus.textContent = "○ Status: Não lido";
+      btnDetailsToggleStatus.classList.remove("btn-active");
+    }
+  }
+
+  if (btnDetailsToggleStatus) {
+    btnDetailsToggleStatus.addEventListener("click", async () => {
+      if (!activeBookForDetails) return;
+      const isCompleted = activeBookForDetails.is_completed || activeBookForDetails.is_completed_manual || (activeBookForDetails.progress_percentage >= 100);
+      const targetStatus = isCompleted ? "unread" : "completed";
+      try {
+        const res = await fetch(`/api/books/${encodeURIComponent(activeBookForDetails.id)}/reading-status`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: targetStatus }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          activeBookForDetails.is_completed_manual = data.is_completed_manual;
+          activeBookForDetails.is_completed = targetStatus === "completed";
+          activeBookForDetails.progress_percentage = data.progress_percentage;
+          updateDetailsReadingStatusBtn(activeBookForDetails);
+          if (currentMainTab === "library") loadBooks();
+          else if (currentMainTab === "discovery") loadShelves();
+        }
+      } catch (e) {
+        console.error("Erro ao alternar status de leitura:", e);
+      }
+    });
+  }
+
+  // Gestão de categorias da obra no modal de detalhes
+  function updateDetailsTaxonomyTags(book) {
+    if (!detailsTaxonomyTags) return;
+    const tax = book.taxonomy || {};
+    let tagsHtml = "";
+    (tax.categories || []).forEach(cat => {
+      tagsHtml += `<span class="badge-taxonomy badge-category">${escapeHtml(cat)}</span>`;
+    });
+    (tax.subcategories || []).forEach(subcat => {
+      tagsHtml += `<span class="badge-taxonomy badge-category">${escapeHtml(subcat)}</span>`;
+    });
+    if (tax.genre) tagsHtml += `<span class="badge-taxonomy badge-genre">${escapeHtml(tax.genre)}</span>`;
+    if (tax.origin) tagsHtml += `<span class="badge-taxonomy badge-origin">${escapeHtml(tax.origin)}</span>`;
+    detailsTaxonomyTags.innerHTML = tagsHtml;
+  }
+
+  function renderCategoryChips(categories) {
+    if (!detailsEditCategoriesChips) return;
+    if (!categories || categories.length === 0) {
+      detailsEditCategoriesChips.innerHTML = `<span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">Nenhuma categoria atribuída.</span>`;
+      return;
+    }
+    detailsEditCategoriesChips.innerHTML = categories.map(cat => `
+      <span class="category-badge-chip">
+        <span>${escapeHtml(cat)}</span>
+        <button type="button" class="btn-remove-cat-chip" data-cat="${escapeHtml(cat)}" title="Remover">&times;</button>
+      </span>
+    `).join("");
+
+    detailsEditCategoriesChips.querySelectorAll(".btn-remove-cat-chip").forEach(btn => {
+      btn.onclick = async () => {
+        if (!activeBookForDetails) return;
+        const toRemove = btn.getAttribute("data-cat");
+        const currentCats = (activeBookForDetails.taxonomy && activeBookForDetails.taxonomy.categories) || [];
+        const nextCats = currentCats.filter(c => c !== toRemove);
+        try {
+          const r = await fetch(`/api/books/${encodeURIComponent(activeBookForDetails.id)}/categories`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ categories: nextCats, is_manual: true }),
+          });
+          if (r.ok) {
+            if (!activeBookForDetails.taxonomy) activeBookForDetails.taxonomy = {};
+            activeBookForDetails.taxonomy.categories = nextCats;
+            renderCategoryChips(nextCats);
+            updateDetailsTaxonomyTags(activeBookForDetails);
+            loadBooks();
+          }
+        } catch (e) {
+          console.error("Erro ao remover categoria do livro:", e);
+        }
+      };
+    });
+  }
+
+  async function loadBookDetailsCategories(book) {
+    if (!detailsEditCategoriesChips) return;
+    try {
+      const res = await fetch("/api/categories");
+      const catsData = res.ok ? await res.json() : { categories: [] };
+      const allCats = catsData.categories || [];
+
+      if (detailsAddCategorySelect) {
+        detailsAddCategorySelect.innerHTML = `<option value="">Selecione uma categoria para adicionar...</option>` +
+          allCats.map(c => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join("");
+      }
+
+      const activeCats = (book.taxonomy && book.taxonomy.categories) || [];
+      renderCategoryChips(activeCats);
+    } catch (e) {
+      console.warn("Erro ao carregar categorias do livro:", e);
+    }
+  }
+
+  if (btnDetailsAddCategory) {
+    btnDetailsAddCategory.addEventListener("click", async () => {
+      if (!activeBookForDetails) return;
+      const chosen = detailsAddCategorySelect ? detailsAddCategorySelect.value : "";
+      if (!chosen) return;
+
+      const currentCats = (activeBookForDetails.taxonomy && activeBookForDetails.taxonomy.categories) || [];
+      if (!currentCats.includes(chosen)) {
+        const nextCats = [...currentCats, chosen];
+        try {
+          const r = await fetch(`/api/books/${encodeURIComponent(activeBookForDetails.id)}/categories`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ categories: nextCats, is_manual: true }),
+          });
+          if (r.ok) {
+            if (!activeBookForDetails.taxonomy) activeBookForDetails.taxonomy = {};
+            activeBookForDetails.taxonomy.categories = nextCats;
+            renderCategoryChips(nextCats);
+            updateDetailsTaxonomyTags(activeBookForDetails);
+            if (detailsAddCategorySelect) detailsAddCategorySelect.value = "";
+            loadBooks();
+          }
+        } catch (e) {
+          console.error("Erro ao adicionar categoria:", e);
+        }
+      }
     });
   }
 
@@ -2902,6 +3146,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!currentUser || currentUser.role !== "admin") return;
     if (currentAdminTab === "dashboard") await loadAdminDashboard();
     else if (currentAdminTab === "library") await loadAdminLibraryTab();
+    else if (currentAdminTab === "categories") await loadAdminCategoriesTab();
     else if (currentAdminTab === "users") await loadAdminUsersTab();
     else if (currentAdminTab === "automation") await loadAdminAutomationTab();
     else if (currentAdminTab === "metadata") await loadAdminMetadataReviewTab();
@@ -3064,6 +3309,308 @@ document.addEventListener("DOMContentLoaded", () => {
         loadBooks();
       }
     });
+  }
+
+  // --- Gestão de Categorias no Painel Admin ---
+  const modalCategoryEdit = document.getElementById("modal-category-edit");
+  const catModalId = document.getElementById("cat-modal-id");
+  const catModalName = document.getElementById("cat-modal-name");
+  const catModalDesc = document.getElementById("cat-modal-desc");
+  const catModalOrder = document.getElementById("cat-modal-order");
+  const catModalError = document.getElementById("cat-modal-error");
+  const btnCloseCatModal = document.getElementById("btn-close-cat-modal");
+  const btnCancelCatModal = document.getElementById("btn-cancel-cat-modal");
+  const btnSaveCatModal = document.getElementById("btn-save-cat-modal");
+  const btnAdminOpenCreateCat = document.getElementById("btn-admin-open-create-cat");
+
+  const modalCategoryMerge = document.getElementById("modal-category-merge");
+  const mergeSourceId = document.getElementById("merge-source-id");
+  const mergeSourceName = document.getElementById("merge-source-name");
+  const mergeTargetSelect = document.getElementById("merge-target-select");
+  const mergeModalError = document.getElementById("merge-modal-error");
+  const btnCloseMergeModal = document.getElementById("btn-close-merge-modal");
+  const btnCancelMergeModal = document.getElementById("btn-cancel-merge-modal");
+  const btnConfirmMergeModal = document.getElementById("btn-confirm-merge-modal");
+
+  function openCategoryModal(cat = null) {
+    if (!modalCategoryEdit) return;
+    if (catModalError) catModalError.style.display = "none";
+    if (cat && cat.id) {
+      document.getElementById("category-modal-title").textContent = "Editar Categoria";
+      catModalId.value = cat.id;
+      catModalName.value = cat.name || "";
+      catModalDesc.value = cat.description || "";
+      catModalOrder.value = cat.display_order || 0;
+    } else {
+      document.getElementById("category-modal-title").textContent = "Nova Categoria";
+      catModalId.value = "";
+      catModalName.value = "";
+      catModalDesc.value = "";
+      catModalOrder.value = 100;
+    }
+    modalCategoryEdit.classList.add("active");
+  }
+
+  function closeCategoryModal() {
+    if (modalCategoryEdit) modalCategoryEdit.classList.remove("active");
+  }
+
+  if (btnAdminOpenCreateCat) btnAdminOpenCreateCat.onclick = () => openCategoryModal();
+  if (btnCloseCatModal) btnCloseCatModal.onclick = closeCategoryModal;
+  if (btnCancelCatModal) btnCancelCatModal.onclick = closeCategoryModal;
+
+  if (btnSaveCatModal) {
+    btnSaveCatModal.onclick = async () => {
+      const name = catModalName.value.trim();
+      const description = catModalDesc.value.trim();
+      const order = parseInt(catModalOrder.value, 10) || 0;
+      const catId = catModalId.value;
+
+      if (!name) {
+        if (catModalError) {
+          catModalError.textContent = "O nome da categoria é obrigatório.";
+          catModalError.style.display = "block";
+        }
+        return;
+      }
+
+      try {
+        let r;
+        if (catId) {
+          r = await fetch(`/api/categories/${encodeURIComponent(catId)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, description, display_order: order })
+          });
+        } else {
+          r = await fetch("/api/categories", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, description, display_order: order })
+          });
+        }
+
+        if (r.ok) {
+          closeCategoryModal();
+          await loadAdminCategoriesTab();
+          await loadTaxonomyTree();
+        } else {
+          const errData = await r.json();
+          if (catModalError) {
+            catModalError.textContent = errData.detail || "Erro ao salvar categoria.";
+            catModalError.style.display = "block";
+          }
+        }
+      } catch (e) {
+        if (catModalError) {
+          catModalError.textContent = "Erro na requisição.";
+          catModalError.style.display = "block";
+        }
+      }
+    };
+  }
+
+  function openMergeModal(srcId, srcName, allCats) {
+    if (!modalCategoryMerge) return;
+    if (mergeModalError) mergeModalError.style.display = "none";
+    mergeSourceId.value = srcId;
+    mergeSourceName.textContent = srcName;
+
+    const targets = allCats.filter(c => String(c.id) !== String(srcId));
+    mergeTargetSelect.innerHTML = targets.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
+
+    modalCategoryMerge.classList.add("active");
+  }
+
+  function closeMergeModal() {
+    if (modalCategoryMerge) modalCategoryMerge.classList.remove("active");
+  }
+
+  if (btnCloseMergeModal) btnCloseMergeModal.onclick = closeMergeModal;
+  if (btnCancelMergeModal) btnCancelMergeModal.onclick = closeMergeModal;
+
+  if (btnConfirmMergeModal) {
+    btnConfirmMergeModal.onclick = async () => {
+      const srcId = parseInt(mergeSourceId.value, 10);
+      const tgtId = parseInt(mergeTargetSelect.value, 10);
+      if (!srcId || !tgtId) return;
+
+      try {
+        const r = await fetch("/api/categories/merge", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source_category_id: srcId, target_category_id: tgtId })
+        });
+        if (r.ok) {
+          closeMergeModal();
+          await loadAdminCategoriesTab();
+          await loadTaxonomyTree();
+          loadBooks();
+        } else {
+          const d = await r.json();
+          if (mergeModalError) {
+            mergeModalError.textContent = d.detail || "Erro ao mesclar categorias.";
+            mergeModalError.style.display = "block";
+          }
+        }
+      } catch (e) {
+        if (mergeModalError) {
+          mergeModalError.textContent = "Erro na requisição.";
+          mergeModalError.style.display = "block";
+        }
+      }
+    };
+  }
+
+  const btnAdminReclassifyAuto = document.getElementById("btn-admin-reclassify-auto");
+  if (btnAdminReclassifyAuto) {
+    btnAdminReclassifyAuto.onclick = async () => {
+      btnAdminReclassifyAuto.disabled = true;
+      btnAdminReclassifyAuto.textContent = "Reclassificando...";
+      try {
+        const r = await fetch("/api/taxonomy/reclassify-auto", { method: "POST" });
+        if (r.ok) {
+          const d = await r.json();
+          const fb = document.getElementById("admin-categories-feedback");
+          if (fb) {
+            fb.style.display = "block";
+            fb.style.background = "rgba(46, 125, 50, 0.2)";
+            fb.style.color = "var(--success)";
+            fb.textContent = `Reclassificação concluída: ${d.reclassified_count} obras atualizadas com sucesso.`;
+          }
+          await loadAdminCategoriesTab();
+          await loadTaxonomyTree();
+          loadBooks();
+        }
+      } catch (e) {
+        alert("Erro ao reclassificar obras.");
+      } finally {
+        btnAdminReclassifyAuto.disabled = false;
+        btnAdminReclassifyAuto.textContent = "Reclassificar Automáticos";
+      }
+    };
+  }
+
+  async function loadAdminCategoriesTab() {
+    const container = document.getElementById("admin-categories-table-container");
+    if (!container) return;
+
+    try {
+      const res = await fetch("/api/categories");
+      if (!res.ok) return;
+      const data = await res.json();
+      const categories = data.categories || [];
+
+      if (categories.length === 0) {
+        container.innerHTML = `<p style="font-size: 0.85rem; color: var(--text-muted); padding: 1rem 0;">Nenhuma categoria cadastrada.</p>`;
+        return;
+      }
+
+      container.innerHTML = `
+        <table class="category-admin-table" style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+          <thead>
+            <tr style="border-bottom: 1px solid var(--border-color); text-align: left; color: var(--text-muted);">
+              <th style="padding: 0.6rem 0.5rem; width: 65px;">Ordem</th>
+              <th style="padding: 0.6rem 0.5rem;">Nome / Escopo</th>
+              <th style="padding: 0.6rem 0.5rem; text-align: center; width: 85px;">Livros</th>
+              <th style="padding: 0.6rem 0.5rem; text-align: right; width: 200px;">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${categories.map((c, idx) => `
+              <tr style="border-bottom: 1px solid var(--border-color);" data-id="${c.id}" data-name="${escapeHtml(c.name)}">
+                <td style="padding: 0.6rem 0.5rem; vertical-align: middle;">
+                  <div style="display: flex; gap: 0.2rem; align-items: center;">
+                    <button class="btn btn-icon btn-cat-up" data-idx="${idx}" title="Mover para cima" ${idx === 0 ? "disabled" : ""} style="padding: 2px 6px; font-size: 0.75rem;">▲</button>
+                    <button class="btn btn-icon btn-cat-down" data-idx="${idx}" title="Mover para baixo" ${idx === categories.length - 1 ? "disabled" : ""} style="padding: 2px 6px; font-size: 0.75rem;">▼</button>
+                  </div>
+                </td>
+                <td style="padding: 0.6rem 0.5rem; vertical-align: middle;">
+                  <strong style="color: var(--text-main); font-size: 0.88rem;">${escapeHtml(c.name)}</strong>
+                  ${c.description ? `<div style="font-size: 0.76rem; color: var(--text-muted); margin-top: 2px;">${escapeHtml(c.description)}</div>` : ""}
+                </td>
+                <td style="padding: 0.6rem 0.5rem; text-align: center; vertical-align: middle;">
+                  <span class="badge-taxonomy" style="background: var(--bg-tertiary);">${c.book_count || 0}</span>
+                </td>
+                <td style="padding: 0.6rem 0.5rem; text-align: right; vertical-align: middle;">
+                  <div style="display: flex; gap: 0.35rem; justify-content: flex-end;">
+                    <button class="btn btn-subtle btn-edit-category" data-id="${c.id}" data-name="${escapeHtml(c.name)}" data-desc="${escapeHtml(c.description || '')}" data-order="${c.display_order || 0}" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">Editar</button>
+                    <button class="btn btn-subtle btn-merge-category" data-id="${c.id}" data-name="${escapeHtml(c.name)}" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">Mesclar</button>
+                    <button class="btn btn-subtle btn-delete-category" data-id="${c.id}" data-name="${escapeHtml(c.name)}" style="font-size: 0.75rem; padding: 0.25rem 0.5rem; color: var(--danger);">Excluir</button>
+                  </div>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+
+      const handleReorder = async (fromIdx, toIdx) => {
+        const newOrder = [...categories];
+        const [moved] = newOrder.splice(fromIdx, 1);
+        newOrder.splice(toIdx, 0, moved);
+        const categoryIds = newOrder.map(x => x.id);
+        const r = await fetch("/api/categories/reorder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ category_ids: categoryIds })
+        });
+        if (r.ok) {
+          await loadAdminCategoriesTab();
+          await loadTaxonomyTree();
+        }
+      };
+
+      container.querySelectorAll(".btn-cat-up").forEach(btn => {
+        btn.onclick = () => {
+          const idx = parseInt(btn.getAttribute("data-idx"), 10);
+          if (idx > 0) handleReorder(idx, idx - 1);
+        };
+      });
+
+      container.querySelectorAll(".btn-cat-down").forEach(btn => {
+        btn.onclick = () => {
+          const idx = parseInt(btn.getAttribute("data-idx"), 10);
+          if (idx < categories.length - 1) handleReorder(idx, idx + 1);
+        };
+      });
+
+      container.querySelectorAll(".btn-edit-category").forEach(btn => {
+        btn.onclick = () => {
+          openCategoryModal({
+            id: btn.getAttribute("data-id"),
+            name: btn.getAttribute("data-name"),
+            description: btn.getAttribute("data-desc"),
+            display_order: btn.getAttribute("data-order")
+          });
+        };
+      });
+
+      container.querySelectorAll(".btn-merge-category").forEach(btn => {
+        btn.onclick = () => {
+          openMergeModal(btn.getAttribute("data-id"), btn.getAttribute("data-name"), categories);
+        };
+      });
+
+      container.querySelectorAll(".btn-delete-category").forEach(btn => {
+        btn.onclick = async () => {
+          const catId = btn.getAttribute("data-id");
+          const catName = btn.getAttribute("data-name");
+          if (!confirm(`Tem certeza de que deseja excluir a categoria "${catName}"? Os livros não serão removidos do acervo.`)) return;
+
+          const r = await fetch(`/api/categories/${encodeURIComponent(catId)}`, { method: "DELETE" });
+          if (r.ok) {
+            await loadAdminCategoriesTab();
+            await loadTaxonomyTree();
+          } else {
+            alert("Erro ao excluir categoria.");
+          }
+        };
+      });
+
+    } catch (e) {
+      console.error("Erro ao carregar categorias no painel admin:", e);
+    }
   }
 
   async function loadAdminUsersTab() {

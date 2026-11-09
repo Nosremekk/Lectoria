@@ -1,4 +1,4 @@
-# Lectoria — Servidor Pessoal de Livros Digitais (v1.5.1 — Biblioteca Viva)
+# Lectoria — Servidor Pessoal de Livros Digitais (v1.5.2 — Refinamento da Biblioteca)
 
 O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para organização, identificação inteligente, automação e leitura colaborativa de documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
 
@@ -8,7 +8,12 @@ Foi concebido para operar perfeitamente mesmo em hardware modesto — como compu
 
 ## 1. Principais Recursos
 
-- **Biblioteca Viva: Camada Multiusuário e Social "Nossa Biblioteca" (v1.5.0)**:
+- **Refinamento Mobile, Categorias Customizáveis e BrasilAPI (v1.5.2)**:
+  - **Experiência Mobile-First**: Interface de descoberta e biblioteca otimizada para smartphones e tablets (320px a 1280px), sem qualquer overflow horizontal (`scrollWidth <= clientWidth`), com painel compacto colapsável de filtros e prateleiras horizontais com rolagem contida.
+  - **Gestão Completa de Categorias Customizáveis (Schema v9)**: Criação, edição, reordenação prioritária (Subir/Descer), mesclagem e exclusão segura de categorias no painel administrativo, suporte a livros com múltiplas categorias, filtro dedicado "Sem categoria" e editor de tags de categoria diretamente no modal de detalhes da obra.
+  - **Enriquecimento com BrasilAPI e Normalização de Autores**: Suporte nativo à BrasilAPI para busca de metadados por ISBN, normalização reversível de nomes de autores nacionais/compostos ("Sobrenome, Nome") e regras contextuais refinadas de classificação.
+  - **Correção do Contrato de Leitura**: Prevenção de falso auto-completar em obras de página única ou abertura inicial de EPUBs, novo controle manual de status de leitura (*Não lido*, *Lendo*, *Concluído*) e isolamento multiusuário estrito.
+- **Biblioteca Viva: Camada Multiusuário e Social "Nossa Biblioteca" (v1.5.0/v1.5.1)**:
   - Espaço comunitário opcional (**Nossa Biblioteca**) com feed de atividades de leitura, avaliações (1 a 5 estrelas), resenhas, listas de *Favoritos* e *Quero Ler*, recomendações diretas entre leitores e mural de citações/anotações compartilhadas com comentários.
   - **Privacidade Estrita por Padrão (`user_privacy_settings`)**: Todos os recursos de compartilhamento nascem desativados (`0`). Anotações, destaques, desenhos e progresso permanecem 100% privados por usuário, e nem mesmo administradores têm acesso irrestrito às anotações privadas de outros leitores.
 - **Pipeline Bibliográfico Progressivo de 5 Estágios e Proveniência (v1.5.0)**:

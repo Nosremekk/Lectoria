@@ -2017,6 +2017,277 @@ kbd {
   }
 }
 
+/* =========================================================================
+   LECTORIA v1.5.2 — CONTROLES MOBILE, BOTÃO DE FILTROS E RESPONSIVIDADE
+   ========================================================================= */
+
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+.btn-mobile-filters-toggle {
+  display: none;
+  width: 100%;
+  justify-content: center;
+  padding: 0.55rem 0.9rem;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  margin-top: 0.4rem;
+}
+
+.badge-filter-count {
+  background-color: var(--accent);
+  color: #fff;
+  border-radius: var(--radius-full);
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.1rem 0.45rem;
+  margin-left: 0.35rem;
+  line-height: 1;
+}
+
+.shelf-see-all-btn {
+  font-size: 0.78rem;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid rgba(212, 106, 78, 0.35);
+  border-radius: var(--radius-sm);
+  padding: 0.2rem 0.55rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.shelf-see-all-btn:hover {
+  background-color: var(--accent-subtle);
+  border-color: var(--accent);
+}
+
+.category-admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.category-admin-table th {
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  background-color: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.category-admin-table td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.category-badge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+}
+
+.category-chip-remove {
+  background: none;
+  border: none;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0 0.1rem;
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0.65rem 0.85rem;
+    gap: 0.65rem;
+  }
+  .brand {
+    font-size: 1.25rem;
+  }
+  .header-controls {
+    justify-content: space-between;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .search-box {
+    width: 100%;
+    min-width: unset;
+  }
+  .main-view-nav {
+    padding: 0.35rem 0.75rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .main-view-tabs {
+    flex-wrap: nowrap;
+    gap: 0.35rem;
+  }
+  .main-nav-tab-btn {
+    padding: 0.45rem 0.75rem;
+    font-size: 0.82rem;
+    white-space: nowrap;
+  }
+  .main-container {
+    padding: 0.85rem 0.65rem;
+    max-width: 100vw;
+  }
+  .library-filter-tabs {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+    padding-bottom: 0.6rem;
+  }
+  .status-tabs {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 0.25rem;
+    gap: 0.3rem;
+  }
+  .tab-btn {
+    padding: 0.38rem 0.65rem;
+    font-size: 0.8rem;
+    flex-shrink: 0;
+  }
+  .btn-mobile-filters-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .filter-actions-collapsible {
+    display: none;
+    flex-direction: column;
+    width: 100%;
+    gap: 0.5rem;
+    padding: 0.65rem;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    margin-top: 0.35rem;
+  }
+  .filter-actions-collapsible.active {
+    display: flex;
+  }
+  .filter-actions-collapsible select,
+  .filter-actions-collapsible button {
+    width: 100%;
+  }
+  .taxonomy-filters-collapsible {
+    display: none;
+    flex-direction: column;
+    width: 100%;
+    gap: 0.5rem;
+    padding: 0.65rem;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    margin-top: 0.35rem;
+  }
+  .taxonomy-filters-collapsible.active {
+    display: flex;
+  }
+  .taxonomy-select {
+    max-width: 100%;
+    width: 100%;
+  }
+  .shelf-wrapper {
+    gap: 0.5rem;
+    max-width: 100vw;
+  }
+  .shelf-header {
+    padding: 0 0.15rem;
+  }
+  .shelf-title {
+    font-size: 1.1rem;
+  }
+  .shelf-row {
+    gap: 0.75rem;
+    padding-left: 0.15rem;
+    padding-right: 0.15rem;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .shelf-card {
+    flex: 0 0 132px;
+    max-width: 132px;
+  }
+  .shelf-info {
+    padding: 0.5rem 0.55rem;
+  }
+  .shelf-book-title {
+    font-size: 0.82rem;
+  }
+  .shelf-book-author {
+    font-size: 0.72rem;
+  }
+  .books-grid {
+    grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+    gap: 0.85rem;
+  }
+  .book-info {
+    padding: 0.65rem 0.65rem 0.45rem;
+  }
+  .book-title {
+    font-size: 0.88rem;
+  }
+  .book-author {
+    font-size: 0.75rem;
+  }
+  .list-item {
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    padding: 0.65rem 0.8rem;
+  }
+  .list-progress {
+    max-width: 100%;
+    width: 100%;
+    flex: 1 1 100%;
+  }
+  .cover-modal-layout {
+    flex-direction: column;
+    align-items: center;
+  }
+  .admin-subnav {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 0.4rem;
+  }
+  .admin-tab-btn {
+    white-space: nowrap;
+    font-size: 0.78rem;
+    padding: 0.35rem 0.65rem;
+  }
+}
+
+@media (max-width: 390px) {
+  .books-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.65rem;
+  }
+  .shelf-card {
+    flex: 0 0 120px;
+    max-width: 120px;
+  }
+}
+
 @media (max-width: 768px) {
   .app-header {
     flex-direction: column;

@@ -894,3 +894,108 @@ def test_discovery_interface_and_modals_across_devices(e2e_server, browser_insta
     context.close()
 
 
+@pytest.mark.parametrize(
+    "view_name,w,h",
+    [
+        ("mobile_320", 320, 568),
+        ("mobile_375", 375, 667),
+        ("mobile_390", 390, 844),
+        ("tablet_768", 768, 1024),
+        ("desktop_1280", 1280, 800),
+    ],
+)
+def test_v152_mobile_refinement_layout_and_collapsible_filters(e2e_server, browser_instance, view_name, w, h):
+    """
+    Validação da experiência mobile e layout da v1.5.2:
+    - Zero overflow horizontal em 320px, 375px, 390px, 768px e 1280px.
+    - Funcionamento do botão compacto de alternância dos filtros no mobile.
+    - Grid responsivo de livros e prateleiras com rolagem restrita.
+    """
+    base_url = e2e_server["base_url"]
+    import urllib.request
+    import json
+
+    try:
+        req_setup = urllib.request.Request(
+            f"{base_url}/api/auth/setup",
+            data=json.dumps({"username": "admin", "password": "AdminSenha123!", "display_name": "Admin"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req_setup) as _:
+            pass
+    except Exception:
+        pass
+
+    admin_token = None
+    try:
+        req_login = urllib.request.Request(
+            f"{base_url}/api/auth/login",
+            data=json.dumps({"username": "admin", "password": "AdminSenha123!"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req_login) as resp:
+            for header_val in resp.headers.get_all("Set-Cookie", []):
+                if "lectoria_session=" in header_val:
+                    admin_token = header_val.split("lectoria_session=")[1].split(";")[0]
+    except Exception:
+        pass
+
+    context = browser_instance.new_context(viewport={"width": w, "height": h})
+    if admin_token:
+        context.add_cookies([{
+            "name": "lectoria_session",
+            "value": admin_token,
+            "domain": "127.0.0.1",
+            "path": "/",
+        }])
+
+    page = context.new_page()
+
+    page.goto(base_url)
+    page.wait_for_timeout(500)
+
+    # Verifica overflow horizontal no discovery
+    overflow_metrics = page.evaluate("""() => {
+        const sw = document.documentElement.scrollWidth;
+        const cw = document.documentElement.clientWidth;
+        return { sw, cw, hasOverflow: sw > cw };
+    }""")
+    assert not overflow_metrics["hasOverflow"], f"Overflow horizontal na Descoberta em {view_name}: {overflow_metrics}"
+
+    # Alterna para a aba Biblioteca
+    page.click("#tab-nav-library")
+    page.wait_for_timeout(400)
+
+    # Verifica overflow horizontal na biblioteca
+    lib_overflow = page.evaluate("""() => {
+        const sw = document.documentElement.scrollWidth;
+        const cw = document.documentElement.clientWidth;
+        return { sw, cw, hasOverflow: sw > cw };
+    }""")
+    assert not lib_overflow["hasOverflow"], f"Overflow horizontal na Biblioteca em {view_name}: {lib_overflow}"
+
+    # Em telas mobile (<= 768px), valida botão de filtros colapsáveis
+    if w <= 768:
+        toggle_btn = page.query_selector("#btn-toggle-filters-mobile")
+        assert toggle_btn is not None
+        assert toggle_btn.is_visible()
+
+        # Clica para abrir o painel
+        page.click("#btn-toggle-filters-mobile")
+        page.wait_for_timeout(300)
+        is_active = page.evaluate("() => document.getElementById('collapsible-filters-panel').classList.contains('active')")
+        assert is_active is True
+
+        # Clica para fechar o painel
+        page.click("#btn-toggle-filters-mobile")
+        page.wait_for_timeout(300)
+        is_closed = page.evaluate("() => !document.getElementById('collapsible-filters-panel').classList.contains('active')")
+        assert is_closed is True
+
+    shot_path = SCREENSHOTS_DIR / f"v152_mobile_refinement_{view_name}.png"
+    page.screenshot(path=str(shot_path), full_page=False)
+    assert shot_path.exists() and shot_path.stat().st_size > 1000
+
+    context.close()
+
+

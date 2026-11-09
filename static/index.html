@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="pt-BR" data-theme="dark" data-app-version="1.5.1">
+<html lang="pt-BR" data-theme="dark" data-app-version="1.5.2">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lectoria — Biblioteca Pessoal</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=1.5.1">
+  <link rel="stylesheet" href="/static/css/style.css?v=1.5.2">
 </head>
 <body>
   <header class="app-header">
@@ -152,7 +152,16 @@
           <button class="tab-btn" data-status="want_to_read">Quero Ler</button>
         </div>
 
-        <div class="filter-actions">
+        <!-- Botão compacto de alternância do painel de filtros em telas pequenas -->
+        <button id="btn-toggle-filters-mobile" class="btn btn-mobile-filters-toggle" type="button" aria-expanded="false" aria-controls="collapsible-filters-panel">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/>
+          </svg>
+          <span>Filtros &amp; Ordenação</span>
+          <span id="active-filters-count-badge" class="badge-filter-count" style="display: none;">0</span>
+        </button>
+
+        <div id="collapsible-filters-panel" class="filter-actions filter-actions-collapsible">
           <select id="collection-select" class="collection-select" title="Filtrar por Coleção">
             <option value="">Todas as coleções</option>
             <!-- Populado via JavaScript -->
@@ -186,9 +195,10 @@
       </div>
 
       <!-- Barra de Filtros Multidimensionais e Taxonomia -->
-      <div class="taxonomy-filters-bar">
+      <div id="taxonomy-filters-container" class="taxonomy-filters-bar taxonomy-filters-collapsible">
         <select id="category-select" class="taxonomy-select" title="Filtrar por Categoria Principal">
           <option value="">Todas as Categorias</option>
+          <option value="__uncategorized__">Sem categoria</option>
         </select>
 
         <select id="subcategory-select" class="taxonomy-select" title="Filtrar por Subcategoria">
@@ -323,10 +333,11 @@
       <div class="admin-subnav" role="tablist">
         <button class="admin-tab-btn active" data-admintab="dashboard">1. Dashboard</button>
         <button class="admin-tab-btn" data-admintab="library">2. Gestão da Biblioteca</button>
-        <button class="admin-tab-btn" data-admintab="users">3. Gestão de Usuários</button>
-        <button class="admin-tab-btn" data-admintab="automation">4. Automação &amp; Fila</button>
-        <button class="admin-tab-btn" data-admintab="metadata">5. Revisão Bibliográfica</button>
-        <button class="admin-tab-btn" data-admintab="maintenance">6. Manutenção &amp; Auditoria</button>
+        <button class="admin-tab-btn" data-admintab="categories">3. Categorias</button>
+        <button class="admin-tab-btn" data-admintab="users">4. Gestão de Usuários</button>
+        <button class="admin-tab-btn" data-admintab="automation">5. Automação &amp; Fila</button>
+        <button class="admin-tab-btn" data-admintab="metadata">6. Revisão Bibliográfica</button>
+        <button class="admin-tab-btn" data-admintab="maintenance">7. Manutenção &amp; Auditoria</button>
       </div>
 
       <!-- Aba Admin 1: Dashboard -->
@@ -380,7 +391,33 @@
         </div>
       </div>
 
-      <!-- Aba Admin 3: Gestão de Usuários -->
+      <!-- Aba Admin 3: Gestão de Categorias -->
+      <div id="admin-pane-categories" class="admin-tab-pane" style="display: none;">
+        <div class="admin-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem;">
+            <div>
+              <h3>Categorias da Biblioteca</h3>
+              <p style="font-size: 0.84rem; color: var(--text-muted);">
+                Organize, crie, reordene e mescle as categorias do acervo. A exclusão de uma categoria nunca remove livros.
+              </p>
+            </div>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+              <button id="btn-admin-reclassify-auto" class="btn" title="Reclassificar livros automáticos com as novas regras sem tocar em manuais">
+                Reclassificar Automáticos
+              </button>
+              <button id="btn-admin-open-create-cat" class="btn btn-primary">+ Nova Categoria</button>
+            </div>
+          </div>
+
+          <div id="admin-categories-feedback" style="display: none; font-size: 0.84rem; padding: 0.45rem 0.75rem; border-radius: var(--radius-sm); margin-bottom: 0.75rem;"></div>
+
+          <div id="admin-categories-table-container">
+            <!-- Tabela interativa de categorias com contagem de livros, subida/descida e ações -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Aba Admin 4: Gestão de Usuários -->
       <div id="admin-pane-users" class="admin-tab-pane" style="display: none;">
         <div class="admin-card">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
@@ -761,6 +798,9 @@
               <button id="btn-details-favorite" class="btn btn-subtle" style="flex: 1;" title="Favoritar Obra">☆ Favorito</button>
               <button id="btn-details-want-to-read" class="btn btn-subtle" style="flex: 1;" title="Marcar Quero Ler">+ Quero Ler</button>
             </div>
+            <button id="btn-details-toggle-status" class="btn btn-subtle btn-block" style="margin-top: 0.4rem; width: 100%;" title="Alternar status de leitura da sua conta">
+              Status: Não lido
+            </button>
             <button id="btn-details-recommend" class="btn btn-subtle btn-block" style="margin-top: 0.4rem; width: 100%;" title="Recomendar para outro leitor">
               Indicar para um Leitor
             </button>
@@ -897,6 +937,17 @@
                   <div style="flex: 1;">
                     <label class="form-label" for="edit-field-isbn10">ISBN-10</label>
                     <input type="text" id="edit-field-isbn10" class="form-input">
+                  </div>
+                </div>
+
+                <div class="form-row" style="display: flex; gap: 0.5rem; flex-direction: column;">
+                  <label class="form-label">Categorias Atribuídas</label>
+                  <div id="details-edit-categories-chips" style="display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.35rem;"></div>
+                  <div style="display: flex; gap: 0.5rem;">
+                    <select id="details-add-category-select" class="form-input" style="flex: 1;">
+                      <option value="">Selecione uma categoria para adicionar...</option>
+                    </select>
+                    <button type="button" id="btn-details-add-category" class="btn">+ Adicionar Categoria</button>
                   </div>
                 </div>
 
@@ -1103,6 +1154,65 @@
     </div>
   </div>
 
-  <script src="/static/js/app.js?v=1.5.1"></script>
+  <!-- Modal: Criar / Editar Categoria (Admin) -->
+  <div id="modal-category-edit" class="modal-overlay">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 id="category-modal-title" class="modal-title">Categoria da Biblioteca</h3>
+        <button id="btn-close-cat-modal" class="btn btn-icon" title="Fechar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="cat-modal-id" value="">
+        <div class="form-group">
+          <label class="form-label" for="cat-modal-name">Nome da Categoria</label>
+          <input type="text" id="cat-modal-name" class="form-input" placeholder="Ex: Filosofia, Inteligência Artificial...">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="cat-modal-desc">Descrição / Escopo</label>
+          <textarea id="cat-modal-desc" class="form-input" rows="2" placeholder="Breve resumo das obras pertencentes a esta categoria..."></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="cat-modal-order">Ordem de Exibição (Número)</label>
+          <input type="number" id="cat-modal-order" class="form-input" placeholder="Ex: 10, 20, 30...">
+        </div>
+        <div id="cat-modal-error" style="display: none; color: var(--danger); font-size: 0.82rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-cat-modal" class="btn">Cancelar</button>
+        <button id="btn-save-cat-modal" class="btn btn-primary">Salvar Categoria</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Mesclar Categorias (Admin) -->
+  <div id="modal-category-merge" class="modal-overlay">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Mesclar Categorias</h3>
+        <button id="btn-close-merge-modal" class="btn btn-icon" title="Fechar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.84rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+          Todos os livros da categoria de origem serão transferidos para a de destino. A categoria de origem será removida com segurança.
+        </p>
+        <input type="hidden" id="merge-source-id" value="">
+        <div class="form-group">
+          <label class="form-label">Categoria de Origem</label>
+          <div id="merge-source-name" style="font-weight: 600; color: var(--accent); padding: 0.4rem 0;"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="merge-target-select">Categoria de Destino</label>
+          <select id="merge-target-select" class="form-input"></select>
+        </div>
+        <div id="merge-modal-error" style="display: none; color: var(--danger); font-size: 0.82rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-merge-modal" class="btn">Cancelar</button>
+        <button id="btn-confirm-merge-modal" class="btn btn-primary">Confirmar Mesclagem</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js?v=1.5.2"></script>
 </body>
 </html>

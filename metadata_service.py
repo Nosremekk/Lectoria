@@ -75,7 +75,8 @@ OPENLIBRARY_BASE_URL = "https://openlibrary.org"
 OPENLIBRARY_COVERS_BASE = "https://covers.openlibrary.org"
 GOOGLE_BOOKS_BASE_URL = "https://www.googleapis.com/books/v1"
 CROSSREF_BASE_URL = "https://api.crossref.org"
-USER_AGENT = "Lectoria-Library-Server/1.5.0 (self-hosted; +https://github.com/Nosremekk/Lectoria)"
+BRASILAPI_BASE_URL = "https://brasilapi.com.br/api/isbn/v1"
+USER_AGENT = "Lectoria-Library-Server/1.5.2 (self-hosted; +https://github.com/Nosremekk/Lectoria)"
 
 # Controle de taxa (Rate limiting) e diagnóstico da última chamada
 _LAST_OPENLIBRARY_CALL = 0.0
@@ -195,6 +196,31 @@ def normalize_text_for_matching(text: Optional[str]) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+def normalize_author_name(raw_author: Optional[str]) -> Optional[str]:
+    """
+    Limpa nomes de autores inválidos/placeholders e converte o formato bibliográfico
+    'Sobrenome, Nome' (ex: 'Stallings, William' -> 'William Stallings') quando aplicável.
+    """
+    if not raw_author:
+        return None
+    cleaned = str(raw_author).strip(" \t\r\n-–—:;,")
+    if not cleaned:
+        return None
+    norm = normalize_text_for_matching(cleaned)
+    if norm in (
+        "autor desconhecido", "unknown", "autor nao informado", "sem autor",
+        "admin", "user", "desconhecido", "none", "null", "na", "n a",
+    ):
+        return None
+    # Se possui exatamente uma vírgula e parece inversão 'Sobrenome, Nome'
+    if cleaned.count(",") == 1 and ";" not in cleaned and " e " not in cleaned.lower() and " and " not in cleaned.lower():
+        left, right = [p.strip() for p in cleaned.split(",", 1)]
+        if left and right and 1 <= len(left.split()) <= 4 and 1 <= len(right.split()) <= 4:
+            if not any(ch.isdigit() for ch in cleaned):
+                return f"{right} {left}".strip()
+    return cleaned
+
+
 def parse_structured_title_and_author(
     raw_title: Optional[str],
     raw_author: Optional[str] = None,
@@ -240,11 +266,7 @@ def parse_structured_title_and_author(
     text = re.sub(r"_+", " ", text).strip()
     text = re.sub(r"\s+", " ", text).strip(" -–—:;,.")
 
-    inferred_author = (raw_author or "").strip() or None
-    if inferred_author and normalize_text_for_matching(inferred_author) in (
-        "autor desconhecido", "unknown", "autor nao informado", "sem autor", "admin", "user",
-    ):
-        inferred_author = None
+    inferred_author = normalize_author_name(raw_author)
 
     # Se não há autor explícito e o título contém " - " ou " — ", avalia separação Autor / Título
     parts = [p.strip() for p in re.split(r"\s+[-–—]\s+", text) if p.strip()]
@@ -966,6 +988,32 @@ class OpenLibraryClient:
         works = data.get("works", [])
         work_id = works[0].get("key", "").split("/")[-1] if works and isinstance(works[0], dict) else None
 
+        # Tenta recuperar sinopse (description) e subjects
+        description = None
+        raw_desc = data.get("description")
+        if isinstance(raw_desc, dict) and "value" in raw_desc:
+            description = raw_desc["value"]
+        elif isinstance(raw_desc, str):
+            description = raw_desc
+
+        subjects = list(data.get("subjects", []))
+        if not subjects and "genres" in data:
+            subjects = list(data.get("genres", []))
+
+        # Se faltar descrição ou subjects e houver work_id, consulta o Work na Open Library
+        if work_id and (not description or not subjects):
+            work_url = f"{OPENLIBRARY_BASE_URL}/works/{work_id}.json"
+            work_data = _safe_http_get_json(work_url, cache_key=f"ol:work:{work_id}", source="openlibrary")
+            if work_data and isinstance(work_data, dict):
+                if not description:
+                    w_desc = work_data.get("description")
+                    if isinstance(w_desc, dict) and "value" in w_desc:
+                        description = w_desc["value"]
+                    elif isinstance(w_desc, str):
+                        description = w_desc
+                if not subjects and "subjects" in work_data:
+                    subjects = [s if isinstance(s, str) else s.get("name", "") for s in work_data.get("subjects", [])]
+
         return {
             "source": "openlibrary",
             "external_id": data.get("key", "").split("/")[-1] or searched_isbn,
@@ -975,10 +1023,11 @@ class OpenLibraryClient:
             "publisher": publisher,
             "publish_year": publish_year,
             "edition": data.get("edition_name"),
+            "description": description,
             "isbn10": isbn10,
             "isbn13": isbn13,
             "cover_url": cover_url,
-            "subjects": [],
+            "subjects": [s for s in subjects if s],
             "raw_data": data,
         }
 
@@ -1280,6 +1329,66 @@ class CrossrefClient:
             "subjects": item.get("subject", [])[:8],
             "raw_data": item,
         }
+
+
+class BrasilApiClient:
+    """Adaptador para a BrasilAPI (consulta direta ao acervo brasileiro CBL/Mercado Editorial por ISBN)."""
+
+    @staticmethod
+    def lookup_isbn(isbn: str) -> Optional[Dict[str, Any]]:
+        clean = clean_isbn(isbn)
+        if not (validate_isbn13(clean) or validate_isbn10(clean)):
+            return None
+
+        cache_key = f"brasilapi:isbn:{clean}"
+        url = f"{BRASILAPI_BASE_URL}/{clean}"
+        data = _safe_http_get_json(url, cache_key=cache_key, source="brasilapi", timeout=6.0)
+        if not data or not isinstance(data, dict) or not data.get("title"):
+            return None
+
+        title = data.get("title")
+        subtitle = data.get("subtitle")
+        full_title = f"{title}: {subtitle}" if (subtitle and subtitle.lower() not in title.lower()) else title
+
+        authors_list = data.get("authors") or []
+        authors_str = ", ".join(authors_list) if isinstance(authors_list, list) else str(authors_list)
+        norm_author = normalize_author_name(authors_str)
+
+        subjects = data.get("subjects") or []
+        if isinstance(subjects, str):
+            subjects = [subjects]
+
+        cover_url = data.get("cover_url")
+        year = None
+        if data.get("year"):
+            try:
+                year = int(data["year"])
+            except Exception:
+                pass
+
+        isbn_val = clean_isbn(data.get("isbn") or clean)
+        isbn10 = isbn_val if len(isbn_val) == 10 else None
+        isbn13 = isbn_val if len(isbn_val) == 13 else isbn10_to_isbn13(isbn_val)
+
+        return {
+            "source": "brasilapi",
+            "external_id": clean,
+            "work_id": None,
+            "title": full_title,
+            "subtitle": subtitle,
+            "author": norm_author,
+            "publisher": data.get("publisher"),
+            "publish_year": year,
+            "language": "pt",
+            "description": data.get("synopsis"),
+            "edition": data.get("edition"),
+            "isbn10": isbn10,
+            "isbn13": isbn13,
+            "cover_url": cover_url,
+            "subjects": [s for s in subjects if s],
+            "raw_data": data,
+        }
+
 
 
 # ==============================================================================
@@ -1593,8 +1702,14 @@ def identify_book_metadata(book_meta: Dict[str, Any]) -> List[Dict[str, Any]]:
     isbn10 = book_meta.get("isbn10")
     primary_isbn = isbn13 or isbn10
 
-    # 1. Consulta por ISBN
+    # 1. Consulta por ISBN (Open Library, Google Books e BrasilAPI)
     if primary_isbn:
+        # BrasilAPI prioritária para edições brasileiras (ISBN 97885 / 97865)
+        br_res = BrasilApiClient.lookup_isbn(primary_isbn)
+        if br_res:
+            raw_candidates.append(br_res)
+            seen_ids.add(f"brasilapi:{br_res['external_id']}")
+
         ol_res = OpenLibraryClient.lookup_isbn(primary_isbn)
         if ol_res:
             raw_candidates.append(ol_res)
@@ -1604,6 +1719,11 @@ def identify_book_metadata(book_meta: Dict[str, Any]) -> List[Dict[str, Any]]:
         if gb_res and f"gb:{gb_res['external_id']}" not in seen_ids:
             raw_candidates.append(gb_res)
             seen_ids.add(f"gb:{gb_res['external_id']}")
+
+        cr_res = CrossrefClient.lookup_isbn(primary_isbn)
+        if cr_res and f"cr:{cr_res['external_id']}" not in seen_ids:
+            raw_candidates.append(cr_res)
+            seen_ids.add(f"cr:{cr_res['external_id']}")
 
     # Avalia se já há match confiável por ISBN (>= 85)
     if raw_candidates:

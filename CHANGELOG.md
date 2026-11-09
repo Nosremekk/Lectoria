@@ -7,6 +7,35 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.5.2] - 2026-11-09
+
+### Adicionado
+- **Experiência Mobile Refinada e Layout Mobile-First (`static/css/style.css`, `static/index.html`, `static/js/app.js`)**:
+  - Layout mobile-first completo validado em viewports de 320px, 375px, 390px, 768px e 1280px com ausência estrita de overflow horizontal (`scrollWidth <= clientWidth`).
+  - Painel compacto colapsável de filtros (`#collapsible-filters-panel`) em telas pequenas acionado por botão dedicado (`#btn-toggle-filters-mobile`) com contador dinâmico de filtros ativos (`#active-filters-count-badge`).
+  - Prateleiras horizontais com rolagem estritamente contida em `.shelf-row` e controles de navegação suaves sem vazamento de largura.
+  - Botão **"Ver todos"** (`.shelf-see-all-btn`) em cada prateleira de descoberta, permitindo navegar instantaneamente para a biblioteca com o filtro temático correspondente já aplicado.
+- **Gestão de Categorias Customizáveis e Migração SQLite Schema v9 (`database.py`, `taxonomy_service.py`, `main.py`)**:
+  - Nova tabela `categories` com `id`, `name`, `description`, `display_order` e `is_custom`.
+  - Nova tabela associativa `book_categories` para vinculação multi-categoria com suporte a trava manual (`is_manual = 1`).
+  - Migração idempotente e segura `SCHEMA_VERSION = 9` com salvaguarda automática (`lectoria_pre_migration_v8_to_v9_*.db.bak`).
+  - Aba de **Gestão de Categorias** no Painel Administrativo com operações completas: criação, edição de nome/descrição, reordenação por botões Subir/Descer, mesclagem (*merge*) de categorias e exclusão segura (com desvinculação em cascata e garantia absoluta de nunca excluir livros do disco ou banco).
+  - Suporte ao filtro **"Sem categoria"** (`__uncategorized__`) na barra de filtros e nas prateleiras.
+  - Gerenciamento de tags de categoria diretamente no modal de detalhes da obra com adição e remoção instantânea.
+- **Enriquecimento com BrasilAPI e Normalização de Metadados (`metadata_service.py`, `background_enricher.py`)**:
+  - Novo adapter de integração com a **BrasilAPI** (`https://brasilapi.com.br/api/isbn/v1/{isbn}`) com telemetria de latência e erros na tabela `metadata_provider_stats`.
+  - Normalização de autores compostos e brasileiros no formato "Sobrenome, Nome" (ex: "Machado de Assis, Joaquim Maria" → "Joaquim Maria Machado de Assis").
+  - Consulta de fallback automática à Open Library Work API para recuperação de sinopse e assuntos quando a edição não os contém.
+  - Regras contextuais expandidas para autores canônicos (Tanenbaum → Ciência e tecnologia > Computação, Platão → Filosofia, Guidorizzi → Ciência e tecnologia > Matemática/Cálculo).
+- **Contrato de Leitura e Correção de Conclusão Prematura (`progress.py`, `library.py`)**:
+  - Prevenção de falso auto-completar: documentos de página única ou abertura inicial de EPUBs não são marcados como "Concluído" indevidamente (`percentage = 0.0` para documentos com `<= 1` página).
+  - Campo `is_completed_manual` na tabela `reading_progress` e botão de alternância manual de status (`#btn-details-toggle-status`) no modal de detalhes da obra e biblioteca (`completed`, `in_progress`, `unread`).
+  - Isolamento estrito de progresso de leitura por usuário autenticado.
+
+### Modificado
+- Suíte de testes expandida para **185 testes aprovados** (com testes de unidade, integração e validação visual responsiva Playwright em 5 resoluções de tela).
+- Atualização da versão do projeto para `1.5.2` em backend, frontend e empacotamento.
+
 ## [1.5.1] - 2026-11-09
 
 ### Corrigido

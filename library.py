@@ -9,6 +9,7 @@ from datetime import datetime
 import json
 import logging
 import os
+import re
 import threading
 import uuid
 from pathlib import Path
@@ -27,6 +28,7 @@ from taxonomy_service import (
     map_raw_subjects_to_taxonomy,
     sync_book_taxonomy,
     get_book_taxonomy,
+    list_categories,
     TAXONOMY_TREE,
 )
 
@@ -412,6 +414,8 @@ def _scan_library_locked(source_id: Optional[int] = None) -> Dict[str, int]:
                             author=meta.get("author"),
                             raw_subjects=meta.get("subjects", []),
                             language=meta.get("language"),
+                            description=meta.get("description"),
+                            publisher=meta.get("publisher"),
                         )
                         sync_book_taxonomy(
                             book_id,
@@ -460,6 +464,7 @@ def get_books(
     fts_query: Optional[str] = None,
     favorite_only: bool = False,
     want_to_read_only: bool = False,
+    uncategorized: bool = False,
     user_id: int = 1,
 ) -> List[Dict[str, Any]]:
     """
@@ -507,6 +512,7 @@ def get_books(
                 p.total_pages as progress_total_pages,
                 p.percentage as progress_percentage,
                 p.progress_locator,
+                COALESCE(p.is_completed_manual, 0) as is_completed_manual,
                 p.updated_at as progress_updated_at,
                 br.rating as user_rating,
                 COALESCE(br.is_favorite, 0) as is_favorite,
@@ -535,22 +541,52 @@ def get_books(
                 sql += " AND b.id IN (SELECT fts.book_id FROM books_fts fts WHERE books_fts MATCH ?)"
                 params.append(match_str)
 
-        # Filtros de taxonomia
-        if category_filter:
-            sql += """ AND b.id IN (
-                SELECT bs.book_id FROM book_subjects bs
+        # Filtro de livros sem categoria ou por categoria específica
+        is_uncat_query = uncategorized or (
+            category_filter is not None
+            and category_filter.strip() in ("__uncategorized__", "uncategorized", "Sem categoria")
+        )
+        if is_uncat_query:
+            sql += """ AND NOT EXISTS (
+                SELECT 1 FROM book_categories bc WHERE bc.book_id = b.id
+            ) AND NOT EXISTS (
+                SELECT 1 FROM book_subjects bs
                 JOIN subjects s ON bs.subject_id = s.id
-                WHERE s.category = ?
+                WHERE bs.book_id = b.id
+                  AND s.category IS NOT NULL
+                  AND TRIM(s.category) != ''
+                  AND LOWER(TRIM(s.category)) != 'geral'
             )"""
-            params.append(category_filter)
+        elif category_filter and category_filter.strip():
+            cat_val = category_filter.strip()
+            sql += """ AND (
+                EXISTS (
+                    SELECT 1 FROM book_categories bc
+                    JOIN categories c ON bc.category_id = c.id
+                    WHERE bc.book_id = b.id AND c.name = ? COLLATE NOCASE
+                )
+                OR EXISTS (
+                    SELECT 1 FROM book_subjects bs
+                    JOIN subjects s ON bs.subject_id = s.id
+                    WHERE bs.book_id = b.id AND s.category = ? COLLATE NOCASE
+                )
+            )"""
+            params.extend([cat_val, cat_val])
 
-        if subcategory_filter:
-            sql += """ AND b.id IN (
-                SELECT bs.book_id FROM book_subjects bs
-                JOIN subjects s ON bs.subject_id = s.id
-                WHERE s.subcategory = ?
+        if subcategory_filter and subcategory_filter.strip():
+            sub_val = subcategory_filter.strip()
+            sql += """ AND (
+                EXISTS (
+                    SELECT 1 FROM book_categories bc
+                    WHERE bc.book_id = b.id AND bc.subcategory = ? COLLATE NOCASE
+                )
+                OR EXISTS (
+                    SELECT 1 FROM book_subjects bs
+                    JOIN subjects s ON bs.subject_id = s.id
+                    WHERE bs.book_id = b.id AND s.subcategory = ? COLLATE NOCASE
+                )
             )"""
-            params.append(subcategory_filter)
+            params.extend([sub_val, sub_val])
 
         if genre_filter:
             sql += """ AND b.id IN (
@@ -587,7 +623,7 @@ def get_books(
             sql += " AND b.identification_status = ?"
             params.append(identification_status)
 
-        # Filtro por favoritos ou quero ler
+        # Filtro por favoritos ou quero ler (isolado por user_id no JOIN de book_reviews)
         if favorite_only or status_filter == "favorites":
             sql += " AND COALESCE(br.is_favorite, 0) = 1"
 
@@ -615,13 +651,23 @@ def get_books(
             sql += " AND b.format = ?"
             params.append(format_filter)
 
-        # Filtro por status de leitura
-        if status_filter == "in_progress":
-            sql += " AND (p.current_page > 1 AND COALESCE(p.percentage, 0) < 100)"
+        # Predicados de status de leitura (partição mutuamente exclusiva por usuário)
+        completed_expr = (
+            "(COALESCE(p.is_completed_manual, 0) = 1 "
+            "OR (b.page_count > 1 AND COALESCE(p.percentage, 0) >= 99.9) "
+            "OR (b.page_count > 1 AND COALESCE(p.current_page, 1) >= b.page_count))"
+        )
+        if status_filter == "completed":
+            sql += f" AND {completed_expr}"
+        elif status_filter == "in_progress":
+            sql += f" AND ((COALESCE(p.current_page, 1) > 1 OR COALESCE(p.percentage, 0) > 0) AND NOT {completed_expr})"
         elif status_filter == "unread":
-            sql += " AND (p.current_page IS NULL OR (p.current_page = 1 AND COALESCE(p.percentage, 0) = 0))"
-        elif status_filter == "completed":
-            sql += " AND (COALESCE(p.percentage, 0) >= 100 OR (b.page_count > 0 AND p.current_page >= b.page_count))"
+            sql += (
+                " AND (p.id IS NULL OR ("
+                "COALESCE(p.current_page, 1) <= 1 "
+                "AND COALESCE(p.percentage, 0) <= 0 "
+                "AND COALESCE(p.is_completed_manual, 0) = 0))"
+            )
 
         # Ordenação
         order_clause = "DESC" if order.lower() == "desc" else "ASC"
@@ -654,6 +700,26 @@ def get_books(
             b["cover_url"] = f"/api/books/{b['id']}/cover?v={ver}" if ver else f"/api/books/{b['id']}/cover"
             b["is_favorite"] = bool(b.get("is_favorite"))
             b["want_to_read"] = bool(b.get("want_to_read"))
+            b["is_completed_manual"] = bool(b.get("is_completed_manual"))
+
+            cur_pg = b.get("current_page") or 0
+            pct = float(b.get("progress_percentage") or 0.0)
+            pg_cnt = b.get("page_count") or 0
+            is_comp = bool(
+                b["is_completed_manual"]
+                or (pg_cnt > 1 and pct >= 99.9)
+                or (pg_cnt > 1 and cur_pg >= pg_cnt)
+            )
+            b["is_completed"] = is_comp
+            if is_comp:
+                b["reading_status"] = "completed"
+                if pct < 100.0:
+                    b["progress_percentage"] = 100.0
+            elif cur_pg > 1 or pct > 0:
+                b["reading_status"] = "in_progress"
+            else:
+                b["reading_status"] = "unread"
+
             locks = b.get("manual_lock_fields")
             if isinstance(locks, str):
                 try:
@@ -685,10 +751,35 @@ def get_books(
                     coll_map[b_id] = []
                 coll_map[b_id].append({"id": row["id"], "name": row["name"]})
 
-            # Anexa taxonomia em lote (evita N+1 queries)
+            # Anexa categorias gerenciadas em lote (book_categories + categories)
             cursor.execute(
                 f"""
-                SELECT bs.book_id, s.name, s.category, s.subcategory, s.genre, s.origin, s.period
+                SELECT bc.book_id, c.name AS category, bc.subcategory, bc.is_manual, c.display_order
+                FROM book_categories bc
+                JOIN categories c ON bc.category_id = c.id
+                WHERE bc.book_id IN ({placeholders})
+                ORDER BY c.display_order ASC, c.name COLLATE NOCASE ASC
+                """,
+                book_ids,
+            )
+            managed_cat_map: Dict[str, Dict[str, Any]] = {
+                bid: {"categories": [], "subcategories": [], "is_manual": False}
+                for bid in book_ids
+            }
+            for row in cursor.fetchall():
+                bid = row["book_id"]
+                cat_name = row["category"]
+                if cat_name and cat_name not in managed_cat_map[bid]["categories"]:
+                    managed_cat_map[bid]["categories"].append(cat_name)
+                if row["subcategory"] and row["subcategory"] not in managed_cat_map[bid]["subcategories"]:
+                    managed_cat_map[bid]["subcategories"].append(row["subcategory"])
+                if row["is_manual"]:
+                    managed_cat_map[bid]["is_manual"] = True
+
+            # Anexa assuntos bibliográficos em lote (evita N+1 queries)
+            cursor.execute(
+                f"""
+                SELECT bs.book_id, s.name, s.category, s.subcategory, s.genre, s.origin, s.period, bs.is_manual
                 FROM book_subjects bs
                 JOIN subjects s ON bs.subject_id = s.id
                 WHERE bs.book_id IN ({placeholders})
@@ -697,12 +788,12 @@ def get_books(
                 book_ids,
             )
             tax_map: Dict[str, Dict[str, Any]] = {
-                bid: {"categories": set(), "subcategories": set(), "genres": set(), "origins": set(), "subjects": []}
+                bid: {"categories": set(), "subcategories": set(), "genres": set(), "origins": set(), "subjects": [], "is_manual": False}
                 for bid in book_ids
             }
             for row in cursor.fetchall():
                 bid = row["book_id"]
-                if row["category"]:
+                if row["category"] and row["category"].lower() != "geral":
                     tax_map[bid]["categories"].add(row["category"])
                 if row["subcategory"]:
                     tax_map[bid]["subcategories"].add(row["subcategory"])
@@ -710,17 +801,24 @@ def get_books(
                     tax_map[bid]["genres"].add(row["genre"])
                 if row["origin"]:
                     tax_map[bid]["origins"].add(row["origin"])
+                if row["is_manual"]:
+                    tax_map[bid]["is_manual"] = True
                 tax_map[bid]["subjects"].append(row["name"])
 
             for b in books:
-                b["collections"] = coll_map.get(b["id"], [])
+                bid = b["id"]
+                b["collections"] = coll_map.get(bid, [])
+                m_info = managed_cat_map.get(bid, {"categories": [], "subcategories": [], "is_manual": False})
                 tinfo = tax_map.get(
-                    b["id"],
-                    {"categories": set(), "subcategories": set(), "genres": set(), "origins": set(), "subjects": []},
+                    bid,
+                    {"categories": set(), "subcategories": set(), "genres": set(), "origins": set(), "subjects": [], "is_manual": False},
                 )
+                cats_list = m_info["categories"] if m_info["categories"] else sorted(list(tinfo["categories"]))
+                subcats_list = sorted(list(set(m_info["subcategories"]) | tinfo["subcategories"]))
                 b["taxonomy"] = {
-                    "categories": sorted(list(tinfo["categories"])),
-                    "subcategories": sorted(list(tinfo["subcategories"])),
+                    "categories": cats_list,
+                    "subcategories": subcats_list,
+                    "is_manual": bool(m_info["is_manual"] or tinfo["is_manual"]),
                     "genres": sorted(list(tinfo["genres"])),
                     "origins": sorted(list(tinfo["origins"])),
                     "genre": next(iter(tinfo["genres"]), None),
@@ -777,6 +875,7 @@ def get_book(book_id: str, user_id: int = 1) -> Dict[str, Any]:
                 p.total_pages as progress_total_pages,
                 p.percentage as progress_percentage,
                 p.progress_locator,
+                COALESCE(p.is_completed_manual, 0) as is_completed_manual,
                 p.updated_at as progress_updated_at,
                 br.rating as user_rating,
                 br.review_text as user_review_text,
@@ -833,6 +932,24 @@ def get_book(book_id: str, user_id: int = 1) -> Dict[str, Any]:
         data["cover_url"] = f"/api/books/{data['id']}/cover?v={ver}" if ver else f"/api/books/{data['id']}/cover"
         data["is_favorite"] = bool(data.get("is_favorite"))
         data["want_to_read"] = bool(data.get("want_to_read"))
+        data["is_completed_manual"] = bool(data.get("is_completed_manual"))
+        cur_pg = data.get("current_page") or 0
+        pct = float(data.get("progress_percentage") or 0.0)
+        pg_cnt = data.get("page_count") or 0
+        is_comp = bool(
+            data["is_completed_manual"]
+            or (pg_cnt > 1 and pct >= 99.9)
+            or (pg_cnt > 1 and cur_pg >= pg_cnt)
+        )
+        data["is_completed"] = is_comp
+        if is_comp:
+            data["reading_status"] = "completed"
+            if pct < 100.0:
+                data["progress_percentage"] = 100.0
+        elif cur_pg > 1 or pct > 0:
+            data["reading_status"] = "in_progress"
+        else:
+            data["reading_status"] = "unread"
 
         locks = data.get("manual_lock_fields")
         if isinstance(locks, str):
@@ -867,12 +984,80 @@ def get_book(book_id: str, user_id: int = 1) -> Dict[str, Any]:
         return data
 
 
+def set_book_reading_status(book_id: str, user_id: int, status: str) -> Dict[str, Any]:
+    """
+    Permite ao usuário marcar explicitamente um livro como:
+    - 'completed': concluído (percentage = 100.0, is_completed_manual = 1)
+    - 'in_progress': em andamento (is_completed_manual = 0, preserva página ou inicia na página 2 / 5%)
+    - 'unread': não iniciado (remove registro de reading_progress do usuário para o livro)
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, page_count FROM books WHERE id = ?;", (book_id,))
+        b_row = cursor.fetchone()
+        if not b_row:
+            raise BookNotFoundError(f"Livro '{book_id}' não encontrado.")
+        total_pages = max(int(b_row["page_count"] or 1), 1)
+
+        if status == "unread":
+            cursor.execute(
+                "DELETE FROM reading_progress WHERE user_id = ? AND book_id = ?;",
+                (user_id, book_id),
+            )
+        elif status == "completed":
+            cursor.execute(
+                """
+                INSERT INTO reading_progress (user_id, book_id, current_page, total_pages, percentage, is_completed_manual, updated_at)
+                VALUES (?, ?, ?, ?, 100.0, 1, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id, book_id) DO UPDATE SET
+                    current_page = MAX(reading_progress.current_page, excluded.total_pages),
+                    total_pages = MAX(reading_progress.total_pages, excluded.total_pages),
+                    percentage = 100.0,
+                    is_completed_manual = 1,
+                    updated_at = CURRENT_TIMESTAMP;
+                """,
+                (user_id, book_id, total_pages, total_pages),
+            )
+        elif status == "in_progress":
+            cursor.execute(
+                "SELECT current_page, total_pages, percentage FROM reading_progress WHERE user_id = ? AND book_id = ?;",
+                (user_id, book_id),
+            )
+            existing = cursor.fetchone()
+            cur_p = int(existing["current_page"]) if existing else 1
+            tot_p = max(int(existing["total_pages"]) if existing else total_pages, 1)
+            pct = float(existing["percentage"]) if existing else 0.0
+            if pct >= 99.9 or (cur_p <= 1 and pct <= 0.0):
+                cur_p = min(2, tot_p) if tot_p > 1 else 1
+                pct = round((cur_p / tot_p) * 100.0, 1) if tot_p > 1 else 5.0
+                if pct >= 100.0:
+                    pct = 50.0
+            cursor.execute(
+                """
+                INSERT INTO reading_progress (user_id, book_id, current_page, total_pages, percentage, is_completed_manual, updated_at)
+                VALUES (?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id, book_id) DO UPDATE SET
+                    current_page = excluded.current_page,
+                    total_pages = excluded.total_pages,
+                    percentage = excluded.percentage,
+                    is_completed_manual = 0,
+                    updated_at = CURRENT_TIMESTAMP;
+                """,
+                (user_id, book_id, cur_p, tot_p, pct),
+            )
+        else:
+            raise ValueError(f"Status de leitura inválido: '{status}'.")
+
+    return get_book(book_id, user_id=user_id)
+
+
 def get_discovery_shelves(user_id: int = 1) -> List[Dict[str, Any]]:
     """
     Constrói prateleiras dinâmicas horizontais inspiradas em plataformas de streaming.
-    Otimizado para executar apenas 1 consulta consolidada à biblioteca (evitando N+1 queries)
-    e protegido por blocos defensivos para nunca falhar.
-    Garante categoricamente que nenhuma prateleira vazia seja retornada.
+    - Respeita a ordem de categorias definida pelo administrador (`categories.display_order`).
+    - Inclui categorias personalizadas com livros e oculta categorias vazias.
+    - Evita repetição excessiva dos mesmos livros entre prateleiras de categorias.
+    - Inclui metadados de `total_count` e `filter_action` para navegação direta ("Ver todos").
     """
     shelves: List[Dict[str, Any]] = []
     try:
@@ -886,10 +1071,7 @@ def get_discovery_shelves(user_id: int = 1) -> List[Dict[str, Any]]:
 
     # 1. Continuar Lendo
     try:
-        in_progress = [
-            b for b in all_books
-            if (b.get("current_page") or 0) > 1 and (b.get("progress_percentage") or 0) < 100
-        ]
+        in_progress = [b for b in all_books if b.get("reading_status") == "in_progress"]
         in_progress.sort(key=lambda x: str(x.get("progress_updated_at") or ""), reverse=True)
         if in_progress:
             shelves.append({
@@ -897,26 +1079,14 @@ def get_discovery_shelves(user_id: int = 1) -> List[Dict[str, Any]]:
                 "title": "Continuar Lendo",
                 "subtitle": "Retome suas leituras recentes",
                 "type": "continue_reading",
+                "total_count": len(in_progress),
+                "filter_action": {"type": "status", "value": "in_progress"},
                 "books": in_progress[:15],
             })
     except Exception as e:
         logger.debug("Falha ao construir prateleira continue_reading: %s", e)
 
-    # 2. Adicionados Recentemente
-    try:
-        recent = sorted(all_books, key=lambda x: str(x.get("created_at") or ""), reverse=True)
-        if recent:
-            shelves.append({
-                "id": "recently_added",
-                "title": "Adicionados Recentemente",
-                "subtitle": "Novas aquisições da sua biblioteca",
-                "type": "recently_added",
-                "books": recent[:15],
-            })
-    except Exception as e:
-        logger.debug("Falha ao construir prateleira recently_added: %s", e)
-
-    # 2b. Favoritos do Usuário (se houver)
+    # 2. Seus Favoritos (se houver)
     try:
         favs = [b for b in all_books if b.get("is_favorite")]
         if favs:
@@ -925,12 +1095,14 @@ def get_discovery_shelves(user_id: int = 1) -> List[Dict[str, Any]]:
                 "title": "Seus Favoritos",
                 "subtitle": "Obras marcadas como favoritas por você",
                 "type": "favorites",
+                "total_count": len(favs),
+                "filter_action": {"type": "status", "value": "favorites"},
                 "books": favs[:15],
             })
     except Exception:
         pass
 
-    # 2c. Lista Quero Ler (se houver)
+    # 3. Quero Ler (se houver)
     try:
         want_list = [b for b in all_books if b.get("want_to_read")]
         if want_list:
@@ -939,61 +1111,106 @@ def get_discovery_shelves(user_id: int = 1) -> List[Dict[str, Any]]:
                 "title": "Quero Ler",
                 "subtitle": "Sua lista de próximas leituras",
                 "type": "want_to_read",
+                "total_count": len(want_list),
+                "filter_action": {"type": "status", "value": "want_to_read"},
                 "books": want_list[:15],
             })
     except Exception:
         pass
 
-    # 3. Categorias Principais da Taxonomia
+    # 4. Adicionados Recentemente
     try:
-        for cat_name in TAXONOMY_TREE.keys():
+        recent = sorted(all_books, key=lambda x: str(x.get("created_at") or ""), reverse=True)
+        if recent:
+            shelves.append({
+                "id": "recently_added",
+                "title": "Adicionados Recentemente",
+                "subtitle": "Novas aquisições da sua biblioteca",
+                "type": "recently_added",
+                "total_count": len(recent),
+                "filter_action": {"type": "sort", "value": "recent:desc"},
+                "books": recent[:15],
+            })
+    except Exception as e:
+        logger.debug("Falha ao construir prateleira recently_added: %s", e)
+
+    # 5. Categorias da Biblioteca (respeitando display_order, incluindo personalizadas e evitando repetição excessiva)
+    try:
+        ordered_cats = list_categories(include_empty=False)
+        ordered_cat_names = [c["name"] for c in ordered_cats]
+        # Inclui eventuais categorias residuais que não estejam em list_categories
+        for fallback_cat in TAXONOMY_TREE.keys():
+            if not any(fallback_cat.lower() == c.lower() for c in ordered_cat_names):
+                ordered_cat_names.append(fallback_cat)
+
+        shown_in_category_shelves: set = set()
+        for cat_name in ordered_cat_names:
             cat_books = [
                 b for b in all_books
-                if cat_name in (b.get("taxonomy") or {}).get("categories", [])
+                if any(c.lower() == cat_name.lower() for c in (b.get("taxonomy") or {}).get("categories", []))
             ]
-            if cat_books:
-                slug = cat_name.lower().replace(" ", "_").replace("ç", "c").replace("ã", "a")
-                shelves.append({
-                    "id": f"category_{slug}",
-                    "title": cat_name,
-                    "subtitle": f"Obras no acervo de {cat_name}",
-                    "type": "category",
-                    "category": cat_name,
-                    "books": cat_books[:15],
-                })
+            if not cat_books:
+                continue
+
+            # Prioriza livros que ainda não apareceram em prateleiras de categorias anteriores
+            # para evitar repetição excessiva nas fileiras horizontais
+            unseen_books = [b for b in cat_books if b["id"] not in shown_in_category_shelves]
+            seen_books = [b for b in cat_books if b["id"] in shown_in_category_shelves]
+            prioritized_books = unseen_books + seen_books if unseen_books else cat_books
+            shelf_selection = prioritized_books[:15]
+            for sb in shelf_selection:
+                shown_in_category_shelves.add(sb["id"])
+
+            slug = re.sub(r"[^a-z0-9]+", "_", cat_name.lower()).strip("_") or "cat"
+            cat_meta = next((c for c in ordered_cats if c["name"].lower() == cat_name.lower()), None)
+            subtitle_text = (
+                cat_meta["description"]
+                if (cat_meta and cat_meta.get("description"))
+                else f"{len(cat_books)} {'obra' if len(cat_books) == 1 else 'obras'} em {cat_name}"
+            )
+            shelves.append({
+                "id": f"category_{slug}",
+                "title": cat_name,
+                "subtitle": subtitle_text,
+                "type": "category",
+                "category": cat_name,
+                "is_custom": bool(cat_meta["is_custom"]) if cat_meta else False,
+                "total_count": len(cat_books),
+                "filter_action": {"type": "category", "value": cat_name},
+                "books": shelf_selection,
+            })
     except Exception as e:
         logger.debug("Falha ao construir prateleiras de categorias: %s", e)
 
-    # 4. Autores com mais obras no acervo (mínimo 2 obras)
+    # 6. Autores com mais obras no acervo (mínimo 2 obras)
     try:
         author_groups: Dict[str, List[Dict[str, Any]]] = {}
         for b in all_books:
             auth = (b.get("author") or "").strip()
-            if auth:
+            if auth and auth.lower() not in ("autor desconhecido", "autor não informado", "desconhecido"):
                 author_groups.setdefault(auth, []).append(b)
         top_authors = sorted(
             [(auth, bks) for auth, bks in author_groups.items() if len(bks) >= 2],
             key=lambda item: (-len(item[1]), item[0].lower()),
         )[:3]
         for author_name, exact_author_books in top_authors:
-            slug = author_name.lower().replace(" ", "_")[:20]
+            slug = re.sub(r"[^a-z0-9]+", "_", author_name.lower()).strip("_")[:20]
             shelves.append({
                 "id": f"author_{slug}",
                 "title": f"Obras de {author_name}",
                 "subtitle": f"{len(exact_author_books)} livros disponíveis no acervo",
                 "type": "author",
                 "author": author_name,
+                "total_count": len(exact_author_books),
+                "filter_action": {"type": "search", "value": author_name},
                 "books": exact_author_books[:15],
             })
     except Exception as e:
         logger.debug("Falha ao construir prateleiras de autores: %s", e)
 
-    # 5. Livros Não Iniciados
+    # 7. Livros Não Iniciados
     try:
-        unread = [
-            b for b in all_books
-            if not b.get("current_page") or (b.get("current_page") == 1 and (b.get("progress_percentage") or 0) == 0)
-        ]
+        unread = [b for b in all_books if b.get("reading_status") == "unread"]
         unread.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
         if unread:
             shelves.append({
@@ -1001,18 +1218,16 @@ def get_discovery_shelves(user_id: int = 1) -> List[Dict[str, Any]]:
                 "title": "Para Começar a Ler",
                 "subtitle": "Livros ainda não iniciados",
                 "type": "unread",
+                "total_count": len(unread),
+                "filter_action": {"type": "status", "value": "unread"},
                 "books": unread[:15],
             })
     except Exception as e:
         logger.debug("Falha ao construir prateleira unread: %s", e)
 
-    # 6. Livros Concluídos
+    # 8. Livros Concluídos
     try:
-        completed = [
-            b for b in all_books
-            if (b.get("progress_percentage") or 0) >= 100
-            or ((b.get("page_count") or 0) > 0 and (b.get("current_page") or 0) >= (b.get("page_count") or 0))
-        ]
+        completed = [b for b in all_books if b.get("reading_status") == "completed"]
         completed.sort(key=lambda x: str(x.get("progress_updated_at") or ""), reverse=True)
         if completed:
             shelves.append({
@@ -1020,12 +1235,14 @@ def get_discovery_shelves(user_id: int = 1) -> List[Dict[str, Any]]:
                 "title": "Leituras Concluídas",
                 "subtitle": "Livros que você já finalizou",
                 "type": "completed",
+                "total_count": len(completed),
+                "filter_action": {"type": "status", "value": "completed"},
                 "books": completed[:15],
             })
     except Exception as e:
         logger.debug("Falha ao construir prateleira completed: %s", e)
 
-    # 7. Coleções do Usuário
+    # 9. Coleções do Usuário
     try:
         collections_map: Dict[int, Dict[str, Any]] = {}
         for b in all_books:
@@ -1042,6 +1259,8 @@ def get_discovery_shelves(user_id: int = 1) -> List[Dict[str, Any]]:
                     "subtitle": f"{len(cdata['books'])} itens nesta coleção",
                     "type": "collection",
                     "collection_id": cid,
+                    "total_count": len(cdata["books"]),
+                    "filter_action": {"type": "collection", "value": str(cid)},
                     "books": cdata["books"][:15],
                 })
     except Exception as e:

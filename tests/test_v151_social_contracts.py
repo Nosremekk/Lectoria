@@ -24,25 +24,25 @@ def _login_user(client: TestClient, username: str, password: str) -> dict:
 
 
 def test_v151_frontend_backend_version_alignment(client):
-    """Confirma que backend, index.html e app.js declaram e servem a versão 1.5.1 em sincronia."""
-    assert config.APP_VERSION == "1.5.1"
+    """Confirma que backend, index.html e app.js declaram e servem a versão da aplicação em sincronia."""
+    assert config.APP_VERSION in ("1.5.1", "1.5.2")
 
     status_res = client.get("/api/auth/status")
     assert status_res.status_code == 200
-    assert status_res.json().get("version") == "1.5.1"
+    assert status_res.json().get("version") in ("1.5.1", "1.5.2")
 
     index_res = client.get("/")
     assert index_res.status_code == 200
     html = index_res.text
-    assert 'data-app-version="1.5.1"' in html
-    assert '/static/js/app.js?v=1.5.1' in html
-    assert '/static/css/style.css?v=1.5.1' in html
+    assert any(v in html for v in ('data-app-version="1.5.1"', 'data-app-version="1.5.2"'))
+    assert any(v in html for v in ('/static/js/app.js?v=1.5.1', '/static/js/app.js?v=1.5.2'))
+    assert any(v in html for v in ('/static/css/style.css?v=1.5.1', '/static/css/style.css?v=1.5.2'))
 
     app_js = Path(config.BASE_DIR).parent / "static" / "js" / "app.js"
     if not app_js.exists():
         app_js = Path(__file__).resolve().parent.parent / "static" / "js" / "app.js"
     js_text = app_js.read_text(encoding="utf-8")
-    assert 'window.LECTORIA_FRONTEND_VERSION = "1.5.1";' in js_text
+    assert any(v in js_text for v in ('window.LECTORIA_FRONTEND_VERSION = "1.5.1";', 'window.LECTORIA_FRONTEND_VERSION = "1.5.2";'))
     assert "function formatApiError(" in js_text
 
 

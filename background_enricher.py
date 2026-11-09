@@ -389,6 +389,8 @@ class BackgroundEnricher:
                 best.get("author") or book_dict.get("author"),
                 raw_subjects,
                 language=best.get("language"),
+                description=best.get("description") or book_dict.get("description"),
+                publisher=best.get("publisher") or book_dict.get("publisher"),
             )
             sync_book_taxonomy(book_id, taxonomy, is_manual=False)
 

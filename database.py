@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Generator, Optional
 import config
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -127,6 +127,10 @@ def init_db(db_path: Optional[Path] = None) -> None:
             if current_version < 8:
                 _apply_migration_v8(cursor)
                 cursor.execute("INSERT INTO schema_migrations (version) VALUES (8);")
+
+            if current_version < 9:
+                _apply_migration_v9(cursor)
+                cursor.execute("INSERT INTO schema_migrations (version) VALUES (9);")
 
             conn.commit()
         finally:
@@ -1003,6 +1007,135 @@ def _apply_migration_v8(cursor: sqlite3.Cursor) -> None:
             "INSERT OR IGNORE INTO system_settings (key, value_json) VALUES (?, ?);",
             (s_key, s_val),
         )
+
+
+def _apply_migration_v9(cursor: sqlite3.Cursor) -> None:
+    """
+    Schema V9 — Lectoria v1.5.2 (Refinamento da Biblioteca & Categorias Personalizáveis):
+    - Tabela `categories` para gerenciamento de categorias principais e personalizadas
+      (ordenação, descrição, renomeação, mesclagem e exclusão segura sem apagar livros).
+    - Tabela `book_categories` para associação entre livros e categorias gerenciadas,
+      separada dos assuntos bibliográficos importados (`subjects`/`book_subjects`),
+      com controle de prioridade manual (`is_manual`), confiança e justificativa.
+    - Migração automática de categorias existentes em `subjects`/`book_subjects` para `categories`/`book_categories`.
+    - Coluna `is_completed_manual` em `reading_progress` para suportar marcação explícita de conclusão.
+    - Registro do provedor bibliográfico `brasilapi` em `metadata_provider_stats`.
+    """
+    # 1. Tabela de Categorias Gerenciáveis (padrão + personalizadas)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            description TEXT NOT NULL DEFAULT '',
+            display_order INTEGER NOT NULL DEFAULT 0,
+            is_custom INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_categories_order ON categories(display_order ASC, name COLLATE NOCASE ASC);"
+    )
+
+    default_categories = [
+        ("Filosofia", "Obras de filosofia antiga, medieval, moderna, contemporânea, ética, lógica e política.", 10, 0),
+        ("Literatura", "Romances, contos, poesia, teatro, ensaios literários e clássicos da literatura mundial.", 20, 0),
+        ("Ciências humanas", "História, sociologia, antropologia, psicologia, educação, direito e economia.", 30, 0),
+        ("Ciência e tecnologia", "Computação, matemática, física, engenharia, ciências naturais e tecnologia.", 40, 0),
+        ("Artes e cultura", "Música, cinema, artes visuais, arquitetura, design e estudos culturais.", 50, 0),
+    ]
+    for c_name, c_desc, c_order, c_custom in default_categories:
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO categories (name, description, display_order, is_custom)
+            VALUES (?, ?, ?, ?);
+            """,
+            (c_name, c_desc, c_order, c_custom),
+        )
+
+    # 2. Tabela de Vínculo Livro <-> Categoria (separada de subjects bibliográficos)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS book_categories (
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+            subcategory TEXT,
+            is_manual INTEGER NOT NULL DEFAULT 0,
+            confidence REAL NOT NULL DEFAULT 100.0,
+            classification_reason TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (book_id, category_id)
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_book_categories_book ON book_categories(book_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_book_categories_cat ON book_categories(category_id);")
+
+    # 3. Migra categorias já presentes em subjects / book_subjects
+    try:
+        cursor.execute(
+            """
+            SELECT DISTINCT TRIM(category) AS cat_name
+            FROM subjects
+            WHERE category IS NOT NULL AND TRIM(category) != '' AND LOWER(TRIM(category)) != 'geral';
+            """
+        )
+        existing_cats = [r["cat_name"] for r in cursor.fetchall()]
+        next_order = 60
+        for cat_name in existing_cats:
+            cursor.execute("SELECT id FROM categories WHERE name = ? COLLATE NOCASE;", (cat_name,))
+            if not cursor.fetchone():
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO categories (name, description, display_order, is_custom)
+                    VALUES (?, '', ?, 1);
+                    """,
+                    (cat_name, next_order),
+                )
+                next_order += 10
+
+        cursor.execute(
+            """
+            SELECT bs.book_id, c.id AS category_id, MAX(s.subcategory) AS subcategory, MAX(bs.is_manual) AS is_manual
+            FROM book_subjects bs
+            JOIN subjects s ON bs.subject_id = s.id
+            JOIN categories c ON c.name = s.category COLLATE NOCASE
+            GROUP BY bs.book_id, c.id;
+            """
+        )
+        for row in cursor.fetchall():
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO book_categories (book_id, category_id, subcategory, is_manual, confidence, classification_reason)
+                VALUES (?, ?, ?, ?, 100.0, 'migrated_from_v8');
+                """,
+                (row["book_id"], row["category_id"], row["subcategory"], row["is_manual"] or 0),
+            )
+    except sqlite3.OperationalError:
+        pass
+
+    # 4. Coluna is_completed_manual em reading_progress (se a tabela existir)
+    try:
+        cursor.execute("PRAGMA table_info(reading_progress);")
+        prog_cols = [r["name"] for r in cursor.fetchall()]
+        if prog_cols and "is_completed_manual" not in prog_cols:
+            cursor.execute("ALTER TABLE reading_progress ADD COLUMN is_completed_manual INTEGER NOT NULL DEFAULT 0;")
+    except sqlite3.OperationalError:
+        pass
+
+    # 5. Provedor BrasilAPI ISBN em metadata_provider_stats
+    try:
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO metadata_provider_stats (provider, last_status)
+            VALUES ('brasilapi', 'healthy');
+            """
+        )
+    except sqlite3.OperationalError:
+        pass
+
 
 
 

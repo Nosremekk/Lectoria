@@ -28,7 +28,11 @@ def save_progress(
     if current_page > total_pages:
         current_page = total_pages
 
-    percentage = round((current_page / total_pages) * 100.0, 1)
+    # Se a obra possui apenas 1 página (ex.: EPUB recém-aberto), abrir na página 1 não marca 100% de leitura
+    if total_pages <= 1:
+        percentage = 0.0
+    else:
+        percentage = round((current_page / total_pages) * 100.0, 1)
 
     with get_db() as conn:
         cursor = conn.cursor()

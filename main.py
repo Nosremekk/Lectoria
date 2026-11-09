@@ -73,11 +73,25 @@ from library import (
     get_books,
     get_discovery_shelves,
     get_library_diagnostics,
+    set_book_reading_status,
     update_book_metadata,
     resolve_book_path,
     scan_library,
 )
-from taxonomy_service import get_taxonomy_tree
+from taxonomy_service import (
+    batch_update_book_categories,
+    create_category,
+    delete_category,
+    get_book_taxonomy,
+    get_taxonomy_tree,
+    get_uncategorized_books_count,
+    list_categories,
+    merge_categories,
+    reclassify_all_auto_books,
+    reorder_categories,
+    set_book_categories,
+    update_category,
+)
 from background_enricher import enricher
 from metadata_service import (
     CrossrefClient,
@@ -847,6 +861,9 @@ async def list_books(
     year_to: Optional[int] = None,
     identification_status: Optional[str] = None,
     fts_query: Optional[str] = None,
+    favorite_only: bool = False,
+    want_to_read_only: bool = False,
+    uncategorized: bool = False,
 ):
     """Lista todos os livros disponíveis com filtros multidimensionais, coleções e ordenação."""
     user = require_user(request)
@@ -867,6 +884,9 @@ async def list_books(
         year_to=year_to,
         identification_status=identification_status,
         fts_query=fts_query,
+        favorite_only=favorite_only,
+        want_to_read_only=want_to_read_only,
+        uncategorized=uncategorized,
         user_id=user["id"],
     )
     return {"books": books, "count": len(books)}
@@ -886,6 +906,203 @@ async def taxonomy_tree_endpoint(request: Request):
     require_user(request)
     tree = get_taxonomy_tree()
     return {"tree": tree}
+
+
+@app.get("/api/categories")
+async def list_categories_endpoint(request: Request, include_empty: bool = True):
+    """Lista as categorias gerenciadas da biblioteca com ordenação e contagem."""
+    require_user(request)
+    cats = list_categories(include_empty=include_empty)
+    uncat_cnt = get_uncategorized_books_count()
+    return {"categories": cats, "uncategorized_count": uncat_cnt}
+
+
+class CategoryCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    description: str = Field(default="", max_length=500)
+    display_order: Optional[int] = None
+
+
+@app.post("/api/categories")
+async def create_category_endpoint(payload: CategoryCreateRequest, request: Request):
+    """Cria uma nova categoria (acesso exclusivo admin)."""
+    admin = require_admin(request)
+    try:
+        cat = create_category(
+            name=payload.name,
+            description=payload.description,
+            display_order=payload.display_order,
+            is_custom=True,
+        )
+        log_admin_action(
+            admin_user_id=admin["id"],
+            action="create_category",
+            target_type="category",
+            target_id=str(cat["id"]),
+            details={"name": cat["name"]},
+        )
+        return cat
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+class CategoryUpdateRequest(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=80)
+    description: Optional[str] = Field(None, max_length=500)
+    display_order: Optional[int] = None
+
+
+@app.put("/api/categories/{category_id}")
+async def update_category_endpoint(category_id: int, payload: CategoryUpdateRequest, request: Request):
+    """Atualiza dados e ordenação de uma categoria (acesso admin)."""
+    admin = require_admin(request)
+    try:
+        cat = update_category(
+            category_id=category_id,
+            name=payload.name,
+            description=payload.description,
+            display_order=payload.display_order,
+        )
+        log_admin_action(
+            admin_user_id=admin["id"],
+            action="update_category",
+            target_type="category",
+            target_id=str(category_id),
+            details={"name": cat["name"], "display_order": cat["display_order"]},
+        )
+        return cat
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.delete("/api/categories/{category_id}")
+async def delete_category_endpoint(category_id: int, request: Request):
+    """Exclui uma categoria sem nunca apagar livros (acesso admin)."""
+    admin = require_admin(request)
+    try:
+        res = delete_category(category_id)
+        log_admin_action(
+            admin_user_id=admin["id"],
+            action="delete_category",
+            target_type="category",
+            target_id=str(category_id),
+            details=res,
+        )
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+class CategoryMergeRequest(BaseModel):
+    source_category_id: int
+    target_category_id: int
+
+
+@app.post("/api/categories/merge")
+async def merge_categories_endpoint(payload: CategoryMergeRequest, request: Request):
+    """Mescla duas categorias transferindo todas as obras (acesso admin)."""
+    admin = require_admin(request)
+    try:
+        res = merge_categories(payload.source_category_id, payload.target_category_id)
+        log_admin_action(
+            admin_user_id=admin["id"],
+            action="merge_categories",
+            target_type="category",
+            target_id=str(payload.target_category_id),
+            details=res,
+        )
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+class CategoryReorderRequest(BaseModel):
+    ordered_ids: List[int]
+
+
+@app.post("/api/categories/reorder")
+async def reorder_categories_endpoint(payload: CategoryReorderRequest, request: Request):
+    """Reordena a exibição de categorias (acesso admin)."""
+    admin = require_admin(request)
+    cats = reorder_categories(payload.ordered_ids)
+    log_admin_action(
+        admin_user_id=admin["id"],
+        action="reorder_categories",
+        target_type="category",
+        details={"ordered_ids": payload.ordered_ids},
+    )
+    return {"categories": cats}
+
+
+class BookCategoriesSetRequest(BaseModel):
+    categories: List[str]
+
+
+@app.put("/api/books/{book_id}/categories")
+async def set_book_categories_endpoint(book_id: str, payload: BookCategoriesSetRequest, request: Request):
+    """Atribui categorias manuais a um livro (acesso leitor/admin autenticado)."""
+    user = require_user(request)
+    try:
+        get_book(book_id, user_id=user["id"])
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    res = set_book_categories(book_id, payload.categories, is_manual=True)
+    return res
+
+
+class BatchCategoryAssignmentRequest(BaseModel):
+    book_ids: List[str]
+    add_categories: Optional[List[str]] = None
+    remove_categories: Optional[List[str]] = None
+    replace_categories: Optional[List[str]] = None
+
+
+@app.post("/api/books/batch-categories")
+async def batch_categories_endpoint(payload: BatchCategoryAssignmentRequest, request: Request):
+    """Atribui, adiciona ou remove categorias em múltiplos livros de uma vez."""
+    require_admin(request)
+    try:
+        res = batch_update_book_categories(
+            book_ids=payload.book_ids,
+            add_categories=payload.add_categories,
+            remove_categories=payload.remove_categories,
+            replace_categories=payload.replace_categories,
+        )
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+class ReadingStatusSetRequest(BaseModel):
+    status: str = Field(..., pattern="^(unread|in_progress|completed)$")
+
+
+@app.put("/api/books/{book_id}/reading-status")
+async def set_reading_status_endpoint(book_id: str, payload: ReadingStatusSetRequest, request: Request):
+    """Atualiza o status de leitura do livro para o usuário atual (unread, in_progress, completed)."""
+    user = require_user(request)
+    try:
+        book = set_book_reading_status(book_id, user_id=user["id"], status=payload.status)
+        return {"status": payload.status, "book": book}
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/api/taxonomy/reclassify-auto")
+async def reclassify_auto_endpoint(request: Request):
+    """Reavalia classificações automáticas sem mexer em categorizações manuais (acesso admin)."""
+    admin = require_admin(request)
+    res = reclassify_all_auto_books()
+    log_admin_action(
+        admin_user_id=admin["id"],
+        action="reclassify_auto_books",
+        target_type="taxonomy",
+        details=res,
+    )
+    return res
 
 
 @app.get("/api/books/{book_id}")
