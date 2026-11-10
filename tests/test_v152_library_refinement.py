@@ -45,7 +45,7 @@ def test_schema_v9_tables_and_columns(v152_env):
         cur.execute("SELECT MAX(version) FROM schema_migrations")
         row = cur.fetchone()
         assert row is not None
-        assert row[0] == 9
+        assert row[0] >= 9
 
         # Verify categories table
         cur.execute("PRAGMA table_info(categories)")

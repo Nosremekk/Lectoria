@@ -2,7 +2,7 @@
  * Lectoria — Aplicação da Biblioteca (v1.5.2)
  * JavaScript puro (Vanilla ES6), rápido e sem dependências pesadas.
  */
-window.LECTORIA_FRONTEND_VERSION = "1.5.2";
+window.LECTORIA_FRONTEND_VERSION = "1.6.0";
 
 function formatApiError(err, fallbackMsg = "Ocorreu um erro ao processar a solicitação.") {
   if (!err) return fallbackMsg;
@@ -138,10 +138,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const tabNavDiscovery = document.getElementById("tab-nav-discovery");
   const tabNavLibrary = document.getElementById("tab-nav-library");
   const tabNavSocial = document.getElementById("tab-nav-social");
+  const tabNavClubs = document.getElementById("tab-nav-clubs");
   const tabNavAdmin = document.getElementById("tab-nav-admin");
   const discoverySection = document.getElementById("discovery-section");
   const librarySection = document.getElementById("library-section");
   const socialSection = document.getElementById("social-section");
+  const clubsSection = document.getElementById("clubs-section");
   const adminSection = document.getElementById("admin-section");
   const shelvesContainer = document.getElementById("shelves-container");
   const discoveryLoading = document.getElementById("discovery-loading");
@@ -412,6 +414,8 @@ document.addEventListener("DOMContentLoaded", () => {
       params.set("favorite_only", "true");
     } else if (currentStatus === "want_to_read") {
       params.set("want_to_read_only", "true");
+    } else if (currentStatus === "collective_reads") {
+      params.set("collective_read_only", "true");
     } else if (currentStatus && currentStatus !== "all") {
       params.set("status", currentStatus);
     }
@@ -451,6 +455,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  function translateReadStatus(status) {
+    switch (status) {
+      case "in_progress": return "Em andamento";
+      case "planned": return "Planejada";
+      case "completed": return "Concluída";
+      case "cancelled": return "Cancelada";
+      default: return status || "--";
+    }
+  }
+
   function renderBooks(books) {
     if (!books || books.length === 0) {
       booksCountEl.textContent = "Nenhum livro encontrado";
@@ -484,6 +498,20 @@ document.addEventListener("DOMContentLoaded", () => {
           <span class="collection-chip">${escapeHtml(c.name)}</span>
         `).join("");
 
+        const crList = book.collective_reads || [];
+        const crBadgesHtml = crList.map(cr => `
+          <div class="book-collective-read-badge-box">
+            <div class="book-cr-badge-title">
+              <span>👥 ${escapeHtml(cr.club_name)}</span>
+              <span class="tag-badge">${escapeHtml(translateReadStatus(cr.read_status))}</span>
+            </div>
+            <div style="font-size: 0.74rem; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center; margin-top: 0.2rem;">
+              <span>${cr.members_count} participante${cr.members_count === 1 ? '' : 's'}</span>
+              <button type="button" class="btn btn-subtle btn-xs btn-open-collective-read" data-read-id="${escapeHtml(cr.read_id)}" style="padding: 0.15rem 0.4rem; font-size: 0.72rem;">Ver Leitura</button>
+            </div>
+          </div>
+        `).join("");
+
         return `
           <article class="book-card" data-id="${book.id}">
             <div class="book-cover-wrapper">
@@ -498,6 +526,7 @@ document.addEventListener("DOMContentLoaded", () => {
                   <span class="tag-badge tag-format tag-format-${bookFormat.toLowerCase()}">${bookFormat}</span>
                   ${isCompleted ? '<span class="tag-badge tag-completed">Concluído</span>' : ''}
                   ${hasProgress ? '<span class="tag-badge tag-in-progress">Lendo</span>' : ''}
+                  ${crList.length > 0 ? '<span class="tag-badge tag-collective-read" title="Em Leitura Coletiva">Coletiva</span>' : ''}
                 </div>
               </a>
               <button
@@ -527,6 +556,8 @@ document.addEventListener("DOMContentLoaded", () => {
               </div>
 
               ${collectionsChipsHtml ? `<div class="book-collections-chips">${collectionsChipsHtml}</div>` : ""}
+
+              ${crBadgesHtml}
 
               <div class="progress-container">
                 <div class="progress-bar-bg">
@@ -585,6 +616,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${book.progress_updated_at ? `&bull; Lido em ${formatDate(book.progress_updated_at)}` : ""}
               </div>
               ${collectionsChipsHtml ? `<div class="book-collections-chips">${collectionsChipsHtml}</div>` : ""}
+              ${crBadgesHtml}
             </a>
 
             <div class="list-progress">
@@ -659,6 +691,15 @@ document.addEventListener("DOMContentLoaded", () => {
         e.preventDefault();
         e.stopPropagation();
         openBookDetails(btn.getAttribute("data-id"));
+      });
+    });
+
+    // Vincula botões de leitura coletiva nos cards
+    document.querySelectorAll(".btn-open-collective-read").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openCollectiveReadDetail(btn.getAttribute("data-read-id"));
       });
     });
   }
@@ -1701,11 +1742,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (tabNavDiscovery) tabNavDiscovery.classList.toggle("active", tab === "discovery");
     if (tabNavLibrary) tabNavLibrary.classList.toggle("active", tab === "library");
     if (tabNavSocial) tabNavSocial.classList.toggle("active", tab === "social");
+    if (tabNavClubs) tabNavClubs.classList.toggle("active", tab === "clubs");
     if (tabNavAdmin) tabNavAdmin.classList.toggle("active", tab === "admin");
 
     if (discoverySection) discoverySection.style.display = tab === "discovery" ? "flex" : "none";
     if (librarySection) librarySection.style.display = tab === "library" ? "block" : "none";
     if (socialSection) socialSection.style.display = tab === "social" ? "block" : "none";
+    if (clubsSection) clubsSection.style.display = tab === "clubs" ? "flex" : "none";
     if (adminSection) adminSection.style.display = tab === "admin" ? "block" : "none";
 
     if (tab === "discovery") {
@@ -1714,6 +1757,9 @@ document.addEventListener("DOMContentLoaded", () => {
       loadBooks();
     } else if (tab === "social") {
       loadSocialFeed();
+    } else if (tab === "clubs") {
+      loadClubs();
+      loadClubInvites();
     } else if (tab === "admin") {
       loadAdminPanel();
     }
@@ -1722,6 +1768,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (tabNavDiscovery) tabNavDiscovery.addEventListener("click", () => setMainTab("discovery"));
   if (tabNavLibrary) tabNavLibrary.addEventListener("click", () => setMainTab("library"));
   if (tabNavSocial) tabNavSocial.addEventListener("click", () => setMainTab("social"));
+  if (tabNavClubs) tabNavClubs.addEventListener("click", () => setMainTab("clubs"));
   if (tabNavAdmin) tabNavAdmin.addEventListener("click", () => setMainTab("admin"));
 
   // --- Prateleiras de Descoberta ---
@@ -3874,7 +3921,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (mRes.ok) {
       const m = await mRes.json();
       statusEl.innerHTML = `
-        <div class="admin-stat-row"><span>Versão do Schema SQLite</span><strong>v${m.schema_version || 8}</strong></div>
+        <div class="admin-stat-row"><span>Versão do Schema SQLite</span><strong>v${m.schema_version || 10}</strong></div>
         <div class="admin-stat-row"><span>Integridade do Banco</span><strong>${escapeHtml(m.db_integrity || "ok")}</strong></div>
         <div class="admin-stat-row"><span>Tamanho do Banco</span><strong>${formatBytes(m.db_size_bytes || 0)}</strong></div>
         <div class="admin-stat-row"><span>Cache de Consultas Externas</span><strong>${m.external_cache_entries || 0} entradas</strong></div>
@@ -3950,6 +3997,996 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
+
+  // =========================================================================
+  // CLUBES DE LEITURA E LEITURA COLETIVA (v1.6.0)
+  // =========================================================================
+
+  let currentClubsFilter = "mine";
+  let activeClubId = null;
+  let activeClubReadsFilter = "all";
+
+  // Elementos do Módulo de Clubes
+  const btnOpenCreateClub = document.getElementById("btn-open-create-club");
+  const subtabClubsMine = document.getElementById("subtab-clubs-mine");
+  const subtabClubsAll = document.getElementById("subtab-clubs-all");
+  const clubsSearchInput = document.getElementById("clubs-search-input");
+  const clubsContainer = document.getElementById("clubs-container");
+  const clubInvitesBanner = document.getElementById("club-invites-banner");
+  const clubInvitesList = document.getElementById("club-invites-list");
+  const clubInvitesCountText = document.getElementById("club-invites-count-text");
+
+  const clubsListView = document.getElementById("clubs-list-view");
+  const clubDetailView = document.getElementById("club-detail-view");
+  const btnBackToClubs = document.getElementById("btn-back-to-clubs");
+  const clubDetailActions = document.getElementById("club-detail-actions");
+  const clubDetailName = document.getElementById("club-detail-name");
+  const clubVisibilityBadge = document.getElementById("club-visibility-badge");
+  const clubArchivedBadge = document.getElementById("club-archived-badge");
+  const clubDetailDesc = document.getElementById("club-detail-desc");
+  const clubDetailOwner = document.getElementById("club-detail-owner");
+  const clubDetailMembersCount = document.getElementById("club-detail-members-count");
+  const clubDetailReadsCount = document.getElementById("club-detail-reads-count");
+  const clubTabReads = document.getElementById("club-tab-reads");
+  const clubTabMembers = document.getElementById("club-tab-members");
+  const clubContentReads = document.getElementById("club-content-reads");
+  const clubContentMembers = document.getElementById("club-content-members");
+  const btnClubNewRead = document.getElementById("btn-club-new-read");
+  const btnClubInviteUser = document.getElementById("btn-club-invite-user");
+  const clubReadsGrid = document.getElementById("club-reads-grid");
+  const clubMembersTbody = document.getElementById("club-members-tbody");
+
+  // Modais de Clubes
+  const modalClubForm = document.getElementById("modal-club-form");
+  const btnCloseClubForm = document.getElementById("btn-close-club-form");
+  const btnCancelClubForm = document.getElementById("btn-cancel-club-form");
+  const btnSaveClubForm = document.getElementById("btn-save-club-form");
+  const clubFormId = document.getElementById("club-form-id");
+  const clubFormName = document.getElementById("club-form-name");
+  const clubFormDesc = document.getElementById("club-form-desc");
+  const clubFormVisibility = document.getElementById("club-form-visibility");
+  const clubFormError = document.getElementById("club-form-error");
+
+  const modalCollectiveReadForm = document.getElementById("modal-collective-read-form");
+  const btnCloseReadForm = document.getElementById("btn-close-read-form");
+  const btnCancelReadForm = document.getElementById("btn-cancel-read-form");
+  const btnSaveReadForm = document.getElementById("btn-save-read-form");
+  const readFormId = document.getElementById("read-form-id");
+  const readFormClubId = document.getElementById("read-form-club-id");
+  const readFormBookSelect = document.getElementById("read-form-book-select");
+  const readFormTitle = document.getElementById("read-form-title");
+  const readFormDesc = document.getElementById("read-form-desc");
+  const readFormStartDate = document.getElementById("read-form-start-date");
+  const readFormEndDate = document.getElementById("read-form-end-date");
+  const readFormStatus = document.getElementById("read-form-status");
+  const readFormError = document.getElementById("read-form-error");
+
+  const modalCollectiveReadDetail = document.getElementById("modal-collective-read-detail");
+  const btnCloseReadDetail = document.getElementById("btn-close-read-detail");
+  const readDetailCover = document.getElementById("read-detail-cover");
+  const readDetailStatusBadge = document.getElementById("read-detail-status-badge");
+  const readDetailClubTag = document.getElementById("read-detail-club-tag");
+  const readDetailBookTitle = document.getElementById("read-detail-book-title");
+  const readDetailBookAuthor = document.getElementById("read-detail-book-author");
+  const readDetailDateRange = document.getElementById("read-detail-date-range");
+  const readDetailDescription = document.getElementById("read-detail-description");
+  const readDetailMembersCount = document.getElementById("read-detail-members-count");
+  const readDetailMembersList = document.getElementById("read-detail-members-list");
+  const btnReadDetailEdit = document.getElementById("btn-read-detail-edit");
+  const btnReadDetailToggleJoin = document.getElementById("btn-read-detail-toggle-join");
+  const btnReadDetailOpenBook = document.getElementById("btn-read-detail-open-book");
+  const readDetailError = document.getElementById("read-detail-error");
+
+  const modalClubInvite = document.getElementById("modal-club-invite");
+  const btnCloseInviteModal = document.getElementById("btn-close-invite-modal");
+  const btnCancelInviteModal = document.getElementById("btn-cancel-invite-modal");
+  const btnConfirmInviteModal = document.getElementById("btn-confirm-invite-modal");
+  const inviteClubId = document.getElementById("invite-club-id");
+  const inviteUserSelect = document.getElementById("invite-user-select");
+  const inviteModalError = document.getElementById("invite-modal-error");
+
+  const modalTransferOwnership = document.getElementById("modal-transfer-ownership");
+  const btnCloseTransferModal = document.getElementById("btn-close-transfer-modal");
+  const btnCancelTransferModal = document.getElementById("btn-cancel-transfer-modal");
+  const btnConfirmTransferModal = document.getElementById("btn-confirm-transfer-modal");
+  const transferClubId = document.getElementById("transfer-club-id");
+  const transferTargetSelect = document.getElementById("transfer-target-select");
+  const transferModalError = document.getElementById("transfer-modal-error");
+
+  async function loadClubs(filter = currentClubsFilter) {
+    if (!clubsContainer) return;
+    currentClubsFilter = filter;
+    if (subtabClubsMine) subtabClubsMine.classList.toggle("active", filter === "mine");
+    if (subtabClubsAll) subtabClubsAll.classList.toggle("active", filter === "all");
+
+    const query = clubsSearchInput ? clubsSearchInput.value.trim() : "";
+    const params = new URLSearchParams();
+    if (filter === "mine") params.set("mine", "true");
+    if (query) params.set("search", query);
+
+    try {
+      clubsContainer.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Carregando clubes de leitura...</p>`;
+      const res = await fetch(`/api/reading-clubs?${params.toString()}`);
+      if (!res.ok) throw new Error("Erro ao carregar clubes.");
+      const data = await res.json();
+      renderClubs(data.clubs || []);
+    } catch (err) {
+      console.error(err);
+      clubsContainer.innerHTML = `<p style="color: var(--danger); font-size: 0.85rem;">Não foi possível carregar os clubes de leitura.</p>`;
+    }
+  }
+
+  function renderClubs(clubs) {
+    if (!clubsContainer) return;
+    if (clubs.length === 0) {
+      clubsContainer.innerHTML = `
+        <div class="empty-state" style="grid-column: 1 / -1; padding: 2rem;">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.5; margin-bottom: 0.5rem;">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          <h3>Nenhum clube encontrado</h3>
+          <p>${currentClubsFilter === "mine" ? "Você ainda não participa de nenhum clube de leitura. Crie um novo clube ou explore os clubes públicos da instância." : "Nenhum clube cadastrado correspondente à busca."}</p>
+        </div>
+      `;
+      return;
+    }
+
+    clubsContainer.innerHTML = clubs.map(club => {
+      const isOwner = club.user_role === "owner";
+      const isMod = club.user_role === "moderator";
+      const isMember = club.is_member;
+      const isPrivate = club.visibility === "private";
+      const isArchived = club.is_archived === 1;
+
+      let roleBadgeHtml = "";
+      if (isOwner) {
+        roleBadgeHtml = `<span class="tag-badge" style="background: rgba(212,168,83,0.25); color: var(--accent); border: 1px solid rgba(212,168,83,0.4);">Proprietário</span>`;
+      } else if (isMod) {
+        roleBadgeHtml = `<span class="tag-badge" style="background: rgba(94,146,244,0.2); color: #5e92f4;">Moderador</span>`;
+      } else if (isMember) {
+        roleBadgeHtml = `<span class="tag-badge">Participante</span>`;
+      }
+
+      return `
+        <div class="club-card" data-club-id="${escapeHtml(club.id)}">
+          <div>
+            <div class="club-card-header">
+              <h4 class="club-card-title">${escapeHtml(club.name)}</h4>
+              <div style="display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap;">
+                <span class="tag-badge ${isPrivate ? 'tag-warning' : 'tag-subtle'}">${isPrivate ? 'Privado' : 'Público'}</span>
+                ${isArchived ? '<span class="tag-badge tag-danger">Arquivado</span>' : ''}
+              </div>
+            </div>
+            <p class="club-card-desc">${escapeHtml(club.description || "Sem descrição informada.")}</p>
+            <div class="club-card-meta">
+              <span>👥 ${club.member_count} participante${club.member_count === 1 ? '' : 's'}</span>
+              <span>&bull;</span>
+              <span>📖 ${club.active_reads_count} leitura${club.active_reads_count === 1 ? '' : 's'}</span>
+              <span>&bull;</span>
+              <span>Por ${escapeHtml(club.owner_display_name || club.owner_username)}</span>
+            </div>
+          </div>
+          <div class="club-card-footer">
+            <div style="display: flex; align-items: center; gap: 0.4rem;">
+              ${roleBadgeHtml}
+            </div>
+            <div style="display: flex; gap: 0.4rem;">
+              ${(!isMember && !isPrivate && !isArchived) ? `
+                <button type="button" class="btn btn-subtle btn-join-club-direct" data-club-id="${escapeHtml(club.id)}">Entrar</button>
+              ` : ''}
+              <button type="button" class="btn btn-primary btn-open-club-detail" data-club-id="${escapeHtml(club.id)}">Acessar</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    // Vincula eventos nos cards
+    clubsContainer.querySelectorAll(".btn-open-club-detail").forEach(btn => {
+      btn.addEventListener("click", () => openClubDetail(btn.getAttribute("data-club-id")));
+    });
+
+    clubsContainer.querySelectorAll(".btn-join-club-direct").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const cid = btn.getAttribute("data-club-id");
+        try {
+          const res = await fetch(`/api/reading-clubs/${cid}/join`, { method: "POST" });
+          if (res.ok) {
+            openClubDetail(cid);
+          } else {
+            const d = await res.json();
+            alert(d.detail || "Erro ao entrar no clube.");
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      });
+    });
+  }
+
+  async function loadClubInvites() {
+    if (!clubInvitesBanner || !clubInvitesList) return;
+    try {
+      const res = await fetch("/api/reading-clubs/invites/mine");
+      if (!res.ok) return;
+      const data = await res.json();
+      const invites = data.invites || [];
+
+      if (invites.length === 0) {
+        clubInvitesBanner.style.display = "none";
+        return;
+      }
+
+      clubInvitesBanner.style.display = "flex";
+      if (clubInvitesCountText) {
+        clubInvitesCountText.textContent = `Você possui ${invites.length} convite${invites.length === 1 ? '' : 's'} de clube pendente${invites.length === 1 ? '' : 's'}:`;
+      }
+
+      clubInvitesList.innerHTML = invites.map(inv => `
+        <div class="club-invite-item" data-invite-id="${escapeHtml(inv.id)}">
+          <div class="club-invite-item-info">
+            <strong>${escapeHtml(inv.club_name)}</strong> &bull; Convidado por ${escapeHtml(inv.inviter_display_name || inv.inviter_username)}
+            ${inv.club_description ? `<div style="color: var(--text-muted); font-size: 0.78rem;">${escapeHtml(inv.club_description)}</div>` : ''}
+          </div>
+          <div class="club-invite-item-actions">
+            <button class="btn btn-primary btn-xs btn-accept-invite" data-invite-id="${escapeHtml(inv.id)}" data-club-id="${escapeHtml(inv.club_id)}">Aceitar</button>
+            <button class="btn btn-subtle btn-xs btn-reject-invite" data-invite-id="${escapeHtml(inv.id)}">Recusar</button>
+          </div>
+        </div>
+      `).join("");
+
+      clubInvitesList.querySelectorAll(".btn-accept-invite").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const invId = btn.getAttribute("data-invite-id");
+          const cid = btn.getAttribute("data-club-id");
+          const res = await fetch(`/api/reading-clubs/invites/${invId}/respond`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accept: true }),
+          });
+          if (res.ok) {
+            loadClubInvites();
+            openClubDetail(cid);
+          }
+        });
+      });
+
+      clubInvitesList.querySelectorAll(".btn-reject-invite").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const invId = btn.getAttribute("data-invite-id");
+          const res = await fetch(`/api/reading-clubs/invites/${invId}/respond`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accept: false }),
+          });
+          if (res.ok) {
+            loadClubInvites();
+          }
+        });
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function openClubDetail(clubId) {
+    activeClubId = clubId;
+    if (clubsListView) clubsListView.style.display = "none";
+    if (clubDetailView) clubDetailView.style.display = "block";
+
+    try {
+      const res = await fetch(`/api/reading-clubs/${clubId}`);
+      if (!res.ok) throw new Error("Clube não encontrado ou inacessível.");
+      const data = await res.json();
+      const club = data.club;
+
+      if (clubDetailName) clubDetailName.textContent = club.name;
+      if (clubDetailDesc) clubDetailDesc.textContent = club.description || "Sem descrição informada.";
+      if (clubDetailOwner) clubDetailOwner.textContent = club.owner_display_name || club.owner_username;
+      if (clubDetailMembersCount) clubDetailMembersCount.textContent = `${club.member_count} participante${club.member_count === 1 ? '' : 's'}`;
+      if (clubDetailReadsCount) clubDetailReadsCount.textContent = `${club.active_reads_count} leitura${club.active_reads_count === 1 ? '' : 's'} ativa${club.active_reads_count === 1 ? '' : 's'}`;
+
+      if (clubVisibilityBadge) {
+        clubVisibilityBadge.textContent = club.visibility === "private" ? "Privado" : "Público";
+        clubVisibilityBadge.className = `tag-badge ${club.visibility === "private" ? "tag-warning" : "tag-subtle"}`;
+      }
+
+      if (clubArchivedBadge) {
+        clubArchivedBadge.style.display = club.is_archived === 1 ? "inline-block" : "none";
+      }
+
+      // Renderiza botões de ação do cabeçalho do clube
+      renderClubActionButtons(club);
+
+      // Carrega leituras coletivas e participantes
+      loadClubReads(clubId, activeClubReadsFilter);
+      loadClubMembers(clubId);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Erro ao carregar detalhes do clube.");
+      backToClubsList();
+    }
+  }
+
+  function backToClubsList() {
+    activeClubId = null;
+    if (clubDetailView) clubDetailView.style.display = "none";
+    if (clubsListView) clubsListView.style.display = "block";
+    loadClubs();
+  }
+
+  function renderClubActionButtons(club) {
+    if (!clubDetailActions) return;
+    const isOwner = club.user_role === "owner";
+    const isMod = club.user_role === "moderator";
+    const isMember = club.is_member;
+    const isPrivate = club.visibility === "private";
+    const isArchived = club.is_archived === 1;
+
+    let html = "";
+
+    if (!isMember && !isPrivate && !isArchived) {
+      html += `<button id="btn-club-join" class="btn btn-primary">Entrar no Clube</button>`;
+    } else if (isMember && !isOwner) {
+      html += `<button id="btn-club-leave" class="btn btn-subtle">Sair do Clube</button>`;
+    }
+
+    if (isOwner) {
+      html += `
+        <button id="btn-club-edit" class="btn">Editar Clube</button>
+        <button id="btn-club-transfer" class="btn btn-subtle">Transferir Posse</button>
+        <button id="btn-club-archive-toggle" class="btn btn-subtle">${isArchived ? "Desarquivar" : "Arquivar"}</button>
+      `;
+    }
+
+    clubDetailActions.innerHTML = html;
+
+    // Configura visibilidade do botão de nova leitura
+    if (btnClubNewRead) {
+      btnClubNewRead.style.display = (isOwner || isMod) && !isArchived ? "inline-flex" : "none";
+    }
+
+    // Configura visibilidade do botão de convidar participante
+    if (btnClubInviteUser) {
+      btnClubInviteUser.style.display = (isOwner || isMod) && isPrivate && !isArchived ? "inline-flex" : "none";
+    }
+
+    const btnJoin = document.getElementById("btn-club-join");
+    if (btnJoin) {
+      btnJoin.addEventListener("click", async () => {
+        const res = await fetch(`/api/reading-clubs/${club.id}/join`, { method: "POST" });
+        if (res.ok) openClubDetail(club.id);
+      });
+    }
+
+    const btnLeave = document.getElementById("btn-club-leave");
+    if (btnLeave) {
+      btnLeave.addEventListener("click", async () => {
+        if (!confirm("Deseja realmente sair deste clube de leitura?")) return;
+        const res = await fetch(`/api/reading-clubs/${club.id}/leave`, { method: "POST" });
+        if (res.ok) backToClubsList();
+      });
+    }
+
+    const btnEdit = document.getElementById("btn-club-edit");
+    if (btnEdit) {
+      btnEdit.addEventListener("click", () => openClubFormModal(club));
+    }
+
+    const btnArchive = document.getElementById("btn-club-archive-toggle");
+    if (btnArchive) {
+      btnArchive.addEventListener("click", async () => {
+        const shouldArchive = club.is_archived !== 1;
+        const msg = shouldArchive ? "Deseja arquivar este clube? O histórico será preservado." : "Deseja desarquivar este clube?";
+        if (!confirm(msg)) return;
+        const res = await fetch(`/api/reading-clubs/${club.id}/archive`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ archive: shouldArchive }),
+        });
+        if (res.ok) openClubDetail(club.id);
+      });
+    }
+
+    const btnTransfer = document.getElementById("btn-club-transfer");
+    if (btnTransfer) {
+      btnTransfer.addEventListener("click", () => openTransferOwnershipModal(club.id));
+    }
+  }
+
+  async function loadClubReads(clubId, statusFilter = "all") {
+    if (!clubReadsGrid) return;
+    activeClubReadsFilter = statusFilter;
+
+    let url = `/api/reading-clubs/${clubId}/reads`;
+    if (statusFilter && statusFilter !== "all") {
+      url += `?status_filter=${statusFilter}`;
+    }
+
+    try {
+      clubReadsGrid.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Carregando leituras...</p>`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Erro ao carregar leituras.");
+      const data = await res.json();
+      renderClubReads(data.reads || []);
+    } catch (err) {
+      console.error(err);
+      clubReadsGrid.innerHTML = `<p style="color: var(--danger); font-size: 0.85rem;">Erro ao carregar leituras.</p>`;
+    }
+  }
+
+  function renderClubReads(reads) {
+    if (!clubReadsGrid) return;
+    if (reads.length === 0) {
+      clubReadsGrid.innerHTML = `
+        <div class="empty-state" style="grid-column: 1 / -1; padding: 2rem;">
+          <p style="color: var(--text-muted); font-size: 0.88rem;">Nenhuma leitura coletiva encontrada para este filtro.</p>
+        </div>
+      `;
+      return;
+    }
+
+    clubReadsGrid.innerHTML = reads.map(r => {
+      const datesText = (r.start_date || r.end_date)
+        ? `${r.start_date ? formatDate(r.start_date) : 'Início aberto'} até ${r.end_date ? formatDate(r.end_date) : 'Conclusão aberta'}`
+        : "Período flexível";
+
+      return `
+        <div class="collective-read-card" data-read-id="${escapeHtml(r.id)}">
+          <img class="collective-read-cover" src="${escapeHtml(r.cover_url)}" alt="Capa" loading="lazy">
+          <div class="collective-read-body">
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 0.35rem; margin-bottom: 0.2rem;">
+                <span class="tag-badge ${r.status === 'in_progress' ? 'tag-in-progress' : r.status === 'completed' ? 'tag-completed' : 'tag-subtle'}">${escapeHtml(translateReadStatus(r.status))}</span>
+                ${r.is_participating ? '<span class="tag-badge" style="background: rgba(212,168,83,0.25); color: var(--accent);">Inscrito</span>' : ''}
+              </div>
+              <h4 class="collective-read-title" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</h4>
+              <div class="collective-read-book-author">${escapeHtml(r.book_title)} &bull; ${escapeHtml(r.book_author || "Autor")}</div>
+              <div class="collective-read-meta-row">
+                <span>📅 ${escapeHtml(datesText)}</span>
+              </div>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.65rem; border-top: 1px solid var(--border-color); padding-top: 0.5rem;">
+              <span style="font-size: 0.74rem; color: var(--text-muted);">👥 ${r.members_count} participante${r.members_count === 1 ? '' : 's'}</span>
+              <button class="btn btn-subtle btn-xs btn-open-read-modal" data-read-id="${escapeHtml(r.id)}">Ver Atividade</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    clubReadsGrid.querySelectorAll(".btn-open-read-modal").forEach(btn => {
+      btn.addEventListener("click", () => openCollectiveReadDetail(btn.getAttribute("data-read-id")));
+    });
+  }
+
+  async function loadClubMembers(clubId) {
+    if (!clubMembersTbody) return;
+    try {
+      const res = await fetch(`/api/reading-clubs/${clubId}/members`);
+      if (!res.ok) throw new Error("Erro ao carregar membros.");
+      const data = await res.json();
+      renderClubMembers(data.members || []);
+    } catch (err) {
+      console.error(err);
+      clubMembersTbody.innerHTML = `<tr><td colspan="4" style="color: var(--danger);">Erro ao carregar participantes.</td></tr>`;
+    }
+  }
+
+  function renderClubMembers(members) {
+    if (!clubMembersTbody) return;
+    if (members.length === 0) {
+      clubMembersTbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Nenhum participante.</td></tr>`;
+      return;
+    }
+
+    clubMembersTbody.innerHTML = members.map(m => {
+      const isOwner = m.role === "owner";
+      const isMod = m.role === "moderator";
+
+      let roleLabel = "Participante";
+      if (isOwner) roleLabel = "Proprietário";
+      else if (isMod) roleLabel = "Moderador";
+
+      return `
+        <tr data-user-id="${m.user_id}">
+          <td>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <div style="width: 26px; height: 26px; border-radius: 50%; background-color: ${m.avatar_color || '#d4a853'}; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #141311; font-size: 0.75rem;">
+                ${(m.display_name || m.username || 'U')[0].toUpperCase()}
+              </div>
+              <div>
+                <strong>${escapeHtml(m.display_name || m.username)}</strong>
+                <div style="font-size: 0.74rem; color: var(--text-faint);">@${escapeHtml(m.username)}</div>
+              </div>
+            </div>
+          </td>
+          <td>
+            <span class="tag-badge ${isOwner ? 'tag-warning' : isMod ? 'tag-in-progress' : 'tag-subtle'}">${roleLabel}</span>
+          </td>
+          <td style="font-size: 0.8rem; color: var(--text-muted);">${formatDate(m.joined_at)}</td>
+          <td style="text-align: right;">
+            ${!isOwner ? `
+              <button class="btn btn-subtle btn-xs btn-toggle-role" data-user-id="${m.user_id}" data-current-role="${m.role}">
+                ${isMod ? "Rebaixar para Membro" : "Promover a Moderador"}
+              </button>
+              <button class="btn btn-subtle btn-xs btn-remove-member" data-user-id="${m.user_id}" style="color: var(--danger);">Remover</button>
+            ` : '<span style="font-size: 0.74rem; color: var(--text-faint);">Titular</span>'}
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    clubMembersTbody.querySelectorAll(".btn-toggle-role").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const uid = parseInt(btn.getAttribute("data-user-id"), 10);
+        const curRole = btn.getAttribute("data-current-role");
+        const newRole = curRole === "moderator" ? "member" : "moderator";
+        const res = await fetch(`/api/reading-clubs/${activeClubId}/members/${uid}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: newRole }),
+        });
+        if (res.ok) loadClubMembers(activeClubId);
+        else {
+          const d = await res.json();
+          alert(d.detail || "Erro ao alterar papel.");
+        }
+      });
+    });
+
+    clubMembersTbody.querySelectorAll(".btn-remove-member").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Remover este participante do clube?")) return;
+        const uid = parseInt(btn.getAttribute("data-user-id"), 10);
+        const res = await fetch(`/api/reading-clubs/${activeClubId}/members/${uid}`, {
+          method: "DELETE",
+        });
+        if (res.ok) {
+          loadClubMembers(activeClubId);
+          openClubDetail(activeClubId);
+        } else {
+          const d = await res.json();
+          alert(d.detail || "Erro ao remover participante.");
+        }
+      });
+    });
+  }
+
+  async function openCollectiveReadDetail(readId) {
+    if (!modalCollectiveReadDetail) return;
+    try {
+      const res = await fetch(`/api/collective-reads/${readId}`);
+      if (!res.ok) throw new Error("Leitura coletiva não encontrada.");
+      const data = await res.json();
+      const read = data.read;
+
+      if (readDetailCover) readDetailCover.src = read.cover_url || `/api/books/${read.book_id}/cover`;
+      if (readDetailBookTitle) readDetailBookTitle.textContent = read.title || read.book_title;
+      if (readDetailBookAuthor) readDetailBookAuthor.textContent = `${read.book_title} — ${read.book_author || "Autor não informado"}`;
+      if (readDetailClubTag) readDetailClubTag.textContent = read.club_name;
+      if (readDetailStatusBadge) {
+        readDetailStatusBadge.textContent = translateReadStatus(read.status);
+        readDetailStatusBadge.className = `tag-badge ${read.status === 'in_progress' ? 'tag-in-progress' : read.status === 'completed' ? 'tag-completed' : 'tag-subtle'}`;
+      }
+
+      const datesText = (read.start_date || read.end_date)
+        ? `Período: ${read.start_date ? formatDate(read.start_date) : 'Início flexível'} até ${read.end_date ? formatDate(read.end_date) : 'Conclusão flexível'}`
+        : "Período flexível";
+      if (readDetailDateRange) readDetailDateRange.textContent = datesText;
+      if (readDetailDescription) readDetailDescription.textContent = read.description || "Nenhuma meta ou descrição registrada.";
+      if (readDetailMembersCount) readDetailMembersCount.textContent = (read.members || []).length;
+
+      if (readDetailMembersList) {
+        readDetailMembersList.innerHTML = (read.members || []).map(m => `
+          <span class="read-member-chip">
+            <span class="read-member-dot" style="background-color: ${m.avatar_color || '#d4a853'};"></span>
+            <span>${escapeHtml(m.display_name || m.username)}</span>
+          </span>
+        `).join("");
+      }
+
+      if (btnReadDetailOpenBook) {
+        btnReadDetailOpenBook.href = `/reader/${read.book_id}`;
+      }
+
+      if (btnReadDetailToggleJoin) {
+        if (read.is_participating) {
+          btnReadDetailToggleJoin.textContent = "Sair da Leitura";
+          btnReadDetailToggleJoin.className = "btn btn-subtle";
+          btnReadDetailToggleJoin.onclick = async () => {
+            if (!confirm("Deseja deixar de participar desta leitura coletiva?")) return;
+            const res = await fetch(`/api/collective-reads/${read.id}/leave`, { method: "POST" });
+            if (res.ok) {
+              openCollectiveReadDetail(read.id);
+              if (activeClubId) loadClubReads(activeClubId, activeClubReadsFilter);
+              loadBooks();
+            }
+          };
+        } else {
+          btnReadDetailToggleJoin.textContent = "Participar da Leitura";
+          btnReadDetailToggleJoin.className = "btn btn-primary";
+          btnReadDetailToggleJoin.onclick = async () => {
+            const res = await fetch(`/api/collective-reads/${read.id}/join`, { method: "POST" });
+            if (res.ok) {
+              openCollectiveReadDetail(read.id);
+              if (activeClubId) loadClubReads(activeClubId, activeClubReadsFilter);
+              loadBooks();
+            } else {
+              const d = await res.json();
+              alert(d.detail || "Erro ao participar da leitura.");
+            }
+          };
+        }
+      }
+
+      const canEdit = read.user_club_role === "owner" || read.user_club_role === "moderator" || read.created_by === (currentUser ? currentUser.id : null);
+      if (btnReadDetailEdit) {
+        btnReadDetailEdit.style.display = canEdit ? "inline-block" : "none";
+        btnReadDetailEdit.onclick = () => {
+          modalCollectiveReadDetail.classList.remove("active");
+          openReadFormModal(read.club_id, read);
+        };
+      }
+
+      modalCollectiveReadDetail.classList.add("active");
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Erro ao abrir leitura coletiva.");
+    }
+  }
+
+  // --- Modais de Clubes e Leituras ---
+  function openClubFormModal(club = null) {
+    if (!modalClubForm) return;
+    if (clubFormError) clubFormError.style.display = "none";
+
+    const titleEl = document.getElementById("modal-club-form-title");
+    if (club) {
+      if (titleEl) titleEl.textContent = "Editar Clube de Leitura";
+      if (clubFormId) clubFormId.value = club.id;
+      if (clubFormName) clubFormName.value = club.name;
+      if (clubFormDesc) clubFormDesc.value = club.description || "";
+      if (clubFormVisibility) clubFormVisibility.value = club.visibility || "public";
+    } else {
+      if (titleEl) titleEl.textContent = "Criar Clube de Leitura";
+      if (clubFormId) clubFormId.value = "";
+      if (clubFormName) clubFormName.value = "";
+      if (clubFormDesc) clubFormDesc.value = "";
+      if (clubFormVisibility) clubFormVisibility.value = "public";
+    }
+    modalClubForm.classList.add("active");
+  }
+
+  async function openReadFormModal(clubId, read = null) {
+    if (!modalCollectiveReadForm) return;
+    if (readFormError) readFormError.style.display = "none";
+    if (readFormClubId) readFormClubId.value = clubId;
+
+    const titleEl = document.getElementById("modal-read-form-title");
+    const bookSelectGroup = document.getElementById("group-read-book-select");
+
+    // Popula select de livros caso vazio
+    if (readFormBookSelect) {
+      try {
+        const res = await fetch("/api/books");
+        if (res.ok) {
+          const d = await res.json();
+          readFormBookSelect.innerHTML = `<option value="">Selecione uma obra da biblioteca...</option>` +
+            (d.books || []).map(b => `<option value="${escapeHtml(b.id)}">${escapeHtml(b.title)} (${escapeHtml(b.author || 'Autor')})</option>`).join("");
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    if (read) {
+      if (titleEl) titleEl.textContent = "Editar Leitura Coletiva";
+      if (readFormId) readFormId.value = read.id;
+      if (readFormTitle) readFormTitle.value = read.title || "";
+      if (readFormDesc) readFormDesc.value = read.description || "";
+      if (readFormStartDate) readFormStartDate.value = read.start_date || "";
+      if (readFormEndDate) readFormEndDate.value = read.end_date || "";
+      if (readFormStatus) readFormStatus.value = read.status || "planned";
+      if (bookSelectGroup) bookSelectGroup.style.display = "none";
+    } else {
+      if (titleEl) titleEl.textContent = "Nova Leitura Coletiva";
+      if (readFormId) readFormId.value = "";
+      if (readFormTitle) readFormTitle.value = "";
+      if (readFormDesc) readFormDesc.value = "";
+      if (readFormStartDate) readFormStartDate.value = "";
+      if (readFormEndDate) readFormEndDate.value = "";
+      if (readFormStatus) readFormStatus.value = "planned";
+      if (bookSelectGroup) bookSelectGroup.style.display = "block";
+    }
+
+    modalCollectiveReadForm.classList.add("active");
+  }
+
+  async function openInviteUserModal(clubId) {
+    if (!modalClubInvite) return;
+    if (inviteModalError) inviteModalError.style.display = "none";
+    if (inviteClubId) inviteClubId.value = clubId;
+
+    // Popula lista de usuários disponíveis
+    if (inviteUserSelect) {
+      try {
+        const res = await fetch("/api/social/users");
+        if (res.ok) {
+          const data = await res.json();
+          const usersList = Array.isArray(data) ? data : (data.users || []);
+          const myId = data.current_user_id || (currentUser && currentUser.id);
+          const candidates = usersList.filter(u => u.id !== myId);
+          inviteUserSelect.innerHTML = `<option value="">Selecione um leitor...</option>` +
+            candidates.map(u => `<option value="${u.id}">${escapeHtml(u.display_name || u.username)} (@${escapeHtml(u.username)})</option>`).join("");
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    modalClubInvite.classList.add("active");
+  }
+
+  async function openTransferOwnershipModal(clubId) {
+    if (!modalTransferOwnership) return;
+    if (transferModalError) transferModalError.style.display = "none";
+    if (transferClubId) transferClubId.value = clubId;
+
+    if (transferTargetSelect) {
+      try {
+        const res = await fetch(`/api/reading-clubs/${clubId}/members`);
+        if (res.ok) {
+          const data = await res.json();
+          const candidates = (data.members || []).filter(m => m.role !== "owner");
+          transferTargetSelect.innerHTML = `<option value="">Escolha o novo titular...</option>` +
+            candidates.map(m => `<option value="${m.user_id}">${escapeHtml(m.display_name || m.username)} (@${escapeHtml(m.username)})</option>`).join("");
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    modalTransferOwnership.classList.add("active");
+  }
+
+  // Listeners de formulários e botões de Clubes
+  if (btnOpenCreateClub) btnOpenCreateClub.addEventListener("click", () => openClubFormModal());
+  if (subtabClubsMine) subtabClubsMine.addEventListener("click", () => loadClubs("mine"));
+  if (subtabClubsAll) subtabClubsAll.addEventListener("click", () => loadClubs("all"));
+  if (clubsSearchInput) {
+    let searchTimeout = null;
+    clubsSearchInput.addEventListener("input", () => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => loadClubs(currentClubsFilter), 300);
+    });
+  }
+
+  if (btnBackToClubs) btnBackToClubs.addEventListener("click", backToClubsList);
+
+  if (clubTabReads && clubTabMembers) {
+    clubTabReads.addEventListener("click", () => {
+      clubTabReads.classList.add("active");
+      clubTabMembers.classList.remove("active");
+      if (clubContentReads) clubContentReads.style.display = "block";
+      if (clubContentMembers) clubContentMembers.style.display = "none";
+      if (activeClubId) loadClubReads(activeClubId, activeClubReadsFilter);
+    });
+    clubTabMembers.addEventListener("click", () => {
+      clubTabMembers.classList.add("active");
+      clubTabReads.classList.remove("active");
+      if (clubContentMembers) clubContentMembers.style.display = "block";
+      if (clubContentReads) clubContentReads.style.display = "none";
+      if (activeClubId) loadClubMembers(activeClubId);
+    });
+  }
+
+  document.querySelectorAll(".club-reads-filters .filter-pill").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".club-reads-filters .filter-pill").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      if (activeClubId) loadClubReads(activeClubId, btn.getAttribute("data-read-filter"));
+    });
+  });
+
+  if (btnClubNewRead) {
+    btnClubNewRead.addEventListener("click", () => {
+      if (activeClubId) openReadFormModal(activeClubId);
+    });
+  }
+
+  if (btnClubInviteUser) {
+    btnClubInviteUser.addEventListener("click", () => {
+      if (activeClubId) openInviteUserModal(activeClubId);
+    });
+  }
+
+  // Envio de formulário: Salvar Clube
+  if (btnSaveClubForm) {
+    btnSaveClubForm.addEventListener("click", async () => {
+      const id = clubFormId.value.trim();
+      const name = clubFormName.value.trim();
+      const description = clubFormDesc.value.trim();
+      const visibility = clubFormVisibility.value;
+
+      if (!name) {
+        if (clubFormError) {
+          clubFormError.textContent = "O nome do clube é obrigatório.";
+          clubFormError.style.display = "block";
+        }
+        return;
+      }
+
+      try {
+        let res;
+        if (id) {
+          res = await fetch(`/api/reading-clubs/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, description, visibility }),
+          });
+        } else {
+          res = await fetch("/api/reading-clubs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, description, visibility }),
+          });
+        }
+
+        if (res.ok) {
+          const d = await res.json();
+          modalClubForm.classList.remove("active");
+          openClubDetail(d.club.id);
+        } else {
+          const errData = await res.json();
+          if (clubFormError) {
+            clubFormError.textContent = errData.detail || "Erro ao salvar clube.";
+            clubFormError.style.display = "block";
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
+
+  // Envio de formulário: Salvar Leitura Coletiva
+  if (btnSaveReadForm) {
+    btnSaveReadForm.addEventListener("click", async () => {
+      const readId = readFormId.value.trim();
+      const clubId = readFormClubId.value.trim();
+      const bookId = readFormBookSelect ? readFormBookSelect.value : "";
+      const title = readFormTitle.value.trim();
+      const description = readFormDesc.value.trim();
+      const startDate = readFormStartDate.value || null;
+      const endDate = readFormEndDate.value || null;
+      const status = readFormStatus.value;
+
+      try {
+        let res;
+        if (readId) {
+          res = await fetch(`/api/collective-reads/${readId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title, description, start_date: startDate, end_date: endDate, status }),
+          });
+        } else {
+          if (!bookId) {
+            if (readFormError) {
+              readFormError.textContent = "Selecione uma obra da biblioteca.";
+              readFormError.style.display = "block";
+            }
+            return;
+          }
+          res = await fetch(`/api/reading-clubs/${clubId}/reads`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ book_id: bookId, title, description, start_date: startDate, end_date: endDate, status }),
+          });
+        }
+
+        if (res.ok) {
+          modalCollectiveReadForm.classList.remove("active");
+          if (activeClubId) {
+            loadClubReads(activeClubId, activeClubReadsFilter);
+            openClubDetail(activeClubId);
+          }
+          loadBooks();
+        } else {
+          const errData = await res.json();
+          if (readFormError) {
+            readFormError.textContent = errData.detail || "Erro ao salvar leitura coletiva.";
+            readFormError.style.display = "block";
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
+
+  // Envio de formulário: Convidar participante
+  if (btnConfirmInviteModal) {
+    btnConfirmInviteModal.addEventListener("click", async () => {
+      const clubId = inviteClubId.value;
+      const inviteeId = parseInt(inviteUserSelect.value, 10);
+      if (!inviteeId) {
+        if (inviteModalError) {
+          inviteModalError.textContent = "Selecione um usuário.";
+          inviteModalError.style.display = "block";
+        }
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/reading-clubs/${clubId}/invites`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ invitee_id: inviteeId }),
+        });
+        if (res.ok) {
+          modalClubInvite.classList.remove("active");
+          alert("Convite enviado com sucesso!");
+        } else {
+          const errData = await res.json();
+          if (inviteModalError) {
+            inviteModalError.textContent = errData.detail || "Erro ao enviar convite.";
+            inviteModalError.style.display = "block";
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
+
+  // Envio de formulário: Transferir Propriedade
+  if (btnConfirmTransferModal) {
+    btnConfirmTransferModal.addEventListener("click", async () => {
+      const clubId = transferClubId.value;
+      const targetId = parseInt(transferTargetSelect.value, 10);
+      if (!targetId) {
+        if (transferModalError) {
+          transferModalError.textContent = "Selecione o novo proprietário.";
+          transferModalError.style.display = "block";
+        }
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/reading-clubs/${clubId}/transfer-ownership`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ new_owner_id: targetId }),
+        });
+        if (res.ok) {
+          modalTransferOwnership.classList.remove("active");
+          openClubDetail(clubId);
+        } else {
+          const errData = await res.json();
+          if (transferModalError) {
+            transferModalError.textContent = errData.detail || "Erro ao transferir propriedade.";
+            transferModalError.style.display = "block";
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
+
+  // Fechamento de Modais de Clubes
+  if (btnCloseClubForm) btnCloseClubForm.addEventListener("click", () => modalClubForm.classList.remove("active"));
+  if (btnCancelClubForm) btnCancelClubForm.addEventListener("click", () => modalClubForm.classList.remove("active"));
+  if (btnCloseReadForm) btnCloseReadForm.addEventListener("click", () => modalCollectiveReadForm.classList.remove("active"));
+  if (btnCancelReadForm) btnCancelReadForm.addEventListener("click", () => modalCollectiveReadForm.classList.remove("active"));
+  if (btnCloseReadDetail) btnCloseReadDetail.addEventListener("click", () => modalCollectiveReadDetail.classList.remove("active"));
+  if (btnCloseInviteModal) btnCloseInviteModal.addEventListener("click", () => modalClubInvite.classList.remove("active"));
+  if (btnCancelInviteModal) btnCancelInviteModal.addEventListener("click", () => modalClubInvite.classList.remove("active"));
+  if (btnCloseTransferModal) btnCloseTransferModal.addEventListener("click", () => modalTransferOwnership.classList.remove("active"));
+  if (btnCancelTransferModal) btnCancelTransferModal.addEventListener("click", () => modalTransferOwnership.classList.remove("active"));
 
   // Fecha modais com tecla ESC
   window.addEventListener("keydown", (e) => {

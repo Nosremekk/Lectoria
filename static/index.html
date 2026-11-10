@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="pt-BR" data-theme="dark" data-app-version="1.5.2">
+<html lang="pt-BR" data-theme="dark" data-app-version="1.6.0">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lectoria — Biblioteca Pessoal</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=1.5.2">
+  <link rel="stylesheet" href="/static/css/style.css?v=1.6.0">
 </head>
 <body>
   <header class="app-header">
@@ -120,6 +120,12 @@
         </svg>
         <span>Nossa Biblioteca</span>
       </button>
+      <button id="tab-nav-clubs" class="main-nav-tab-btn" data-view="clubs">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+        </svg>
+        <span>Clubes de Leitura</span>
+      </button>
       <button id="tab-nav-admin" class="main-nav-tab-btn" data-view="admin" style="display: none;">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
           <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
@@ -150,6 +156,7 @@
           <button class="tab-btn" data-status="completed">Concluídos</button>
           <button class="tab-btn" data-status="favorites">★ Favoritos</button>
           <button class="tab-btn" data-status="want_to_read">Quero Ler</button>
+          <button class="tab-btn" data-status="collective_reads">Leitura Coletiva</button>
         </div>
 
         <!-- Botão compacto de alternância do painel de filtros em telas pequenas -->
@@ -320,7 +327,139 @@
       </div>
     </section>
 
-    <!-- Seção 4: Painel Administrativo Dedicado (6 Seções Estruturadas) -->
+    <!-- Seção 4: Clubes de Leitura & Leitura Coletiva (v1.6.0) -->
+    <section id="clubs-section" class="clubs-section" style="display: none;">
+      <!-- Banner de Cabeçalho dos Clubes -->
+      <div class="clubs-header-banner">
+        <div>
+          <h2 class="clubs-main-title">Clubes de Leitura &amp; Leitura Coletiva</h2>
+          <p class="clubs-subtitle">
+            Crie comunidades temáticas, organize leituras em grupo por obra e acompanhe debates com outros participantes.
+          </p>
+        </div>
+        <div class="clubs-header-actions">
+          <button id="btn-open-create-club" class="btn btn-primary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+            </svg>
+            <span>Criar Clube de Leitura</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Banner de Convites Pendentes Recebidos -->
+      <div id="club-invites-banner" class="club-invites-banner" style="display: none;">
+        <div class="invites-banner-header">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+          </svg>
+          <span id="club-invites-count-text">Você possui convites de clubes pendentes</span>
+        </div>
+        <div id="club-invites-list" class="club-invites-list"></div>
+      </div>
+
+      <!-- Visão 1: Listagem Geral de Clubes -->
+      <div id="clubs-list-view" class="clubs-list-view">
+        <div class="clubs-nav-bar">
+          <div class="clubs-sub-tabs">
+            <button id="subtab-clubs-mine" class="subtab-btn active" data-filter="mine">Meus Clubes</button>
+            <button id="subtab-clubs-all" class="subtab-btn" data-filter="all">Todos os Clubes da Instância</button>
+          </div>
+          <div class="clubs-search-box">
+            <input type="text" id="clubs-search-input" class="form-input" placeholder="Buscar clube por nome..." style="padding: 0.35rem 0.75rem; font-size: 0.82rem; max-width: 280px;">
+          </div>
+        </div>
+
+        <div id="clubs-container" class="clubs-grid">
+          <!-- Renderizado dinamicamente pelo JavaScript -->
+        </div>
+      </div>
+
+      <!-- Visão 2: Página / Painel do Clube Selecionado -->
+      <div id="club-detail-view" class="club-detail-view" style="display: none;">
+        <div class="club-detail-topbar">
+          <button id="btn-back-to-clubs" class="btn btn-subtle" title="Voltar para a lista de clubes">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+            </svg>
+            <span>Voltar aos Clubes</span>
+          </button>
+          <div id="club-detail-actions" class="club-header-action-buttons">
+            <!-- Botões contextuais injetados via JS -->
+          </div>
+        </div>
+
+        <div class="club-info-card">
+          <div class="club-info-card-header">
+            <div>
+              <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                <h3 id="club-detail-name" class="club-detail-title">Nome do Clube</h3>
+                <span id="club-visibility-badge" class="tag-badge">Público</span>
+                <span id="club-archived-badge" class="tag-badge tag-danger" style="display: none;">Arquivado</span>
+              </div>
+              <p id="club-detail-desc" class="club-detail-description">Descrição...</p>
+              <div class="club-meta-bar">
+                <span>Criado por: <strong id="club-detail-owner">--</strong></span>
+                <span>&bull;</span>
+                <span id="club-detail-members-count">0 participantes</span>
+                <span>&bull;</span>
+                <span id="club-detail-reads-count">0 leituras ativas</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Abas internas do Clube: Leituras Coletivas | Participantes -->
+        <div class="club-tabs-bar">
+          <button id="club-tab-reads" class="subtab-btn active" data-tab="reads">Leituras Coletivas</button>
+          <button id="club-tab-members" class="subtab-btn" data-tab="members">Participantes</button>
+        </div>
+
+        <!-- Conteúdo da Aba 1: Leituras Coletivas -->
+        <div id="club-content-reads" class="club-tab-content">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+            <div class="club-reads-filters">
+              <button class="filter-pill active" data-read-filter="all">Todas</button>
+              <button class="filter-pill" data-read-filter="in_progress">Em andamento</button>
+              <button class="filter-pill" data-read-filter="planned">Planejadas</button>
+              <button class="filter-pill" data-read-filter="completed">Concluídas</button>
+            </div>
+            <button id="btn-club-new-read" class="btn btn-primary" style="display: none;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+              <span>Nova Leitura Coletiva</span>
+            </button>
+          </div>
+          <div id="club-reads-grid" class="collective-reads-grid">
+            <!-- Leituras injetadas via JS -->
+          </div>
+        </div>
+
+        <!-- Conteúdo da Aba 2: Participantes -->
+        <div id="club-content-members" class="club-tab-content" style="display: none;">
+          <div style="display: flex; justify-content: flex-end; margin-bottom: 0.75rem;">
+            <button id="btn-club-invite-user" class="btn btn-primary" style="display: none;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+              <span>Convidar Participante</span>
+            </button>
+          </div>
+          <div id="club-members-table-container" class="table-responsive">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Leitor</th>
+                  <th>Papel</th>
+                  <th>Entrou em</th>
+                  <th style="text-align: right;">Ações</th>
+                </tr>
+              </thead>
+              <tbody id="club-members-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Seção 5: Painel Administrativo Dedicado (7 Seções Estruturadas) -->
     <section id="admin-section" class="admin-section" style="display: none;">
       <div class="admin-header-bar">
         <div>
@@ -1213,6 +1352,194 @@
     </div>
   </div>
 
-  <script src="/static/js/app.js?v=1.5.2"></script>
+  <!-- Modal: Criar / Editar Clube de Leitura (v1.6.0) -->
+  <div id="modal-club-form" class="modal-overlay">
+    <div class="modal-content" style="max-width: 520px;">
+      <div class="modal-header">
+        <h3 id="modal-club-form-title" class="modal-title">Criar Clube de Leitura</h3>
+        <button id="btn-close-club-form" class="btn btn-icon" title="Fechar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="club-form-id" value="">
+        <div class="form-group">
+          <label class="form-label" for="club-form-name">Nome do Clube *</label>
+          <input type="text" id="club-form-name" class="form-input" placeholder="Ex: Clube de Filosofia e Clássicos" maxlength="120" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="club-form-desc">Descrição / Propósito</label>
+          <textarea id="club-form-desc" class="form-input" rows="3" placeholder="Apresente os objetivos do clube, frequência de leitura, etc."></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="club-form-visibility">Visibilidade do Clube</label>
+          <select id="club-form-visibility" class="form-input">
+            <option value="public">Visível na instância (qualquer leitor da biblioteca pode ver e ingressar)</option>
+            <option value="private">Privado (visível apenas para participantes convidados)</option>
+          </select>
+          <small style="color: var(--text-muted); font-size: 0.76rem; display: block; margin-top: 0.25rem;">
+            Clubes privados protegem a privacidade e dados contra acessos não autorizados.
+          </small>
+        </div>
+        <div id="club-form-error" style="display: none; color: var(--danger); font-size: 0.82rem; margin-top: 0.5rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-club-form" class="btn">Cancelar</button>
+        <button id="btn-save-club-form" class="btn btn-primary">Salvar Clube</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Nova / Editar Leitura Coletiva (v1.6.0) -->
+  <div id="modal-collective-read-form" class="modal-overlay">
+    <div class="modal-content" style="max-width: 540px;">
+      <div class="modal-header">
+        <h3 id="modal-read-form-title" class="modal-title">Nova Leitura Coletiva</h3>
+        <button id="btn-close-read-form" class="btn btn-icon" title="Fechar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="read-form-id" value="">
+        <input type="hidden" id="read-form-club-id" value="">
+        <div class="form-group" id="group-read-book-select">
+          <label class="form-label" for="read-form-book-select">Obra da Biblioteca *</label>
+          <select id="read-form-book-select" class="form-input" required>
+            <option value="">Selecione um livro do acervo...</option>
+          </select>
+          <small style="color: var(--text-muted); font-size: 0.76rem;">O identificador do livro é mantido sem alterações numéricas.</small>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="read-form-title">Título da Atividade (opcional)</label>
+          <input type="text" id="read-form-title" class="form-input" placeholder="Se vazio, utiliza o título do livro">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="read-form-desc">Orientação / Metas da Leitura</label>
+          <textarea id="read-form-desc" class="form-input" rows="3" placeholder="Cronograma sugerido, metas semanais, tópicos de discussão..."></textarea>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+          <div class="form-group">
+            <label class="form-label" for="read-form-start-date">Data de Início</label>
+            <input type="date" id="read-form-start-date" class="form-input">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="read-form-end-date">Data de Término</label>
+            <input type="date" id="read-form-end-date" class="form-input">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="read-form-status">Estado da Leitura</label>
+          <select id="read-form-status" class="form-input">
+            <option value="planned">Planejada</option>
+            <option value="in_progress">Em andamento</option>
+            <option value="completed">Concluída</option>
+            <option value="cancelled">Cancelada</option>
+          </select>
+        </div>
+        <div id="read-form-error" style="display: none; color: var(--danger); font-size: 0.82rem; margin-top: 0.5rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-read-form" class="btn">Cancelar</button>
+        <button id="btn-save-read-form" class="btn btn-primary">Salvar Leitura Coletiva</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Detalhes da Leitura Coletiva (v1.6.0) -->
+  <div id="modal-collective-read-detail" class="modal-overlay">
+    <div class="modal-content" style="max-width: 620px;">
+      <div class="modal-header">
+        <h3 id="modal-read-detail-title" class="modal-title">Detalhes da Leitura Coletiva</h3>
+        <button id="btn-close-read-detail" class="btn btn-icon" title="Fechar">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 1.25rem;">
+        <div class="collective-read-detail-layout">
+          <div class="read-detail-cover-col">
+            <img id="read-detail-cover" class="book-cover-img" src="" alt="Capa" style="width: 110px; height: 160px; object-fit: cover; border-radius: 4px; box-shadow: 0 4px 10px rgba(0,0,0,0.4);">
+          </div>
+          <div class="read-detail-info-col" style="flex: 1;">
+            <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.25rem;">
+              <span id="read-detail-status-badge" class="tag-badge">Em andamento</span>
+              <span id="read-detail-club-tag" class="tag-badge tag-subtle">Clube</span>
+            </div>
+            <h4 id="read-detail-book-title" style="font-family: var(--font-serif); font-size: 1.2rem; margin: 0.25rem 0; color: var(--text-primary);">Título da Obra</h4>
+            <div id="read-detail-book-author" style="font-size: 0.86rem; color: var(--text-muted); margin-bottom: 0.5rem;">Autor</div>
+            <div class="read-detail-dates" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+              <span id="read-detail-date-range">Sem datas definidas</span>
+            </div>
+            <div id="read-detail-description" class="read-detail-desc-box"></div>
+          </div>
+        </div>
+
+        <!-- Participantes -->
+        <div style="margin-top: 1.25rem;">
+          <h5 style="font-size: 0.88rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-primary); display: flex; align-items: center; gap: 0.4rem;">
+            <span>Participantes da Leitura</span>
+            <span id="read-detail-members-count" class="badge-filter-count">0</span>
+          </h5>
+          <div id="read-detail-members-list" class="read-members-chips-list"></div>
+        </div>
+        <div id="read-detail-error" style="display: none; color: var(--danger); font-size: 0.82rem; margin-top: 0.5rem;"></div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+        <button id="btn-read-detail-edit" class="btn btn-subtle" style="display: none;">Editar Atividade</button>
+        <div style="display: flex; gap: 0.5rem; margin-left: auto;">
+          <button id="btn-read-detail-toggle-join" class="btn">Participar</button>
+          <a id="btn-read-detail-open-book" href="#" class="btn btn-primary" target="_blank">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>
+            <span>Ler Obra Agora</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Convidar Participante para Clube Privado (v1.6.0) -->
+  <div id="modal-club-invite" class="modal-overlay">
+    <div class="modal-content" style="max-width: 460px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Convidar Leitor para o Clube</h3>
+        <button id="btn-close-invite-modal" class="btn btn-icon" title="Fechar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.84rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+          Selecione um usuário cadastrado na instância para enviar um convite de participação.
+        </p>
+        <input type="hidden" id="invite-club-id" value="">
+        <div class="form-group">
+          <label class="form-label" for="invite-user-select">Usuário da Instância</label>
+          <select id="invite-user-select" class="form-input" required></select>
+        </div>
+        <div id="invite-modal-error" style="display: none; color: var(--danger); font-size: 0.82rem; margin-top: 0.5rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-invite-modal" class="btn">Cancelar</button>
+        <button id="btn-confirm-invite-modal" class="btn btn-primary">Enviar Convite</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Transferir Propriedade do Clube (v1.6.0) -->
+  <div id="modal-transfer-ownership" class="modal-overlay">
+    <div class="modal-content" style="max-width: 460px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Transferir Posse do Clube</h3>
+        <button id="btn-close-transfer-modal" class="btn btn-icon" title="Fechar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.84rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+          Escolha um participante ativo do clube para assumir como novo proprietário. Você continuará no clube com o papel de Moderador.
+        </p>
+        <input type="hidden" id="transfer-club-id" value="">
+        <div class="form-group">
+          <label class="form-label" for="transfer-target-select">Novo Proprietário</label>
+          <select id="transfer-target-select" class="form-input" required></select>
+        </div>
+        <div id="transfer-modal-error" style="display: none; color: var(--danger); font-size: 0.82rem; margin-top: 0.5rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-transfer-modal" class="btn">Cancelar</button>
+        <button id="btn-confirm-transfer-modal" class="btn btn-primary">Confirmar Transferência</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js?v=1.6.0"></script>
 </body>
 </html>

@@ -146,6 +146,15 @@ from export_service import (
     preview_import_annotations,
     apply_import_annotations,
 )
+import clubs_service
+from clubs_service import (
+    ClubError,
+    ClubNotFoundError,
+    ClubPermissionError,
+    CollectiveReadNotFoundError,
+    InviteNotFoundError,
+    InvalidOperationError,
+)
 
 
 @asynccontextmanager
@@ -465,6 +474,59 @@ class ClearCachePayload(BaseModel):
     clear_api_cache: bool = True
     clear_extracted_covers: bool = False
     clear_auto_covers: bool = False
+
+
+# =========================================================================
+# MODELOS DE DADOS PARA CLUBES E LEITURA COLETIVA (v1.6.0)
+# =========================================================================
+
+class ClubCreatePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = ""
+    visibility: str = "public"
+
+
+class ClubUpdatePayload(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    visibility: Optional[str] = None
+
+
+class ClubArchivePayload(BaseModel):
+    archive: bool = True
+
+
+class OwnershipTransferPayload(BaseModel):
+    new_owner_id: int
+
+
+class MemberRoleUpdatePayload(BaseModel):
+    role: str
+
+
+class ClubInvitePayload(BaseModel):
+    invitee_id: int
+
+
+class InviteResponsePayload(BaseModel):
+    accept: bool = True
+
+
+class CollectiveReadCreatePayload(BaseModel):
+    book_id: str
+    title: Optional[str] = None
+    description: str = ""
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    status: str = "planned"
+
+
+class CollectiveReadUpdatePayload(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    status: Optional[str] = None
 
 
 # =========================================================================
@@ -864,6 +926,7 @@ async def list_books(
     favorite_only: bool = False,
     want_to_read_only: bool = False,
     uncategorized: bool = False,
+    collective_read_only: bool = False,
 ):
     """Lista todos os livros disponíveis com filtros multidimensionais, coleções e ordenação."""
     user = require_user(request)
@@ -887,6 +950,7 @@ async def list_books(
         favorite_only=favorite_only,
         want_to_read_only=want_to_read_only,
         uncategorized=uncategorized,
+        collective_read_only=collective_read_only,
         user_id=user["id"],
     )
     return {"books": books, "count": len(books)}
@@ -2771,6 +2835,395 @@ async def get_nossa_biblioteca_feed_endpoint(request: Request):
     """Retorna o mural consolidado 'Nossa Biblioteca' respeitando as permissões de privacidade."""
     user = require_user(request)
     return social_service.get_nossa_biblioteca_feed(viewer_user_id=user["id"])
+
+
+# =========================================================================
+# ENDPOINTS REST: CLUBES DE LEITURA E LEITURA COLETIVA (v1.6.0)
+# =========================================================================
+
+@app.get("/api/reading-clubs")
+async def list_reading_clubs_endpoint(
+    request: Request,
+    mine: bool = False,
+    search: Optional[str] = None,
+    include_archived: bool = False,
+):
+    """Lista clubes de leitura acessíveis ao usuário (públicos e privados onde é membro)."""
+    user = require_user(request)
+    clubs = clubs_service.list_clubs(
+        user_id=user["id"],
+        mine_only=mine,
+        search=search,
+        include_archived=include_archived,
+    )
+    return {"clubs": clubs, "count": len(clubs)}
+
+
+@app.post("/api/reading-clubs", status_code=status.HTTP_201_CREATED)
+async def create_reading_club_endpoint(payload: ClubCreatePayload, request: Request):
+    """Cria um novo clube de leitura e associa o criador como 'owner'."""
+    user = require_user(request)
+    try:
+        club = clubs_service.create_club(
+            name=payload.name,
+            description=payload.description,
+            owner_id=user["id"],
+            visibility=payload.visibility,
+        )
+        return {"status": "success", "club": club}
+    except InvalidOperationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/api/reading-clubs/invites/mine")
+async def list_my_invites_endpoint(request: Request, status_filter: str = "pending"):
+    """Lista convites recebidos pelo usuário autenticado (estática antes de /{club_id})."""
+    user = require_user(request)
+    invites = clubs_service.list_user_invites(user_id=user["id"], status=status_filter)
+    return {"invites": invites, "count": len(invites)}
+
+
+@app.post("/api/reading-clubs/invites/{invite_id}/respond")
+async def respond_invite_endpoint(invite_id: str, payload: InviteResponsePayload, request: Request):
+    """Aceita ou rejeita um convite para clube privado."""
+    user = require_user(request)
+    try:
+        res = clubs_service.respond_to_invite(
+            invite_id=invite_id,
+            user_id=user["id"],
+            accept=payload.accept,
+        )
+        return {"status": "success", "result": res}
+    except InviteNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ClubPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except InvalidOperationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.delete("/api/reading-clubs/invites/{invite_id}")
+async def cancel_invite_endpoint(invite_id: str, request: Request):
+    """Cancela um convite pendente (remetente ou proprietário/moderador do clube)."""
+    user = require_user(request)
+    try:
+        res = clubs_service.cancel_invite(invite_id=invite_id, acting_user_id=user["id"])
+        return {"status": "success", "result": res}
+    except InviteNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ClubPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except InvalidOperationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/api/reading-clubs/{club_id}")
+async def get_reading_club_endpoint(club_id: str, request: Request):
+    """Retorna dados completos de um clube de leitura (anti-enumeração para clubes privados)."""
+    user = require_user(request)
+    try:
+        club = clubs_service.get_club(club_id=club_id, user_id=user["id"])
+        return {"club": club}
+    except ClubNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@app.patch("/api/reading-clubs/{club_id}")
+async def update_reading_club_endpoint(club_id: str, payload: ClubUpdatePayload, request: Request):
+    """Edita metadados do clube (apenas proprietário ou admin)."""
+    user = require_user(request)
+    try:
+        club = clubs_service.update_club(
+            club_id=club_id,
+            user_id=user["id"],
+            name=payload.name,
+            description=payload.description,
+            visibility=payload.visibility,
+        )
+        return {"status": "success", "club": club}
+    except ClubNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ClubPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except InvalidOperationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/api/reading-clubs/{club_id}/archive")
+@app.patch("/api/reading-clubs/{club_id}/archive")
+async def archive_reading_club_endpoint(club_id: str, request: Request, payload: Optional[ClubArchivePayload] = None):
+    """Arquiva ou desarquiva um clube de leitura preservando o histórico."""
+    user = require_user(request)
+    archive = payload.archive if payload is not None else True
+    try:
+        club = clubs_service.archive_club(club_id=club_id, user_id=user["id"], archive=archive)
+        return {"status": "success", "club": club}
+    except ClubNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ClubPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
+
+@app.post("/api/reading-clubs/{club_id}/join")
+async def join_reading_club_endpoint(club_id: str, request: Request):
+    """Permite entrada em clube público ou clube privado com convite pendente."""
+    user = require_user(request)
+    try:
+        club = clubs_service.join_club(club_id=club_id, user_id=user["id"])
+        return {"status": "success", "club": club}
+    except ClubNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ClubPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except InvalidOperationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/api/reading-clubs/{club_id}/leave")
+async def leave_reading_club_endpoint(club_id: str, request: Request):
+    """Permite saída de membro do clube com validação de titularidade."""
+    user = require_user(request)
+    try:
+        res = clubs_service.leave_club(club_id=club_id, user_id=user["id"])
+        return {"status": "success", "result": res}
+    except ClubNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except InvalidOperationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/api/reading-clubs/{club_id}/members")
+async def list_club_members_endpoint(club_id: str, request: Request):
+    """Lista todos os participantes de um clube e seus papéis."""
+    user = require_user(request)
+    try:
+        members = clubs_service.list_club_members(club_id=club_id, user_id=user["id"])
+        return {"members": members, "count": len(members)}
+    except ClubNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@app.patch("/api/reading-clubs/{club_id}/members/{target_user_id}")
+async def update_club_member_role_endpoint(
+    club_id: str,
+    target_user_id: int,
+    payload: MemberRoleUpdatePayload,
+    request: Request,
+):
+    """Atualiza papel de participante (promove ou rebaixa entre moderator e member)."""
+    user = require_user(request)
+    try:
+        res = clubs_service.update_member_role(
+            club_id=club_id,
+            acting_user_id=user["id"],
+            target_user_id=target_user_id,
+            new_role=payload.role,
+        )
+        return {"status": "success", "result": res}
+    except ClubNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ClubPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except InvalidOperationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.delete("/api/reading-clubs/{club_id}/members/{target_user_id}")
+async def remove_club_member_endpoint(club_id: str, target_user_id: int, request: Request):
+    """Remove participante do clube (proprietário ou moderador)."""
+    user = require_user(request)
+    try:
+        res = clubs_service.remove_club_member(
+            club_id=club_id,
+            acting_user_id=user["id"],
+            target_user_id=target_user_id,
+        )
+        return {"status": "success", "result": res}
+    except ClubNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ClubPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except InvalidOperationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/api/reading-clubs/{club_id}/transfer-ownership")
+async def transfer_club_ownership_endpoint(
+    club_id: str,
+    payload: OwnershipTransferPayload,
+    request: Request,
+):
+    """Transfere a titularidade do clube para outro membro."""
+    user = require_user(request)
+    try:
+        club = clubs_service.transfer_club_ownership(
+            club_id=club_id,
+            current_owner_id=user["id"],
+            new_owner_id=payload.new_owner_id,
+        )
+        return {"status": "success", "club": club}
+    except ClubNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ClubPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except InvalidOperationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/api/reading-clubs/{club_id}/invites", status_code=status.HTTP_201_CREATED)
+async def create_club_invite_endpoint(
+    club_id: str,
+    payload: ClubInvitePayload,
+    request: Request,
+):
+    """Cria convite para usuário ingressar em clube privado."""
+    user = require_user(request)
+    try:
+        res = clubs_service.invite_user(
+            club_id=club_id,
+            inviter_id=user["id"],
+            invitee_id=payload.invitee_id,
+        )
+        return {"status": "success", "result": res}
+    except ClubNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ClubPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except InvalidOperationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/api/reading-clubs/{club_id}/invites")
+async def list_club_invites_endpoint(club_id: str, request: Request):
+    """Lista convites pendentes de um clube (apenas proprietário e moderadores)."""
+    user = require_user(request)
+    try:
+        invites = clubs_service.list_club_invites(club_id=club_id, user_id=user["id"])
+        return {"invites": invites, "count": len(invites)}
+    except ClubNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ClubPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
+
+@app.get("/api/reading-clubs/{club_id}/reads")
+async def list_club_reads_endpoint(club_id: str, request: Request, status_filter: Optional[str] = None):
+    """Lista todas as leituras coletivas do clube."""
+    user = require_user(request)
+    try:
+        reads = clubs_service.list_club_reads(
+            club_id=club_id,
+            user_id=user["id"],
+            status=status_filter,
+        )
+        return {"reads": reads, "count": len(reads)}
+    except ClubNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@app.post("/api/reading-clubs/{club_id}/reads", status_code=status.HTTP_201_CREATED)
+async def create_collective_read_endpoint(
+    club_id: str,
+    payload: CollectiveReadCreatePayload,
+    request: Request,
+):
+    """Cria uma nova leitura coletiva no clube associada a um livro."""
+    user = require_user(request)
+    try:
+        read = clubs_service.create_collective_read(
+            club_id=club_id,
+            user_id=user["id"],
+            book_id=payload.book_id,
+            title=payload.title,
+            description=payload.description,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            status=payload.status,
+        )
+        return {"status": "success", "read": read}
+    except ClubNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ClubPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except InvalidOperationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+# -------------------------------------------------------------------------
+# ENDPOINTS REST: LEITURAS COLETIVAS (Rotas estáticas antes de {read_id})
+# -------------------------------------------------------------------------
+
+@app.get("/api/collective-reads/mine")
+async def list_my_collective_reads_endpoint(request: Request, status_filter: Optional[str] = None):
+    """Lista todas as leituras coletivas nas quais o usuário autenticado participa."""
+    user = require_user(request)
+    reads = clubs_service.list_user_collective_reads(user_id=user["id"], status=status_filter)
+    return {"reads": reads, "count": len(reads)}
+
+
+@app.get("/api/collective-reads/{read_id}")
+async def get_collective_read_endpoint(read_id: str, request: Request):
+    """Retorna detalhes de uma leitura coletiva, metadados do livro e participantes."""
+    user = require_user(request)
+    try:
+        read = clubs_service.get_collective_read(read_id=read_id, user_id=user["id"])
+        return {"read": read}
+    except CollectiveReadNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@app.patch("/api/collective-reads/{read_id}")
+async def update_collective_read_endpoint(
+    read_id: str,
+    payload: CollectiveReadUpdatePayload,
+    request: Request,
+):
+    """Edita dados e status de uma leitura coletiva (proprietário, moderadores ou criador)."""
+    user = require_user(request)
+    try:
+        read = clubs_service.update_collective_read(
+            read_id=read_id,
+            user_id=user["id"],
+            title=payload.title,
+            description=payload.description,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            status=payload.status,
+        )
+        return {"status": "success", "read": read}
+    except CollectiveReadNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ClubPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except InvalidOperationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/api/collective-reads/{read_id}/join")
+async def join_collective_read_endpoint(read_id: str, request: Request):
+    """Inscreve o usuário na leitura coletiva (requer ser membro do clube)."""
+    user = require_user(request)
+    try:
+        read = clubs_service.join_collective_read(read_id=read_id, user_id=user["id"])
+        return {"status": "success", "read": read}
+    except CollectiveReadNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ClubPermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except InvalidOperationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/api/collective-reads/{read_id}/leave")
+async def leave_collective_read_endpoint(read_id: str, request: Request):
+    """Permite a saída de um participante da leitura coletiva."""
+    user = require_user(request)
+    try:
+        res = clubs_service.leave_collective_read(read_id=read_id, user_id=user["id"])
+        return {"status": "success", "result": res}
+    except CollectiveReadNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
 
 
 if __name__ == "__main__":

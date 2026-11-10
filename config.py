@@ -64,7 +64,7 @@ load_env_file()
 
 # Nome da aplicação
 APP_NAME = os.getenv("LECTORIA_APP_NAME", "Lectoria")
-APP_VERSION = "1.5.2"
+APP_VERSION = "1.6.0"
 
 # Diretório onde os arquivos PDF da biblioteca padrão ficam armazenados
 LIBRARY_DIR = Path(

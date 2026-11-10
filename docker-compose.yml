@@ -1,0 +1,35 @@
+services:
+  lectoria:
+    image: ghcr.io/nosremekk/lectoria:latest
+    # Para compilar localmente em vez de usar a imagem do registro, descomente a linha abaixo:
+    # build: .
+    container_name: lectoria
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      - LECTORIA_HOST=0.0.0.0
+      - LECTORIA_PORT=8765
+      - LECTORIA_DATA_DIR=/app/data
+      - LECTORIA_LIBRARY_DIR=/app/books
+      - LECTORIA_BACKUPS_DIR=/app/backups
+      - TZ=America/Sao_Paulo
+    volumes:
+      # Dados da aplicação: banco SQLite, capas extraídas e sessões
+      - lectoria_data:/app/data
+      # Diretório de livros digitais (PDF e EPUB) no host
+      - ./books:/app/books:ro
+      # Backups automáticos de segurança e integridade
+      - lectoria_backups:/app/backups
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/books', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  lectoria_data:
+    name: lectoria_data
+  lectoria_backups:
+    name: lectoria_backups

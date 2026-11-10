@@ -1,6 +1,6 @@
-# Lectoria — Servidor Pessoal de Livros Digitais (v1.5.2 — Refinamento da Biblioteca)
+# Lectoria — Servidor Pessoal de Livros Digitais (v1.6.0 — Clubes de Leitura & Leitura Coletiva)
 
-O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para organização, identificação inteligente, automação e leitura colaborativa de documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
+O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para organização, identificação inteligente, automação, clubes de leitura e leitura colaborativa de documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
 
 Foi concebido para operar perfeitamente mesmo em hardware modesto — como computadores antigos e mini-PCs domésticos com processadores de baixo consumo (ex: Intel Celeron), convivendo de forma estável e silenciosa com serviços de mídia como o Jellyfin.
 
@@ -8,6 +8,13 @@ Foi concebido para operar perfeitamente mesmo em hardware modesto — como compu
 
 ## 1. Principais Recursos
 
+- **Clubes de Leitura e Leitura Coletiva (v1.6.0)**:
+  - **Clubes de Leitura Públicos e Privados (Schema v10)**: Criação de comunidades temáticas permanentes na instância com modelo de governança em 3 papéis (`owner`, `moderator`, `member`), arquivamento seguro e transferência de titularidade de posse sem orfandade de dados.
+  - **Convites Direcionados e Proteção Anti-Enumeração**: Convites para usuários da instância com aceite ou recusa, revogação de convites pendentes e blindagem estrita contra enumeração de dados (clubes privados são invisíveis para não-membros e acessos diretos não autorizados retornam `HTTP 404 Not Found`).
+  - **Leituras Coletivas por Obra**: Atividades de grupo organizadas por clube vinculadas a livros reais do acervo (`books.id`), com 4 estados de ciclo de vida (*Planejada*, *Em andamento*, *Concluída*, *Cancelada*), adesão/desligamento simplificado e histórico preservado.
+  - **Filtro "Leitura Coletiva" na Biblioteca**: Aba de filtro exclusiva que exibe apenas as obras das leituras coletivas em que o usuário autenticado participa, com selos contextuais de clube e participantes nos cards.
+  - **Privacidade Individual Rigorosa**: O progresso pessoal de leitura (página atual, porcentagem), destaques, anotações e avaliações permanecem 100% privados e isolados de outros participantes.
+  - **Prontidão Docker Compose**: Arquivos `docker-compose.yml` e `docker-compose.example.yml` para inicialização imediata e padronizada em contêineres Docker.
 - **Refinamento Mobile, Categorias Customizáveis e BrasilAPI (v1.5.2)**:
   - **Experiência Mobile-First**: Interface de descoberta e biblioteca otimizada para smartphones e tablets (320px a 1280px), sem qualquer overflow horizontal (`scrollWidth <= clientWidth`), com painel compacto colapsável de filtros e prateleiras horizontais com rolagem contida.
   - **Gestão Completa de Categorias Customizáveis (Schema v9)**: Criação, edição, reordenação prioritária (Subir/Descer), mesclagem e exclusão segura de categorias no painel administrativo, suporte a livros com múltiplas categorias, filtro dedicado "Sem categoria" e editor de tags de categoria diretamente no modal de detalhes da obra.

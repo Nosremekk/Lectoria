@@ -999,3 +999,308 @@ def test_v152_mobile_refinement_layout_and_collapsible_filters(e2e_server, brows
     context.close()
 
 
+def test_v160_reading_clubs_and_collective_reads_multiuser(e2e_server, browser_instance):
+    """
+    Suíte E2E Multi-Usuário do Lectoria v1.6.0 — Clubes de Leitura & Leitura Coletiva:
+    1. Três usuários reais:
+       - User A (Proprietária / Criadora do Clube Privado)
+       - User B (Leitor / Membro Convidado)
+       - User C (Leitor / Externo / Não Convidado)
+    2. Criação de Clube Privado por User A.
+    3. Convite direcionado para User B.
+    4. Recepção e aceite do convite por User B na interface web.
+    5. Criação de Leitura Coletiva vinculada a livro real do acervo.
+    6. Adesão de User B à Leitura Coletiva e contagem de participantes.
+    7. Filtro exclusivo 'Leitura Coletiva' na biblioteca exibindo a obra com badge coletivo para User B.
+    8. Anti-enumeração e isolamento estrito para User C (clube oculto, HTTP 404 e filtro vazio).
+    9. Conclusão da leitura e preservação no histórico do clube.
+    10. Captura de evidências fotográficas em alta resolução.
+    """
+    base_url = e2e_server["base_url"]
+    import urllib.request
+    import json
+
+    # 1. Garante criação do admin e dos 3 leitores
+    try:
+        req_setup = urllib.request.Request(
+            f"{base_url}/api/auth/setup",
+            data=json.dumps({"username": "admin", "password": "AdminSenha123!", "display_name": "Admin Master"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req_setup) as _:
+            pass
+    except Exception:
+        pass
+
+    def _login(username, password):
+        req = urllib.request.Request(
+            f"{base_url}/api/auth/login",
+            data=json.dumps({"username": username, "password": password}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            for h in resp.headers.get_all("Set-Cookie", []):
+                if "lectoria_session=" in h:
+                    return h.split("lectoria_session=")[1].split(";")[0]
+        return None
+
+    admin_token = _login("admin", "AdminSenha123!")
+    assert admin_token, "Falha ao autenticar admin mestre"
+
+    # Cria User A, User B e User C via API de usuários
+    for uname, dname in [("user_a", "Alice Proprietaria"), ("user_b", "Bob Convidado"), ("user_c", "Carlos Externo")]:
+        try:
+            req_u = urllib.request.Request(
+                f"{base_url}/api/users",
+                data=json.dumps({"username": uname, "password": "SenhaSegura123!", "display_name": dname, "role": "reader"}).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Cookie": f"lectoria_session={admin_token}"},
+            )
+            with urllib.request.urlopen(req_u) as _:
+                pass
+        except Exception:
+            pass
+
+    token_a = _login("user_a", "SenhaSegura123!")
+    token_b = _login("user_b", "SenhaSegura123!")
+    token_c = _login("user_c", "SenhaSegura123!")
+    assert token_a and token_b and token_c, "Falha ao gerar sessões para os 3 usuários de teste"
+
+    # =========================================================================
+    # FASE 1: USER A CRIA CLUBE PRIVADO E CONVIDA USER B
+    # =========================================================================
+    context_a = browser_instance.new_context(viewport={"width": 1280, "height": 800})
+    context_a.add_cookies([{"name": "lectoria_session", "value": token_a, "domain": "127.0.0.1", "path": "/"}])
+    page_a = context_a.new_page()
+    page_a.on("dialog", lambda d: d.accept())
+
+    page_a.goto(base_url)
+    page_a.wait_for_timeout(400)
+
+    # Navega para a aba de Clubes
+    page_a.click("#tab-nav-clubs")
+    page_a.wait_for_timeout(400)
+    assert page_a.is_visible("#clubs-section"), "Seção de clubes deve estar visível"
+
+    # Abre modal de criação de clube
+    page_a.click("#btn-open-create-club")
+    page_a.wait_for_timeout(300)
+    assert page_a.is_visible("#modal-club-form"), "Modal de criação de clube deve abrir"
+
+    # Preenche formulário como CLUBE PRIVADO
+    page_a.fill("#club-form-name", "Clube Secreto de Filosofia")
+    page_a.fill("#club-form-desc", "Comunidade privada para debates de obras clássicas.")
+    page_a.select_option("#club-form-visibility", "private")
+    page_a.click("#btn-save-club-form")
+    page_a.wait_for_timeout(600)
+
+    # Verifica abertura imediata do detalhe do clube
+    assert page_a.is_visible("#club-detail-view"), "Detalhes do clube devem abrir automaticamente após criação"
+    assert "Clube Secreto de Filosofia" in page_a.text_content("#club-detail-name")
+    assert "Privado" in page_a.text_content("#club-visibility-badge")
+
+    # Obtém o ID do clube criado a partir do estado ou campos ocultos
+    club_id = page_a.evaluate("() => document.getElementById('transfer-club-id')?.value || ''")
+    if not club_id:
+        # Alternativa de fallback consultando API de clubes de Alice
+        req_mine = urllib.request.Request(f"{base_url}/api/reading-clubs?filter=mine", headers={"Cookie": f"lectoria_session={token_a}"})
+        with urllib.request.urlopen(req_mine) as resp:
+            data_mine = json.loads(resp.read().decode("utf-8"))
+            for c in data_mine.get("clubs", []):
+                if c["name"] == "Clube Secreto de Filosofia":
+                    club_id = c["id"]
+                    break
+    assert club_id, "ID do clube criado deve ser identificado"
+
+    # Alice alterna para a aba de Participantes e clica em Convidar
+    page_a.click("#club-tab-members")
+    page_a.wait_for_timeout(300)
+    assert page_a.is_visible("#btn-club-invite-user"), "Botão de convite deve estar disponível para proprietário em clube privado"
+    page_a.click("#btn-club-invite-user")
+    page_a.wait_for_timeout(400)
+
+    # Seleciona User B (Bob) no dropdown de convite
+    assert page_a.is_visible("#modal-club-invite"), "Modal de convite deve abrir"
+    options = page_a.evaluate("""() => {
+        const select = document.getElementById('invite-user-select');
+        return Array.from(select.options).map(o => ({ value: o.value, text: o.text }));
+    }""")
+    bob_option = next((o for o in options if "Bob" in o["text"] or "user_b" in o["text"]), None)
+    assert bob_option, f"Bob deve estar listado nos candidatos a convite: {options}"
+    page_a.select_option("#invite-user-select", bob_option["value"])
+    page_a.click("#btn-confirm-invite-modal")
+    page_a.wait_for_timeout(600)
+
+    # =========================================================================
+    # FASE 2: USER B RECEBE, VISUALIZA E ACEITA O CONVITE
+    # =========================================================================
+    context_b = browser_instance.new_context(viewport={"width": 1280, "height": 800})
+    context_b.add_cookies([{"name": "lectoria_session", "value": token_b, "domain": "127.0.0.1", "path": "/"}])
+    page_b = context_b.new_page()
+    page_b.on("dialog", lambda d: d.accept())
+
+    page_b.goto(base_url)
+    page_b.wait_for_timeout(400)
+
+    page_b.click("#tab-nav-clubs")
+    page_b.wait_for_timeout(400)
+
+    # Banner de convites pendentes deve estar visível com o convite
+    assert page_b.is_visible("#club-invites-banner"), "Banner de convites pendentes deve ser exibido para User B"
+    banner_text = page_b.text_content("#club-invites-banner")
+    assert "Clube Secreto de Filosofia" in banner_text, f"Nome do clube deve constar no banner: {banner_text}"
+
+    # User B clica em 'Aceitar' convite
+    page_b.click(".btn-accept-invite")
+    page_b.wait_for_timeout(600)
+
+    # User B é imediatamente direcionado para o clube privado
+    assert page_b.is_visible("#club-detail-view"), "Detalhes do clube devem abrir para User B após aceitar convite"
+    assert "Clube Secreto de Filosofia" in page_b.text_content("#club-detail-name")
+
+    # =========================================================================
+    # FASE 3: USER A CRIA LEITURA COLETIVA PARA O LIVRO 'doc_5_pages.pdf'
+    # =========================================================================
+    page_a.click("#club-tab-reads")
+    page_a.wait_for_timeout(300)
+    page_a.click("#btn-club-new-read")
+    page_a.wait_for_timeout(400)
+
+    assert page_a.is_visible("#modal-collective-read-form"), "Modal de nova leitura coletiva deve abrir"
+    book_options = page_a.evaluate("""() => {
+        const select = document.getElementById('read-form-book-select');
+        return Array.from(select.options).map(o => ({ value: o.value, text: o.text }));
+    }""")
+    assert len(book_options) > 1, f"Pelo menos uma obra do acervo deve estar listada: {book_options}"
+    target_book_id = book_options[1]["value"]
+    page_a.select_option("#read-form-book-select", target_book_id)
+
+    page_a.fill("#read-form-title", "Leitura Conjunta: Filosofia e Métodos")
+    page_a.fill("#read-form-desc", "Cronograma de discussão em grupo.")
+    page_a.select_option("#read-form-status", "in_progress")
+    page_a.click("#btn-save-read-form")
+    page_a.wait_for_timeout(600)
+
+    # Leitura aparece na grade de leituras do clube para Alice
+    reads_text_a = page_a.text_content("#club-reads-grid")
+    assert "Leitura Conjunta: Filosofia e Métodos" in reads_text_a
+
+    # =========================================================================
+    # FASE 4: USER B ADERE À LEITURA COLETIVA E CONFERE O FILTRO DA BIBLIOTECA
+    # =========================================================================
+    # User B atualiza/abre a aba de leituras
+    page_b.click("#club-tab-reads")
+    page_b.wait_for_timeout(400)
+    reads_text_b = page_b.text_content("#club-reads-grid")
+    assert "Leitura Conjunta: Filosofia e Métodos" in reads_text_b
+
+    # Abre modal de detalhes da leitura
+    page_b.click(".btn-open-read-modal")
+    page_b.wait_for_timeout(400)
+    assert page_b.is_visible("#modal-collective-read-detail")
+    assert "Participar" in page_b.text_content("#btn-read-detail-toggle-join")
+
+    # User B clica em 'Participar da Leitura'
+    page_b.click("#btn-read-detail-toggle-join")
+    page_b.wait_for_timeout(500)
+    assert "Sair da Leitura" in page_b.text_content("#btn-read-detail-toggle-join")
+    assert page_b.text_content("#read-detail-members-count").strip() == "2"
+
+    # Fecha o modal de detalhes
+    page_b.click("#btn-close-read-detail")
+    page_b.wait_for_timeout(300)
+
+    # User B navega para a Biblioteca & clica no filtro exclusivo 'Leitura Coletiva'
+    page_b.click("#tab-nav-library")
+    page_b.wait_for_timeout(400)
+    assert page_b.is_visible("#library-section")
+
+    # Clica na aba de status 'Leitura Coletiva'
+    page_b.click("button[data-status='collective_reads']")
+    page_b.wait_for_timeout(600)
+
+    # O livro deve estar visível na biblioteca de Bob com o selo de Leitura Coletiva
+    lib_cards_b = page_b.query_selector_all(".book-card")
+    assert len(lib_cards_b) >= 1, "A obra vinculada à leitura coletiva ativa deve aparecer para User B"
+    collective_badge = page_b.query_selector(".tag-collective-read")
+    assert collective_badge is not None, "Badge 'Coletiva' deve estar presente no card do livro"
+    cr_box_text = page_b.text_content(".book-collective-read-badge-box")
+    assert "Clube Secreto de Filosofia" in cr_box_text
+
+    # Captura screenshot de evidência para User B
+    shot_user_b = SCREENSHOTS_DIR / "v160_user_b_collective_read_library.png"
+    page_b.screenshot(path=str(shot_user_b), full_page=False)
+    assert shot_user_b.exists() and shot_user_b.stat().st_size > 1000
+
+    # =========================================================================
+    # FASE 5: USER C (EXTERNO) — ISOLAMENTO, ANTI-ENUMERAÇÃO E PRIVACIDADE
+    # =========================================================================
+    context_c = browser_instance.new_context(viewport={"width": 1280, "height": 800})
+    context_c.add_cookies([{"name": "lectoria_session", "value": token_c, "domain": "127.0.0.1", "path": "/"}])
+    page_c = context_c.new_page()
+    page_c.on("dialog", lambda d: d.accept())
+
+    page_c.goto(base_url)
+    page_c.wait_for_timeout(400)
+
+    # Carlos acessa a aba de Clubes
+    page_c.click("#tab-nav-clubs")
+    page_c.wait_for_timeout(400)
+
+    # Clube Secreto de Filosofia NÃO deve estar visível nem em 'Meus Clubes' nem em 'Todos os Clubes'
+    clubs_text_c = page_c.text_content("#clubs-container") or ""
+    assert "Clube Secreto de Filosofia" not in clubs_text_c, "Clube privado não deve aparecer na listagem de não-membros"
+
+    page_c.click("#subtab-clubs-all")
+    page_c.wait_for_timeout(400)
+    clubs_all_c = page_c.text_content("#clubs-container") or ""
+    assert "Clube Secreto de Filosofia" not in clubs_all_c, "Clube privado não deve aparecer na listagem de Todos os Clubes"
+
+    # Tentativa de acesso direto via API deve retornar 404 estrito (anti-enumeração)
+    status_code = page_c.evaluate(f"() => fetch('/api/reading-clubs/{club_id}').then(r => r.status)")
+    assert status_code == 404, f"API de clube privado deve retornar 404 para não-membros, retornou: {status_code}"
+
+    # Carlos acessa o filtro 'Leitura Coletiva' na biblioteca
+    page_c.click("#tab-nav-library")
+    page_c.wait_for_timeout(400)
+    page_c.click("button[data-status='collective_reads']")
+    page_c.wait_for_timeout(500)
+
+    # Como Carlos não participa de nenhuma leitura, nenhum livro coletivo deve aparecer
+    cards_c = page_c.query_selector_all(".book-card")
+    assert len(cards_c) == 0, f"Carlos não deve ver livros de leituras coletivas que não participa: {len(cards_c)} encontrados"
+
+    shot_user_c = SCREENSHOTS_DIR / "v160_user_c_library_isolated.png"
+    page_c.screenshot(path=str(shot_user_c), full_page=False)
+    assert shot_user_c.exists() and shot_user_c.stat().st_size > 1000
+
+    # =========================================================================
+    # FASE 6: CONCLUIR LEITURA E PRESERVAR HISTÓRICO
+    # =========================================================================
+    # Alice abre a leitura e a altera para 'Concluída'
+    page_a.click(".btn-open-read-modal")
+    page_a.wait_for_timeout(400)
+    page_a.click("#btn-read-detail-edit")
+    page_a.wait_for_timeout(400)
+
+    page_a.select_option("#read-form-status", "completed")
+    page_a.click("#btn-save-read-form")
+    page_a.wait_for_timeout(600)
+
+    # Confere na visão de leituras concluídas
+    page_a.click("button[data-read-filter='completed']")
+    page_a.wait_for_timeout(400)
+    reads_completed_a = page_a.text_content("#club-reads-grid")
+    assert "Leitura Conjunta: Filosofia e Métodos" in reads_completed_a
+    assert "Concluída" in reads_completed_a
+
+    shot_history = SCREENSHOTS_DIR / "v160_club_detail_completed_history.png"
+    page_a.screenshot(path=str(shot_history), full_page=False)
+    assert shot_history.exists() and shot_history.stat().st_size > 1000
+
+    # Limpeza dos contextos
+    context_a.close()
+    context_b.close()
+    context_c.close()
+
+
+

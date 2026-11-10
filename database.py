@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Generator, Optional
 import config
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -131,6 +131,10 @@ def init_db(db_path: Optional[Path] = None) -> None:
             if current_version < 9:
                 _apply_migration_v9(cursor)
                 cursor.execute("INSERT INTO schema_migrations (version) VALUES (9);")
+
+            if current_version < 10:
+                _apply_migration_v10(cursor)
+                cursor.execute("INSERT INTO schema_migrations (version) VALUES (10);")
 
             conn.commit()
         finally:
@@ -1135,6 +1139,102 @@ def _apply_migration_v9(cursor: sqlite3.Cursor) -> None:
         )
     except sqlite3.OperationalError:
         pass
+
+
+def _apply_migration_v10(cursor: sqlite3.Cursor) -> None:
+    """
+    Migração v10 — Clubes de Leitura e Leitura Coletiva (v1.6.0).
+    Cria as tabelas de grupos permanentes de leitura, membros com papéis,
+    convites para clubes privados, leituras coletivas associadas a livros
+    e participantes de leituras coletivas com integridade referencial estrita.
+    """
+    # 1. Tabela de Clubes de Leitura
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reading_clubs (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+            visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private')),
+            is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_clubs_owner ON reading_clubs(owner_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_clubs_visibility ON reading_clubs(visibility);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_clubs_archived ON reading_clubs(is_archived);")
+
+    # 2. Tabela de Membros do Clube com Papéis
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reading_club_members (
+            club_id TEXT NOT NULL REFERENCES reading_clubs(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'moderator', 'member')),
+            joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (club_id, user_id)
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_club_members_user ON reading_club_members(user_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_club_members_club_role ON reading_club_members(club_id, role);")
+
+    # 3. Tabela de Convites para Clubes Privados
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reading_club_invites (
+            id TEXT PRIMARY KEY,
+            club_id TEXT NOT NULL REFERENCES reading_clubs(id) ON DELETE CASCADE,
+            inviter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            invitee_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected', 'cancelled')),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_club_invites_club ON reading_club_invites(club_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_club_invites_invitee ON reading_club_invites(invitee_id, status);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_club_invites_inviter ON reading_club_invites(inviter_id);")
+
+    # 4. Tabela de Leituras Coletivas
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS collective_reads (
+            id TEXT PRIMARY KEY,
+            club_id TEXT NOT NULL REFERENCES reading_clubs(id) ON DELETE CASCADE,
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            title TEXT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            start_date TEXT NULL,
+            end_date TEXT NULL,
+            status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'in_progress', 'completed', 'cancelled')),
+            created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_collective_reads_club ON collective_reads(club_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_collective_reads_book ON collective_reads(book_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_collective_reads_status ON collective_reads(status);")
+
+    # 5. Tabela de Participantes da Leitura Coletiva
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS collective_read_members (
+            read_id TEXT NOT NULL REFERENCES collective_reads(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (read_id, user_id)
+        );
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_collective_read_members_user ON collective_read_members(user_id);")
+
 
 
 

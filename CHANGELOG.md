@@ -7,6 +7,45 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.6.0] - 2026-11-10
+
+### Adicionado
+- **Lectoria v1.6.0 — Clubes de Leitura & Leitura Coletiva**:
+  - **Clubes de Leitura (`reading_clubs`, `reading_club_members`, `reading_club_invites`)**:
+    - Comunidades temáticas permanentes na instância com visibilidade pública ou privada.
+    - Modelo de governança com três papéis: `owner` (Proprietário), `moderator` (Moderador) e `member` (Participante).
+    - Gestão completa de ciclo de vida: criação, edição de propósito, arquivamento/desarquivamento e transferência de titularidade de posse sem risco de orfandade de dados.
+  - **Convites Direcionados e Proteção Anti-Enumeração em Clubes Privados**:
+    - Mecanismo seguro de convites para usuários cadastrados na instância (`reading_club_invites`).
+    - Proprietários e moderadores autorizados podem emitir convites; destinatários recebem alerta em banner dedicado com ações de aceitar ou recusar.
+    - Convites pendentes podem ser revogados pelo clube; convites não respondidos de clubes arquivados são bloqueados.
+    - Proteção estrita contra vazamento de metadados (*anti-enumeration*): clubes privados são invisíveis em listagens públicas e requisições diretas de não-membros retornam estritamente `HTTP 404 Not Found`.
+  - **Leituras Coletivas por Obra (`collective_reads`, `collective_read_members`)**:
+    - Atividades de leitura em grupo vinculadas a obras existentes no acervo da biblioteca (`books.id`), mantendo identificadores textuais íntegros (strings hexadecimais de 16 caracteres).
+    - Ciclo de vida com 4 estados bibliográficos: Planejada (`planned`), Em andamento (`in_progress`), Concluída (`completed`) e Cancelada (`cancelled`).
+    - Adesão e desligamento simplificado de participantes; criador automaticamente cadastrado como primeiro participante ativo.
+    - Preservação de histórico: leituras concluídas ou canceladas permanecem acessíveis no histórico do clube para consulta de metas e debates.
+  - **Filtro "Leitura Coletiva" na Biblioteca e Badges Coletivos nos Cards**:
+    - Nova aba de status `[data-status="collective_reads"]` na biblioteca listando exclusivamente obras vinculadas a leituras coletivas ativas em que o usuário autenticado participa.
+    - Badge visual `Coletiva` nos cards de livros com caixa detalhada indicando nome do clube, estado da leitura e contagem de participantes.
+    - Isolamento individual rigoroso: progresso de leitura individual (página atual, porcentagem), destaques, anotações e avaliações de cada leitor continuam estritamente privados e isolados de outros participantes.
+  - **Migração SQLite Schema v9 → v10 (`database.py`)**:
+    - Criação idempotente e com salvaguarda automática das tabelas `reading_clubs`, `reading_club_members`, `reading_club_invites`, `collective_reads` e `collective_read_members`, com índices de alta performance para filtros e consultas multi-usuário.
+  - **Interface Web e Experiência Mobile-First (`static/index.html`, `static/css/style.css`, `static/js/app.js`)**:
+    - Nova aba principal `#tab-nav-clubs` na navegação de topo com seção dedicada `#clubs-section`.
+    - Banner reativo de convites recebidos com botões rápidos de Aceitar e Recusar.
+    - Visão dividida: Listagem geral com filtros "Meus Clubes" / "Todos os Clubes" e Painel Detalhado do Clube com abas "Leituras Coletivas" e "Participantes & Convites".
+    - Cinco modais contextuais: Criação/Edição de Clube, Nova Leitura Coletiva, Detalhes da Leitura com Ação de Ingressar/Sair, Convidar Leitor e Transferência de Propriedade.
+    - Zero overflow horizontal em todas as resoluções (320px a desktop ultrawide) e consistência visual com o tema escuro editorial (*obsidian, ivory, terracotta*).
+  - **Prontidão Open Source e Docker Compose (`docker-compose.yml`, `docker-compose.example.yml`)**:
+    - Arquivos de orquestração Docker Compose oficiais para rápida implantação por novos usuários da comunidade open source, com mapeamento correto de volumes (`lectoria_data`, `lectoria_backups`) e verificação de saúde (*healthcheck*).
+  - **Suíte de Testes Expandida**:
+    - 8 novos testes de integração em `tests/test_v160_reading_clubs.py`.
+    - 1 novo teste E2E multi-usuário real com Playwright Chromium em `tests/e2e/test_browser_e2e.py` validando os fluxos concorrentes de 3 usuários distintos.
+    - Total de **194 testes automatizados aprovados sem regressões**.
+
+---
+
 ## [1.5.2] - 2026-11-09
 
 ### Adicionado

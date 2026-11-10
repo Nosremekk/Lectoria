@@ -465,6 +465,7 @@ def get_books(
     favorite_only: bool = False,
     want_to_read_only: bool = False,
     uncategorized: bool = False,
+    collective_read_only: bool = False,
     user_id: int = 1,
 ) -> List[Dict[str, Any]]:
     """
@@ -629,6 +630,16 @@ def get_books(
 
         if want_to_read_only or status_filter == "want_to_read":
             sql += " AND COALESCE(br.want_to_read, 0) = 1"
+
+        # Filtro por livros de leituras coletivas do usuário autenticado
+        if collective_read_only or status_filter == "collective_reads":
+            sql += """ AND b.id IN (
+                SELECT cr.book_id
+                FROM collective_reads cr
+                JOIN collective_read_members crm ON cr.id = crm.read_id
+                WHERE crm.user_id = ? AND cr.status != 'cancelled'
+            )"""
+            params.append(user_id)
 
         # Filtro por coleção
         if collection_id is not None:
@@ -805,8 +816,44 @@ def get_books(
                     tax_map[bid]["is_manual"] = True
                 tax_map[bid]["subjects"].append(row["name"])
 
+            # Anexa leituras coletivas ativas do usuário
+            cr_map: Dict[str, List[Dict[str, Any]]] = {}
+            try:
+                cursor.execute(
+                    f"""
+                    SELECT
+                        cr.book_id, cr.id AS read_id, cr.club_id, cr.title AS read_title,
+                        cr.status AS read_status, cr.start_date, cr.end_date,
+                        c.name AS club_name,
+                        (SELECT COUNT(*) FROM collective_read_members crm2 WHERE crm2.read_id = cr.id) AS members_count
+                    FROM collective_reads cr
+                    JOIN collective_read_members crm ON cr.id = crm.read_id
+                    JOIN reading_clubs c ON cr.club_id = c.id
+                    WHERE cr.book_id IN ({placeholders}) AND crm.user_id = ? AND cr.status != 'cancelled'
+                    ORDER BY cr.created_at DESC;
+                    """,
+                    (*book_ids, user_id),
+                )
+                for cr_row in cursor.fetchall():
+                    cbid = cr_row["book_id"]
+                    if cbid not in cr_map:
+                        cr_map[cbid] = []
+                    cr_map[cbid].append({
+                        "read_id": cr_row["read_id"],
+                        "club_id": cr_row["club_id"],
+                        "read_title": cr_row["read_title"],
+                        "read_status": cr_row["read_status"],
+                        "start_date": cr_row["start_date"],
+                        "end_date": cr_row["end_date"],
+                        "club_name": cr_row["club_name"],
+                        "members_count": cr_row["members_count"],
+                    })
+            except Exception:
+                cr_map = {}
+
             for b in books:
                 bid = b["id"]
+                b["collective_reads"] = cr_map.get(bid, [])
                 b["collections"] = coll_map.get(bid, [])
                 m_info = managed_cat_map.get(bid, {"categories": [], "subcategories": [], "is_manual": False})
                 tinfo = tax_map.get(
@@ -981,6 +1028,28 @@ def get_book(book_id: str, user_id: int = 1) -> Dict[str, Any]:
         }
 
         data["taxonomy"] = get_book_taxonomy(book_id)
+
+        # Anexa leituras coletivas ativas do usuário
+        try:
+            cursor.execute(
+                """
+                SELECT
+                    cr.book_id, cr.id AS read_id, cr.club_id, cr.title AS read_title,
+                    cr.status AS read_status, cr.start_date, cr.end_date,
+                    c.name AS club_name,
+                    (SELECT COUNT(*) FROM collective_read_members crm2 WHERE crm2.read_id = cr.id) AS members_count
+                FROM collective_reads cr
+                JOIN collective_read_members crm ON cr.id = crm.read_id
+                JOIN reading_clubs c ON cr.club_id = c.id
+                WHERE cr.book_id = ? AND crm.user_id = ? AND cr.status != 'cancelled'
+                ORDER BY cr.created_at DESC;
+                """,
+                (book_id, user_id),
+            )
+            data["collective_reads"] = [dict(r) for r in cursor.fetchall()]
+        except Exception:
+            data["collective_reads"] = []
+
         return data
 
 
