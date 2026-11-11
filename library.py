@@ -13,7 +13,7 @@ import re
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import pypdf
 
 import config
@@ -1628,3 +1628,61 @@ def resolve_book_path(book_id: str) -> Path:
         raise BookNotFoundError("O arquivo PDF do livro não pôde ser encontrado no disco.")
 
     return real_path
+
+
+def resolve_book_file_for_user(book_id: str, user_id: int = 1) -> Tuple[Path, os.stat_result, str]:
+    """
+    Localiza e valida com segurança o arquivo físico de um livro para streaming ou download,
+    realizando uma única consulta leve ao banco de dados com todas as proteções de segurança
+    (prevenção de path traversal, validação de symlinks, fontes ativas e integridade de arquivo).
+    Retorna (caminho_real, stat_result, media_type).
+    """
+    clean_id = str(book_id).strip()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT b.rel_path, b.is_missing, b.format, b.filename, s.path as source_path, s.is_active as source_active
+            FROM books b
+            LEFT JOIN library_sources s ON b.source_id = s.id
+            WHERE b.id = ?
+            """,
+            (clean_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise BookNotFoundError(f"Livro '{clean_id}' não cadastrado.")
+        if row["is_missing"]:
+            raise BookNotFoundError(f"Livro '{clean_id}' marcado como ausente do disco.")
+        if row["source_active"] is not None and not row["source_active"]:
+            raise SecurityError("A fonte desta obra está temporariamente desativada.")
+
+        rel_path = row["rel_path"]
+        source_dir = Path(row["source_path"]).resolve() if row["source_path"] else config.LIBRARY_DIR.resolve()
+        fmt = (row["format"] or ("epub" if (row["filename"] or "").lower().endswith(".epub") else "pdf")).lower()
+        media_type = "application/epub+zip" if fmt == "epub" else "application/pdf"
+
+    target_path = (source_dir / rel_path).resolve()
+
+    # Proteção de segurança contra Path Traversal
+    try:
+        target_path.relative_to(source_dir)
+    except ValueError:
+        raise SecurityError("Tentativa de acesso ilegal a caminho fora da fonte autorizada.")
+
+    # Revalidação rigorosa de links simbólicos: resolve(strict=True) deve estar dentro da fonte
+    try:
+        real_path = target_path.resolve(strict=True)
+        real_path.relative_to(source_dir)
+    except (ValueError, FileNotFoundError):
+        with get_db() as conn:
+            conn.execute("UPDATE books SET is_missing = 1 WHERE id = ?", (clean_id,))
+        raise BookNotFoundError("O arquivo do livro não pôde ser encontrado no disco.")
+
+    if not real_path.is_file():
+        with get_db() as conn:
+            conn.execute("UPDATE books SET is_missing = 1 WHERE id = ?", (clean_id,))
+        raise BookNotFoundError("O arquivo do livro não pôde ser encontrado no disco.")
+
+    stat_result = real_path.stat()
+    return real_path, stat_result, media_type

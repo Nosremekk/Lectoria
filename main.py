@@ -5,6 +5,8 @@ Suporta streaming com HTTP Range, downloads, múltiplas fontes e perfis com isol
 """
 
 from contextlib import asynccontextmanager
+from email.utils import formatdate
+import hashlib
 import json
 from pathlib import Path
 import secrets
@@ -76,6 +78,7 @@ from library import (
     set_book_reading_status,
     update_book_metadata,
     resolve_book_path,
+    resolve_book_file_for_user,
     scan_library,
 )
 from taxonomy_service import (
@@ -1182,27 +1185,43 @@ async def retrieve_book(book_id: str, request: Request):
 
 
 @app.get("/api/books/{book_id}/file")
+@app.head("/api/books/{book_id}/file")
 async def stream_book_file(book_id: str, request: Request):
     """
-    Disponibiliza o arquivo PDF com suporte a HTTP Range requests (206 Partial Content).
-    Permite ao PDF.js no cliente requisitar apenas as partes necessárias do documento
-    sem que o servidor carregue o arquivo inteiro na memória.
+    Disponibiliza o arquivo PDF/EPUB com suporte a HTTP Range requests (206 Partial Content),
+    inspeção de cabeçalhos (HEAD), validação condicional com ETag e políticas seguras de cache.
+    Utiliza consulta otimizada de caminho sem carregar tabelas acessórias da biblioteca.
     """
     user = require_user(request)
     try:
-        get_book(book_id, user_id=user["id"])
-        file_path = resolve_book_path(book_id)
+        file_path, stat_result, media_type = resolve_book_file_for_user(book_id, user_id=user["id"])
     except SecurityError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except BookNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    ext = file_path.suffix.lower()
-    media_type = "application/epub+zip" if ext == ".epub" else "application/pdf"
+    etag_base = f"{stat_result.st_mtime}-{stat_result.st_size}"
+    etag = f'"{hashlib.md5(etag_base.encode(), usedforsecurity=False).hexdigest()}"'
+    last_modified = formatdate(stat_result.st_mtime, usegmt=True)
+
+    cache_headers = {
+        "Cache-Control": "private, no-cache",
+        "Accept-Ranges": "bytes",
+        "ETag": etag,
+        "Last-Modified": last_modified,
+    }
+
+    # Validação condicional If-None-Match (para requisições completas ou revalidações sem Range)
+    if_none_match = request.headers.get("if-none-match")
+    if not request.headers.get("range") and if_none_match and if_none_match == etag:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=cache_headers)
+
     return FileResponse(
         path=file_path,
         media_type=media_type,
         filename=file_path.name,
+        stat_result=stat_result,
+        headers=cache_headers,
     )
 
 

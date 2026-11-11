@@ -1,4 +1,4 @@
-# Lectoria — Servidor Pessoal de Livros Digitais (v1.6.0 — Clubes de Leitura & Leitura Coletiva)
+# Lectoria — Servidor Pessoal de Livros Digitais (v1.6.1 — Otimização de Desempenho do Leitor PDF)
 
 O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para organização, identificação inteligente, automação, clubes de leitura e leitura colaborativa de documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
 
@@ -8,6 +8,13 @@ Foi concebido para operar perfeitamente mesmo em hardware modesto — como compu
 
 ## 1. Principais Recursos
 
+- **Otimização de Desempenho do Leitor PDF (v1.6.1)**:
+  - **Abertura Ultrarrápida de Documentos**: Redução drástica do tráfego inicial para renderizar a 1ª página em mais de 90%, passando de dezenas de segundos para ~1 segundo em redes remotas e < 0,3s em rede local.
+  - **Eliminação de Streaming Monolítico (`disableStream: true`)**: Evita o download concorrente não intencional de 100% do arquivo enquanto a primeira página é requisitada.
+  - **Fatiamento Equilibrado (`rangeChunkSize: 524288`)**: Adoção de blocos de 512 KB reduzindo em até 8x as viagens de ida e volta (RTT) de rede necessárias para leitura de catálogo e referências cruzadas (`xref`).
+  - **Resolução Leve de Arquivos no Backend**: Rota de streaming otimizada com `resolve_book_file_for_user`, substituindo consultas pesadas com múltiplos JOINs por uma consulta única e direta de segurança e caminho em disco.
+  - **Cache HTTP Seguro e Conservador**: Cabeçalhos padronizados `Cache-Control: private, no-cache`, `Accept-Ranges: bytes`, `ETag` determinístico e suporte nativo a revalidação condicional `HTTP 304 Not Modified` e requisições `HEAD`.
+  - **Carregamento Progressivo da Interface**: Inicialização paralela de metadados e progresso de leitura via `Promise.all`, e carregamento assíncrono de anotações e destaques em segundo plano sem bloquear a primeira pintura visual.
 - **Clubes de Leitura e Leitura Coletiva (v1.6.0)**:
   - **Clubes de Leitura Públicos e Privados (Schema v10)**: Criação de comunidades temáticas permanentes na instância com modelo de governança em 3 papéis (`owner`, `moderator`, `member`), arquivamento seguro e transferência de titularidade de posse sem orfandade de dados.
   - **Convites Direcionados e Proteção Anti-Enumeração**: Convites para usuários da instância com aceite ou recusa, revogação de convites pendentes e blindagem estrita contra enumeração de dados (clubes privados são invisíveis para não-membros e acessos diretos não autorizados retornam `HTTP 404 Not Found`).

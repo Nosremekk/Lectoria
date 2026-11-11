@@ -483,6 +483,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const slotWidth = Math.round(basePageWidth * scale);
     const slotHeight = Math.round(basePageHeight * scale);
 
+    const fragment = document.createDocumentFragment();
     for (let p = 1; p <= totalPages; p++) {
       const slot = document.createElement("div");
       slot.className = "page-slot page-container";
@@ -491,8 +492,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       slot.style.width = `${slotWidth}px`;
       slot.style.height = `${slotHeight}px`;
       slot.innerHTML = `<div class="page-slot-placeholder">Página ${p}</div>`;
-      continuousWrapper.appendChild(slot);
+      fragment.appendChild(slot);
     }
+    continuousWrapper.appendChild(fragment);
 
     continuousObserver = new IntersectionObserver((entries) => {
       entries.forEach(entry => {
@@ -2816,7 +2818,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // --- Carregamento Inicial do Documento ---
   try {
-    const bookRes = await fetch(`/api/books/${bookId}`);
+    // Paraleliza a busca de metadados da obra e do progresso salvo para acelerar a renderização
+    const [bookRes, progRes] = await Promise.all([
+      fetch(`/api/books/${bookId}`),
+      fetch(`/api/books/${bookId}/progress`).catch(() => null),
+    ]);
     if (bookRes.status === 401) {
       window.location.href = `/?login=1`;
       return;
@@ -2834,10 +2840,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       bookCoverMini.style.display = "block";
     }
 
-    const progRes = await fetch(`/api/books/${bookId}/progress`);
     let progData = null;
     let initialPage = 1;
-    if (progRes.ok) {
+    if (progRes && progRes.ok) {
       progData = await progRes.json();
       if (progData.current_page && progData.current_page >= 1) {
         initialPage = progData.current_page;
@@ -2850,11 +2855,16 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
+    // Configuração de alto desempenho para PDF.js (v1.6.1):
+    // 1. disableStream: true evita o streaming concorrente não intencional de 100% do arquivo
+    // 2. rangeChunkSize: 524288 (512 KB) reduz drasticamente as viagens de ida e volta (RTT)
+    // 3. length antecipa a dimensão exata do documento sem esperar handshake extra
     const loadingTask = pdfjsLib.getDocument({
       url: `/api/books/${bookId}/file`,
-      rangeChunkSize: 65536,
+      rangeChunkSize: 524288,
       disableAutoFetch: true,
-      disableStream: false,
+      disableStream: true,
+      length: (bookData && bookData.filesize) || undefined,
     });
 
     pdfDoc = await loadingTask.promise;
@@ -2912,7 +2922,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       }, 600);
     }
 
-    await reloadBookAnnotations();
+    // Carregamento progressivo de anotações: não bloqueia a pintura da 1ª página
+    const annotationsPromise = reloadBookAnnotations();
 
     currentPage = Math.min(initialPage, totalPages);
     updateReadingProgressBar();
@@ -2922,6 +2933,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     setTimeout(() => {
       isRestoringProgress = false;
     }, 600);
+    annotationsPromise.catch((e) => console.warn("Erro ao carregar anotações em segundo plano:", e));
   } catch (err) {
     console.error("Falha ao abrir documento:", err);
     const isEpub = bookFormat === "epub";

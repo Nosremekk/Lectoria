@@ -7,6 +7,27 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.6.1] - 2026-11-11
+
+### Otimizado
+- **Otimização de Desempenho do Leitor PDF (`static/js/reader.js`)**:
+  - `disableStream: true`: eliminação do streaming progressivo concorrente não intencional de 100% do arquivo, evitando saturação de banda e permitindo abertura de PDFs grandes em ~1 segundo.
+  - `rangeChunkSize: 524288` (512 KB): fatiamento otimizado que reduz os saltos sequenciais de rede (RTT) em até 8x comparado ao valor histórico de 64 KB.
+  - `length`: declaração antecipada do tamanho do documento fornecido pelo acervo, acelerando o cálculo de intervalos do motor PDF.js.
+  - **Carregamento Progressivo de Anotações**: busca assíncrona de destaques e notas em segundo plano, eliminando o bloqueio visual da pintura do primeiro frame do canvas.
+  - **Paralelização de Inicialização**: requisições de metadados do livro e progresso salvo recuperadas simultaneamente via `Promise.all`.
+  - **Modo Contínuo Otimizado**: instanciação de nós de páginas via `DocumentFragment`, reduzindo reflows do DOM de centenas de operações para uma única mutação em lote.
+
+- **API de Entrega de Documentos e Políticas de Cache (`main.py`, `library.py`)**:
+  - Nova função `resolve_book_file_for_user`: substituição de `get_book()` por consulta direta, reduzindo a sobrecarga no SQLite de 8 consultas SQL e 4 conexões para 1 consulta leve sem comprometer segurança, isolamento ou checagem de fontes ativas.
+  - Suporte ao método `HEAD` em `/api/books/{book_id}/file`: inspeção rápida de cabeçalhos sem download de corpo.
+  - Políticas de Cache Seguras e Conservadoras: `Cache-Control: private, no-cache`, `Accept-Ranges: bytes`, `ETag` determinístico e `Last-Modified`.
+  - Revalidação condicional compatível com RFC 9111 (`304 Not Modified` para `If-None-Match` e conformidade com `If-Range` / `416 Range Not Satisfiable`).
+
+- **Testes e Qualidade**:
+  - Nova suíte `tests/test_v161_pdf_performance.py` com 7 testes dedicados para streaming, Range requests, cache condicional, códigos 200/206/304/416 e segurança de autenticação.
+  - 100% de aprovação na suíte completa (202 testes automatizados aprovados).
+
 ## [1.6.0] - 2026-11-10
 
 ### Adicionado
