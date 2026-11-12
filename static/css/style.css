@@ -740,6 +740,118 @@ body {
   gap: 0.38rem;
 }
 
+/* Unificação de Grade / Lista (v1.6.2): .book-card dentro de .books-list */
+.books-list .book-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1.1rem;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.15rem;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+  box-shadow: var(--shadow-sm);
+  width: 100%;
+}
+
+.books-list .book-card:hover {
+  border-color: var(--accent);
+  background-color: var(--bg-secondary);
+}
+
+.books-list .book-card .book-cover-wrapper {
+  flex-shrink: 0;
+  width: 48px;
+  height: 68px;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-tertiary);
+  box-shadow: var(--shadow-sm);
+  position: relative;
+}
+
+.books-list .book-card .book-cover {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.books-list .book-card .book-cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.books-list .book-card .btn-cover-customize,
+.books-list .book-card .book-cover-badges {
+  display: none;
+}
+
+.books-list .book-card .book-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  min-width: 0;
+  flex: 3;
+  padding: 0;
+}
+
+.books-list .book-card .book-title {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 1.02rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.books-list .book-card .book-author {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.books-list .book-card .book-meta-details {
+  font-size: 0.74rem;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.books-list .book-card .progress-container {
+  flex: 2;
+  max-width: 230px;
+  margin: 0;
+}
+
+.books-list .book-card .card-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.38rem;
+  border-top: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .books-list .book-card {
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    padding: 0.65rem 0.8rem;
+  }
+  .books-list .book-card .progress-container {
+    max-width: 100%;
+    width: 100%;
+    flex: 1 1 100%;
+  }
+}
+
 /* =========================================
    PERFIL DE USUÁRIO E CONTROLES ADMIN
    ========================================= */
@@ -777,6 +889,8 @@ body {
   display: flex;
   align-items: center;
   gap: 0.35rem;
+  flex-wrap: wrap;
+  max-width: 100%;
 }
 
 .source-item, .user-item {
@@ -2018,12 +2132,19 @@ kbd {
 }
 
 /* =========================================================================
-   LECTORIA v1.5.2 — CONTROLES MOBILE, BOTÃO DE FILTROS E RESPONSIVIDADE
+   LECTORIA v1.6.2 — CONTROLES MOBILE, BOTÃO DE FILTROS E RESPONSIVIDADE
    ========================================================================= */
 
-html, body {
-  overflow-x: hidden;
-  max-width: 100vw;
+html {
+  box-sizing: border-box;
+}
+
+*, *:before, *:after {
+  box-sizing: inherit;
+}
+
+body {
+  min-width: 320px;
 }
 
 .btn-mobile-filters-toggle {
@@ -2131,23 +2252,11 @@ html, body {
     width: 100%;
     min-width: unset;
   }
-  .main-view-nav {
-    padding: 0.35rem 0.75rem;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .main-view-tabs {
-    flex-wrap: nowrap;
-    gap: 0.35rem;
-  }
-  .main-nav-tab-btn {
-    padding: 0.45rem 0.75rem;
-    font-size: 0.82rem;
-    white-space: nowrap;
-  }
   .main-container {
     padding: 0.85rem 0.65rem;
-    max-width: 100vw;
+    max-width: 100%;
+    width: 100%;
+    box-sizing: border-box;
   }
   .library-filter-tabs {
     flex-direction: column;
@@ -2288,44 +2397,17 @@ html, body {
   }
 }
 
-@media (max-width: 768px) {
-  .app-header {
-    flex-direction: column;
-    align-items: stretch;
-    padding: 0.75rem 1rem;
-    gap: 0.75rem;
+@media (max-width: 360px) {
+  .user-role-tag {
+    display: none;
+  }
+  .user-profile-badge {
+    padding: 0.2rem 0.4rem;
+    gap: 0.25rem;
+    font-size: 0.75rem;
   }
   .header-controls {
-    justify-content: space-between;
-  }
-  .search-box {
-    width: 100%;
-    min-width: unset;
-  }
-  .library-filter-tabs {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .filter-actions {
-    justify-content: space-between;
-    width: 100%;
-  }
-  .books-grid {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 1rem;
-  }
-  .list-item {
-    flex-wrap: wrap;
-    gap: 0.75rem;
-  }
-  .list-progress {
-    max-width: 100%;
-    width: 100%;
-    flex: 1 1 100%;
-  }
-  .cover-modal-layout {
-    flex-direction: column;
-    align-items: center;
+    gap: 0.3rem;
   }
 }
 
@@ -3003,32 +3085,47 @@ html, body {
 
 /* Navegação Principal: Descoberta vs Biblioteca */
 .main-view-nav {
+  position: relative;
   background-color: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
-  padding: 0.4rem 1.75rem;
+  padding: 0.35rem 0.65rem;
   display: flex;
   align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.main-view-nav::-webkit-scrollbar {
+  display: none;
 }
 
 .main-view-tabs {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.35rem;
+  flex-wrap: nowrap;
+  min-width: min-content;
 }
 
 .main-nav-tab-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
+  gap: 0.4rem;
+  padding: 0.4rem 0.65rem;
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   color: var(--text-muted);
   font-family: var(--font-sans);
-  font-size: 0.9rem;
+  font-size: 0.82rem;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .main-nav-tab-btn:hover {
@@ -3041,6 +3138,42 @@ html, body {
   color: var(--accent);
   border-color: rgba(212, 106, 78, 0.3);
   font-weight: 600;
+}
+
+@media (min-width: 769px) {
+  .main-view-nav {
+    padding: 0.4rem 1.75rem;
+  }
+
+  .main-view-tabs {
+    gap: 0.5rem;
+    padding-right: 0;
+  }
+
+  .main-nav-tab-btn {
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .main-view-nav {
+    padding: 0.35rem 0.65rem;
+    mask-image: linear-gradient(to right, #000 calc(100% - 32px), rgba(0, 0, 0, 0) 100%);
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), rgba(0, 0, 0, 0) 100%);
+    scroll-snap-type: x proximity;
+    transform: translateZ(0);
+    will-change: scroll-position;
+  }
+
+  .main-view-tabs {
+    padding-right: 2rem;
+  }
+
+  .main-nav-tab-btn {
+    scroll-snap-align: start;
+  }
 }
 
 /* Container de Prateleiras */

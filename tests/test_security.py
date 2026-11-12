@@ -33,6 +33,11 @@ def test_pdf_streaming_and_range_requests(client):
 
 
 def test_missing_or_removed_book(client):
+    # Garante que a fonte principal esteja apontando para o diretório de teste atual
+    import database
+    with database.get_db() as conn:
+        conn.execute("UPDATE library_sources SET path = ?, is_active = 1 WHERE id = 1", (str(config.LIBRARY_DIR.resolve()),))
+
     # Cria um livro temporário específico para testar remoção
     temp_book_file = config.LIBRARY_DIR / "livro_temporario.pdf"
     create_sample_pdf(temp_book_file, "Livro Temporário", "Autor Teste", pages=3)

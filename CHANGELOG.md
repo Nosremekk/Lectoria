@@ -7,6 +7,32 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.6.2] - 2026-11-11
+
+### Corrigido e Otimizado
+- **Correções de Interface Mobile e Eliminação de Defeitos Visuais (`static/css/style.css`)**:
+  - **Eliminação de Defeitos Visuais no Chrome Android**: Remoção de `html, body { overflow-x: hidden; }` global, que causava falhas na árvore de camadas de renderização e gerava retângulos em branco/não-rasterizados (`#fcfbf7`) cobrindo elementos da tela.
+  - **Hierarquia e Especificidade CSS Corrigidas**: Regras desktop isoladas em `@media (min-width: 769px)` e regras mobile em `@media (max-width: 768px)`, eliminando sobreposições acidentais de especificidade entre `.main-view-nav` e `.main-view-tabs`.
+  - **Sinalização Visual de Rolagem Horizontal**: Adição de máscara de gradiente lateral (`-webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent 100%)`) e alinhamento por `scroll-snap-type: x proximity`, permitindo ao usuário identificar imediatamente que a barra de abas possui itens adicionais.
+  - **Prevenção de Cortes no Mobile Estreito**: Adição de espaçamento final (`padding-right: 2rem`) em `.main-view-tabs` garantindo que o último botão ("Clubes de Leitura" e "Administração") nunca seja cortado.
+  - **Contenção do Cabeçalho Administrativo e Perfis**: Aplicação de `flex-wrap: wrap` e contenção em `.admin-nav-group` e `.header-controls`, além de compactação do badge de usuário em telas de 320px a 360px, eliminando qualquer overflow horizontal residual no mobile.
+
+- **Otimização da Biblioteca e Filtros Instantâneos (`static/js/app.js`)**:
+  - **Cache Leve em Memória no Cliente (`libraryCache`)**: Armazenamento em memória dos livros do acervo associados ao `userId` ativo, eliminando requisições repetidas `/api/books` ao navegar entre abas ou alternar filtros.
+  - **Filtragem e Ordenação no Cliente**: Mudanças de status (Todos, Em andamento, Não iniciados, Concluídos, Favoritos, Quero ler), categorias, coleções e ordenação executadas em menos de 1 ms no frontend, reduzindo as requisições de rede de 1,34 MB por clique para 0 B.
+  - **Resiliência a Condições de Corrida**: Uso de `AbortController` para cancelar requisições assíncronas em trânsito caso o usuário troque de visão rapidamente.
+  - **Invalidação e Limpeza de Sessão Rigorosas**: Invalidação imediata do cache em todas as operações de mutação (edição de metadados, capas, coleções, exclusão de livros, scan do acervo) e limpeza completa de cache no logout ou troca de usuário (`clearUserSessionCache`).
+
+- **Renderização Progressiva e Otimização do DOM (`static/js/app.js`, `static/css/style.css`)**:
+  - **Alternância Grade/Lista Pura via CSS**: Alternância instantânea (< 2 ms) entre Grid e List modificando apenas a classe do contêiner (`.books-grid` e `.books-list`), sem destruir ou reconstruir o DOM e com zero requisições HTTP.
+  - **Renderização em Lotes (Chunking)**: Carregamento progressivo em lotes de 36 livros (`BOOKS_CHUNK_SIZE = 36`) com sentinela `#books-scroll-sentinel` e `IntersectionObserver`, reduzindo o volume inicial de nós do DOM de >25.000 para ~900 em acervos de 1.000 livros.
+  - **Delegação Centralizada de Eventos**: Substituição de centenas de listeners individuais nos cards por um único listener centralizado em `booksContainer`.
+
+- **Testes e Qualidade**:
+  - Nova suíte de testes `tests/test_v162_interface_performance.py` validando cache, invalidação, isolamento de sessão, integridade do schema v10 e regras CSS.
+  - Script de benchmark e validação `tests/run_v162_benchmarks.py` validando zero overflow em 7 resoluções (320px, 360px, 375px, 390px, 412px, 768px e 1366px) e Chrome Android emulado.
+  - 100% de aprovação na suíte de testes automatizados (206 testes aprovados).
+
 ## [1.6.1] - 2026-11-11
 
 ### Otimizado

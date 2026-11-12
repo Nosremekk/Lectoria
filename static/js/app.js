@@ -2,7 +2,7 @@
  * Lectoria — Aplicação da Biblioteca (v1.5.2)
  * JavaScript puro (Vanilla ES6), rápido e sem dependências pesadas.
  */
-window.LECTORIA_FRONTEND_VERSION = "1.6.1";
+window.LECTORIA_FRONTEND_VERSION = "1.6.2";
 
 function formatApiError(err, fallbackMsg = "Ocorreu um erro ao processar a solicitação.") {
   if (!err) return fallbackMsg;
@@ -242,6 +242,30 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentUser = null;
   let isSetupRequired = false;
 
+  // Cache leve em memória para os dados da biblioteca (v1.6.2)
+  const LIBRARY_CACHE_TTL_MS = 120000; // 2 minutos para detecção transparente de alterações remotas
+
+  const libraryCache = {
+    books: null,
+    userId: null,
+    timestamp: 0,
+    abortController: null,
+  };
+
+  function invalidateLibraryCache() {
+    libraryCache.books = null;
+    libraryCache.timestamp = 0;
+    if (libraryCache.abortController) {
+      libraryCache.abortController.abort();
+      libraryCache.abortController = null;
+    }
+  }
+
+  function clearUserSessionCache() {
+    invalidateLibraryCache();
+    libraryCache.userId = null;
+  }
+
   // --- Gerenciamento de Tema (Claro / Escuro) ---
   function applyTheme(theme) {
     currentTheme = theme;
@@ -373,8 +397,9 @@ document.addEventListener("DOMContentLoaded", () => {
               alert(err.detail || "Erro ao renomear coleção");
               return;
             }
+            invalidateLibraryCache();
             await loadCollections();
-            loadBooks();
+            loadBooks({ forceRefresh: true });
           } catch (e) {
             alert("Erro de conexão ao renomear.");
           }
@@ -390,8 +415,9 @@ document.addEventListener("DOMContentLoaded", () => {
           try {
             const res = await fetch(`/api/collections/${id}`, { method: "DELETE" });
             if (res.ok) {
+              invalidateLibraryCache();
               await loadCollections();
-              loadBooks();
+              loadBooks({ forceRefresh: true });
             }
           } catch (e) {
             alert("Erro ao excluir coleção.");
@@ -401,59 +427,183 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // --- Carregamento e Renderização de Livros ---
-  async function loadBooks() {
-    const query = searchInput.value.trim();
-    const [sortBy, order] = sortSelect.value.split("_");
+  // --- Carregamento, Filtragem e Renderização Otimizada de Livros (v1.6.2) ---
 
-    const params = new URLSearchParams();
-    if (query) params.set("search", query);
-    if (sortBy) params.set("sort_by", sortBy);
-    if (order) params.set("order", order);
-    if (currentStatus === "favorites") {
-      params.set("favorite_only", "true");
-    } else if (currentStatus === "want_to_read") {
-      params.set("want_to_read_only", "true");
-    } else if (currentStatus === "collective_reads") {
-      params.set("collective_read_only", "true");
-    } else if (currentStatus && currentStatus !== "all") {
-      params.set("status", currentStatus);
-    }
-    if (currentCollectionId) params.set("collection_id", currentCollectionId);
-    if (currentFormat) params.set("format", currentFormat);
+  function isBookCompleted(book) {
+    const percentage = book.progress_percentage || 0;
+    return percentage >= 100 || (book.page_count > 0 && book.current_page >= book.page_count) || Boolean(book.is_completed_manual);
+  }
 
-    if (categorySelect && categorySelect.value) {
-      if (categorySelect.value === "__uncategorized__") {
-        params.set("uncategorized", "true");
-      } else {
-        params.set("category", categorySelect.value);
+  function sortBooksList(list, sortBy, order) {
+    const isAsc = order === "asc";
+    return list.slice().sort((a, b) => {
+      let valA, valB;
+      switch (sortBy) {
+        case "title":
+          valA = (a.title || "").toLowerCase();
+          valB = (b.title || "").toLowerCase();
+          return isAsc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        case "author":
+          valA = (a.author || "").toLowerCase();
+          valB = (b.author || "").toLowerCase();
+          return isAsc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        case "year":
+          valA = a.publish_year || 0;
+          valB = b.publish_year || 0;
+          return isAsc ? valA - valB : valB - valA;
+        case "last_read":
+          valA = a.progress_updated_at || "";
+          valB = b.progress_updated_at || "";
+          return isAsc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        case "recent":
+        case "created":
+        case "created_at":
+          valA = a.created_at || "";
+          valB = b.created_at || "";
+          return isAsc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        case "progress":
+        case "percentage":
+          valA = a.progress_percentage || 0;
+          valB = b.progress_percentage || 0;
+          return isAsc ? valA - valB : valB - valA;
+        default:
+          valA = (a.title || "").toLowerCase();
+          valB = (b.title || "").toLowerCase();
+          return isAsc ? valA.localeCompare(valB) : valB.localeCompare(valA);
       }
-    }
-    if (subcategorySelect && subcategorySelect.value) params.set("subcategory", subcategorySelect.value);
-    if (genreSelect && genreSelect.value) params.set("genre", genreSelect.value);
-    if (originSelect && originSelect.value) params.set("origin", originSelect.value);
-    if (idStatusSelect && idStatusSelect.value) params.set("identification_status", idStatusSelect.value);
+    });
+  }
 
+  function filterBooksList(books) {
+    const query = searchInput.value.trim().toLowerCase();
+    const selectedCategory = categorySelect ? categorySelect.value : "";
+    const selectedSubcategory = subcategorySelect ? subcategorySelect.value : "";
+    const selectedGenre = genreSelect ? genreSelect.value : "";
+    const selectedOrigin = originSelect ? originSelect.value : "";
+    const selectedIdStatus = idStatusSelect ? idStatusSelect.value : "";
+
+    return books.filter(book => {
+      // 1. Busca por texto (título, autor, descrição)
+      if (query) {
+        const title = (book.title || "").toLowerCase();
+        const author = (book.author || "").toLowerCase();
+        const desc = (book.description || "").toLowerCase();
+        if (!title.includes(query) && !author.includes(query) && !desc.includes(query)) {
+          return false;
+        }
+      }
+
+      // 2. Status de leitura
+      const completed = isBookCompleted(book);
+      const hasProgress = book.current_page && book.current_page > 1 && !completed;
+
+      if (currentStatus === "favorites") {
+        if (!book.is_favorite) return false;
+      } else if (currentStatus === "want_to_read") {
+        if (!book.want_to_read) return false;
+      } else if (currentStatus === "collective_reads") {
+        if (!book.collective_reads || book.collective_reads.length === 0) return false;
+      } else if (currentStatus === "in_progress") {
+        if (!hasProgress) return false;
+      } else if (currentStatus === "completed") {
+        if (!completed) return false;
+      } else if (currentStatus === "unread") {
+        if (completed || hasProgress) return false;
+      }
+
+      // 3. Coleção
+      if (currentCollectionId) {
+        const inCol = (book.collections || []).some(c => String(c.id) === currentCollectionId);
+        if (!inCol) return false;
+      }
+
+      // 4. Formato
+      if (currentFormat) {
+        const bookFmt = (book.format || (book.filename && book.filename.toLowerCase().endsWith(".epub") ? "epub" : "pdf")).toLowerCase();
+        if (bookFmt !== currentFormat.toLowerCase()) return false;
+      }
+
+      // 5. Categoria
+      if (selectedCategory) {
+        if (selectedCategory === "__uncategorized__") {
+          if (book.categories && book.categories.length > 0) return false;
+        } else {
+          if (!book.categories || !book.categories.includes(selectedCategory)) return false;
+        }
+      }
+
+      // 6. Taxonomia: Subcategoria
+      if (selectedSubcategory) {
+        if (!book.taxonomy_subcategories || !book.taxonomy_subcategories.includes(selectedSubcategory)) return false;
+      }
+
+      // 7. Taxonomia: Gênero
+      if (selectedGenre) {
+        if (!book.taxonomy_genres || !book.taxonomy_genres.includes(selectedGenre)) return false;
+      }
+
+      // 8. Taxonomia: Origem
+      if (selectedOrigin) {
+        if (book.taxonomy_origin !== selectedOrigin) return false;
+      }
+
+      // 9. Status de identificação
+      if (selectedIdStatus) {
+        if (book.identification_status !== selectedIdStatus) return false;
+      }
+
+      return true;
+    });
+  }
+
+  async function loadBooks(options = {}) {
+    const forceRefresh = options.forceRefresh === true;
     updateActiveFiltersBadge();
 
-    try {
-      booksCountEl.textContent = "Carregando acervo...";
-      const res = await fetch(`/api/books?${params.toString()}`);
-      if (!res.ok) throw new Error("Erro ao buscar livros");
+    const currentUserId = currentUser ? currentUser.id : null;
+    const isExpired = Date.now() - libraryCache.timestamp > LIBRARY_CACHE_TTL_MS;
+    const needFetch = forceRefresh || !libraryCache.books || libraryCache.userId !== currentUserId || isExpired;
 
-      const data = await res.json();
-      renderBooks(data.books);
-    } catch (err) {
-      console.error(err);
-      booksContainer.innerHTML = `
-        <div class="empty-state">
-          <h3>Erro ao carregar a biblioteca</h3>
-          <p>Verifique se o servidor está ativo e tente novamente.</p>
-        </div>
-      `;
-      booksCountEl.textContent = "Erro na conexão";
+    if (needFetch) {
+      if (libraryCache.abortController) {
+        libraryCache.abortController.abort();
+      }
+      libraryCache.abortController = new AbortController();
+      const signal = libraryCache.abortController.signal;
+
+      try {
+        booksCountEl.textContent = "Carregando acervo...";
+        const res = await fetch("/api/books?sort_by=title&order=asc", { signal });
+        if (!res.ok) throw new Error("Erro ao buscar livros");
+
+        const data = await res.json();
+        libraryCache.books = data.books || [];
+        libraryCache.userId = currentUserId;
+        libraryCache.timestamp = Date.now();
+      } catch (err) {
+        if (err.name === "AbortError") {
+          return;
+        }
+        console.error(err);
+        booksContainer.innerHTML = `
+          <div class="empty-state">
+            <h3>Erro ao carregar a biblioteca</h3>
+            <p>Verifique se o servidor está ativo e tente novamente.</p>
+          </div>
+        `;
+        booksCountEl.textContent = "Erro na conexão";
+        return;
+      } finally {
+        libraryCache.abortController = null;
+      }
     }
+
+    const [sortBy, order] = (sortSelect.value || "title_asc").split("_");
+    const filtered = filterBooksList(libraryCache.books || []);
+    const sorted = sortBooksList(filtered, sortBy, order);
+    renderBooks(sorted);
   }
+
 
   function translateReadStatus(status) {
     switch (status) {
@@ -465,8 +615,179 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  const BOOKS_CHUNK_SIZE = 36;
+  let currentFilteredBooks = [];
+  let currentRenderedIndex = 0;
+  let scrollSentinelObserver = null;
+
+  function generateBookCardHtml(book) {
+    const percentage = book.progress_percentage || 0;
+    const isCompleted = isBookCompleted(book);
+    const hasProgress = book.current_page && book.current_page > 1 && !isCompleted;
+    const total = book.page_count || book.progress_total_pages || 1;
+    const page = book.current_page || 1;
+    const coverUrl = book.cover_url || `/api/books/${encodeURIComponent(book.id)}/cover`;
+    const bookFormat = (book.format || (book.filename && book.filename.toLowerCase().endsWith(".epub") ? "epub" : "pdf")).toUpperCase();
+
+    const collectionsChipsHtml = (book.collections || []).map(c => `
+      <span class="collection-chip">${escapeHtml(c.name)}</span>
+    `).join("");
+
+    const crList = book.collective_reads || [];
+    const crBadgesHtml = crList.map(cr => `
+      <div class="book-collective-read-badge-box">
+        <div class="book-cr-badge-title">
+          <span>👥 ${escapeHtml(cr.club_name)}</span>
+          <span class="tag-badge">${escapeHtml(translateReadStatus(cr.read_status))}</span>
+        </div>
+        <div style="font-size: 0.74rem; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center; margin-top: 0.2rem;">
+          <span>${cr.members_count} participante${cr.members_count === 1 ? "" : "s"}</span>
+          <button type="button" class="btn btn-subtle btn-xs btn-open-collective-read" data-read-id="${escapeHtml(cr.read_id)}" style="padding: 0.15rem 0.4rem; font-size: 0.72rem;">Ver Leitura</button>
+        </div>
+      </div>
+    `).join("");
+
+    return `
+      <article class="book-card list-item" data-id="${book.id}">
+        <div class="book-cover-wrapper">
+          <a href="/reader/${book.id}" class="book-cover list-cover-link" title="Ler ${escapeHtml(book.title)}">
+            <img
+              class="book-cover-img list-cover-thumb"
+              src="${escapeHtml(coverUrl)}"
+              alt="Capa de ${escapeHtml(book.title)}"
+              loading="lazy"
+            >
+            <div class="book-cover-badges">
+              <span class="tag-badge tag-format tag-format-${bookFormat.toLowerCase()}">${bookFormat}</span>
+              ${isCompleted ? "<span class=\"tag-badge tag-completed\">Concluído</span>" : ""}
+              ${hasProgress ? "<span class=\"tag-badge tag-in-progress\">Lendo</span>" : ""}
+              ${crList.length > 0 ? "<span class=\"tag-badge tag-collective-read\" title=\"Em Leitura Coletiva\">Coletiva</span>" : ""}
+            </div>
+          </a>
+          <button
+            type="button"
+            class="btn-cover-customize btn-edit-book-cover"
+            data-id="${book.id}"
+            data-title="${escapeHtml(book.title)}"
+            data-cover-url="${escapeHtml(coverUrl)}"
+            data-cover-type="${escapeHtml(book.cover_type || "none")}"
+            title="Alterar ou restaurar capa"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+            <span>Capa</span>
+          </button>
+        </div>
+
+        <div class="book-info list-info">
+          <a href="/reader/${book.id}" style="text-decoration: none; color: inherit;">
+            <h3 class="book-title list-title" title="${escapeHtml(book.title)}">${escapeHtml(book.title)}</h3>
+          </a>
+          <div class="book-author list-author">${escapeHtml(book.author || "Autor não informado")}</div>
+
+          <div class="book-meta-details list-meta">
+            <span>${bookFormat === "EPUB" ? `${total} cap.` : `${total} págs.`}</span>
+            <span>&bull;</span>
+            <span>${formatBytes(book.filesize)}</span>
+          </div>
+
+          ${collectionsChipsHtml ? `<div class="book-collections-chips">${collectionsChipsHtml}</div>` : ""}
+
+          ${crBadgesHtml}
+
+          <div class="progress-container list-progress">
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill ${isCompleted ? "completed" : ""}" style="width: ${percentage}%"></div>
+            </div>
+            <div class="progress-label">
+              <span>${isCompleted ? "Concluído" : hasProgress ? (bookFormat === "EPUB" ? `${percentage}% concluído` : `Pág. ${page} de ${total}`) : "Não iniciado"}</span>
+              <span>${percentage > 0 ? `${percentage}%` : ""}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-actions-bar list-actions">
+          <button type="button" class="btn-card-menu btn-book-details" data-id="${book.id}" title="Ver Detalhes e Metadados">
+            Detalhes
+          </button>
+          <button type="button" class="btn-card-menu btn-edit-book-col" data-id="${book.id}" data-title="${escapeHtml(book.title)}" title="Gerenciar Coleções">
+            Coleções
+          </button>
+          <a href="/api/books/${encodeURIComponent(book.id)}/download" class="btn-card-menu btn-download-book" title="Baixar ${bookFormat}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            <span>${bookFormat}</span>
+          </a>
+        </div>
+      </article>
+    `;
+  }
+
+  function renderNextBooksChunk() {
+    if (currentRenderedIndex >= currentFilteredBooks.length) {
+      const oldSentinel = document.getElementById("books-scroll-sentinel");
+      if (oldSentinel) oldSentinel.remove();
+      return;
+    }
+
+    const nextChunk = currentFilteredBooks.slice(
+      currentRenderedIndex,
+      currentRenderedIndex + BOOKS_CHUNK_SIZE
+    );
+    currentRenderedIndex += nextChunk.length;
+
+    const chunkHtml = nextChunk.map(book => generateBookCardHtml(book)).join("");
+
+    const oldSentinel = document.getElementById("books-scroll-sentinel");
+    if (oldSentinel) {
+      oldSentinel.insertAdjacentHTML("beforebegin", chunkHtml);
+    } else {
+      booksContainer.insertAdjacentHTML("beforeend", chunkHtml);
+    }
+
+    if (currentRenderedIndex < currentFilteredBooks.length) {
+      let sentinel = document.getElementById("books-scroll-sentinel");
+      if (!sentinel) {
+        sentinel = document.createElement("div");
+        sentinel.id = "books-scroll-sentinel";
+        sentinel.style.cssText = "width: 100%; height: 40px; margin: 1rem 0; display: flex; align-items: center; justify-content: center;";
+        sentinel.innerHTML = `<button type="button" class="btn btn-subtle btn-sm btn-load-more" style="font-size: 0.8rem;">Carregar mais...</button>`;
+        booksContainer.appendChild(sentinel);
+      }
+
+      if ("IntersectionObserver" in window) {
+        if (!scrollSentinelObserver) {
+          scrollSentinelObserver = new IntersectionObserver((entries) => {
+            if (entries[0].isIntersecting) {
+              renderNextBooksChunk();
+            }
+          }, { rootMargin: "300px" });
+        }
+        scrollSentinelObserver.observe(sentinel);
+      }
+
+      const loadMoreBtn = sentinel.querySelector(".btn-load-more");
+      if (loadMoreBtn) {
+        loadMoreBtn.onclick = () => renderNextBooksChunk();
+      }
+    } else {
+      const sentinel = document.getElementById("books-scroll-sentinel");
+      if (sentinel) sentinel.remove();
+      if (scrollSentinelObserver) {
+        scrollSentinelObserver.disconnect();
+        scrollSentinelObserver = null;
+      }
+    }
+  }
+
   function renderBooks(books) {
-    if (!books || books.length === 0) {
+    currentFilteredBooks = books || [];
+    currentRenderedIndex = 0;
+
+    if (scrollSentinelObserver) {
+      scrollSentinelObserver.disconnect();
+      scrollSentinelObserver = null;
+    }
+
+    if (currentFilteredBooks.length === 0) {
       booksCountEl.textContent = "Nenhum livro encontrado";
       booksContainer.innerHTML = `
         <div class="empty-state">
@@ -482,227 +803,53 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    booksCountEl.textContent = `${books.length} ${books.length === 1 ? "documento disponível" : "documentos disponíveis"}`;
+    const count = currentFilteredBooks.length;
+    booksCountEl.textContent = `${count} ${count === 1 ? "documento disponível" : "documentos disponíveis"}`;
+    booksContainer.className = currentView === "grid" ? "books-grid" : "books-list";
+    booksContainer.innerHTML = "";
 
-    if (currentView === "grid") {
-      booksContainer.innerHTML = books.map(book => {
-        const percentage = book.progress_percentage || 0;
-        const isCompleted = percentage >= 100 || (book.page_count > 0 && book.current_page >= book.page_count);
-        const hasProgress = book.current_page && book.current_page > 1 && !isCompleted;
-        const total = book.page_count || book.progress_total_pages || 1;
-        const page = book.current_page || 1;
-        const coverUrl = book.cover_url || `/api/books/${encodeURIComponent(book.id)}/cover`;
-        const bookFormat = (book.format || (book.filename && book.filename.toLowerCase().endsWith(".epub") ? "epub" : "pdf")).toUpperCase();
+    renderNextBooksChunk();
+  }
 
-        const collectionsChipsHtml = (book.collections || []).map(c => `
-          <span class="collection-chip">${escapeHtml(c.name)}</span>
-        `).join("");
-
-        const crList = book.collective_reads || [];
-        const crBadgesHtml = crList.map(cr => `
-          <div class="book-collective-read-badge-box">
-            <div class="book-cr-badge-title">
-              <span>👥 ${escapeHtml(cr.club_name)}</span>
-              <span class="tag-badge">${escapeHtml(translateReadStatus(cr.read_status))}</span>
-            </div>
-            <div style="font-size: 0.74rem; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center; margin-top: 0.2rem;">
-              <span>${cr.members_count} participante${cr.members_count === 1 ? '' : 's'}</span>
-              <button type="button" class="btn btn-subtle btn-xs btn-open-collective-read" data-read-id="${escapeHtml(cr.read_id)}" style="padding: 0.15rem 0.4rem; font-size: 0.72rem;">Ver Leitura</button>
-            </div>
-          </div>
-        `).join("");
-
-        return `
-          <article class="book-card" data-id="${book.id}">
-            <div class="book-cover-wrapper">
-              <a href="/reader/${book.id}" class="book-cover" title="Ler ${escapeHtml(book.title)}">
-                <img
-                  class="book-cover-img"
-                  src="${escapeHtml(coverUrl)}"
-                  alt="Capa de ${escapeHtml(book.title)}"
-                  loading="lazy"
-                >
-                <div class="book-cover-badges">
-                  <span class="tag-badge tag-format tag-format-${bookFormat.toLowerCase()}">${bookFormat}</span>
-                  ${isCompleted ? '<span class="tag-badge tag-completed">Concluído</span>' : ''}
-                  ${hasProgress ? '<span class="tag-badge tag-in-progress">Lendo</span>' : ''}
-                  ${crList.length > 0 ? '<span class="tag-badge tag-collective-read" title="Em Leitura Coletiva">Coletiva</span>' : ''}
-                </div>
-              </a>
-              <button
-                type="button"
-                class="btn-cover-customize btn-edit-book-cover"
-                data-id="${book.id}"
-                data-title="${escapeHtml(book.title)}"
-                data-cover-url="${escapeHtml(coverUrl)}"
-                data-cover-type="${escapeHtml(book.cover_type || "none")}"
-                title="Alterar ou restaurar capa"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
-                <span>Capa</span>
-              </button>
-            </div>
-
-            <div class="book-info">
-              <a href="/reader/${book.id}" style="text-decoration: none; color: inherit;">
-                <h3 class="book-title" title="${escapeHtml(book.title)}">${escapeHtml(book.title)}</h3>
-              </a>
-              <div class="book-author">${escapeHtml(book.author || "Autor não informado")}</div>
-
-              <div class="book-meta-details">
-                <span>${bookFormat === "EPUB" ? `${total} cap.` : `${total} págs.`}</span>
-                <span>&bull;</span>
-                <span>${formatBytes(book.filesize)}</span>
-              </div>
-
-              ${collectionsChipsHtml ? `<div class="book-collections-chips">${collectionsChipsHtml}</div>` : ""}
-
-              ${crBadgesHtml}
-
-              <div class="progress-container">
-                <div class="progress-bar-bg">
-                  <div class="progress-bar-fill ${isCompleted ? "completed" : ""}" style="width: ${percentage}%"></div>
-                </div>
-                <div class="progress-label">
-                  <span>${isCompleted ? "Concluído" : hasProgress ? (bookFormat === "EPUB" ? `${percentage}% concluído` : `Pág. ${page} de ${total}`) : "Não iniciado"}</span>
-                  <span>${percentage > 0 ? `${percentage}%` : ""}</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="card-actions-bar">
-              <button type="button" class="btn-card-menu btn-book-details" data-id="${book.id}" title="Ver Detalhes e Metadados">
-                Detalhes
-              </button>
-              <button type="button" class="btn-card-menu btn-edit-book-col" data-id="${book.id}" data-title="${escapeHtml(book.title)}" title="Gerenciar Coleções">
-                Coleções
-              </button>
-              <a href="/api/books/${encodeURIComponent(book.id)}/download" class="btn-card-menu btn-download-book" title="Baixar ${bookFormat}">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-                <span>${bookFormat}</span>
-              </a>
-            </div>
-          </article>
-        `;
-      }).join("");
-    } else {
-      booksContainer.innerHTML = books.map(book => {
-        const percentage = book.progress_percentage || 0;
-        const isCompleted = percentage >= 100 || (book.page_count > 0 && book.current_page >= book.page_count);
-        const hasProgress = book.current_page && book.current_page > 1 && !isCompleted;
-        const total = book.page_count || book.progress_total_pages || 1;
-        const page = book.current_page || 1;
-        const coverUrl = book.cover_url || `/api/books/${encodeURIComponent(book.id)}/cover`;
-        const bookFormat = (book.format || (book.filename && book.filename.toLowerCase().endsWith(".epub") ? "epub" : "pdf")).toUpperCase();
-
-        const collectionsChipsHtml = (book.collections || []).map(c => `
-          <span class="collection-chip">${escapeHtml(c.name)}</span>
-        `).join(" ");
-
-        return `
-          <div class="list-item" data-id="${book.id}">
-            <a href="/reader/${book.id}" class="list-cover-link" title="Ler ${escapeHtml(book.title)}">
-              <img class="list-cover-thumb" src="${escapeHtml(coverUrl)}" alt="Capa de ${escapeHtml(book.title)}" loading="lazy">
-            </a>
-
-            <a href="/reader/${book.id}" class="list-info" style="text-decoration: none; color: inherit;">
-              <div class="list-title">
-                ${escapeHtml(book.title)}
-                <span class="tag-badge tag-format tag-format-${bookFormat.toLowerCase()}" style="margin-left: 0.4rem; vertical-align: middle;">${bookFormat}</span>
-              </div>
-              <div class="list-author">${escapeHtml(book.author || "Autor não informado")}</div>
-              <div class="list-meta">
-                ${bookFormat === "EPUB" ? `${total} cap.` : `${total} págs.`} &bull; ${formatBytes(book.filesize)} &bull; Adicionado em ${formatDate(book.created_at)}
-                ${book.progress_updated_at ? `&bull; Lido em ${formatDate(book.progress_updated_at)}` : ""}
-              </div>
-              ${collectionsChipsHtml ? `<div class="book-collections-chips">${collectionsChipsHtml}</div>` : ""}
-              ${crBadgesHtml}
-            </a>
-
-            <div class="list-progress">
-              <div class="progress-bar-bg">
-                <div class="progress-bar-fill ${isCompleted ? "completed" : ""}" style="width: ${percentage}%"></div>
-              </div>
-              <div class="progress-label">
-                <span>${isCompleted ? "Concluído" : hasProgress ? `Pág. ${page} de ${total}` : "Não iniciado"}</span>
-                <span>${percentage > 0 ? `${percentage}%` : ""}</span>
-              </div>
-            </div>
-
-            <div class="list-actions">
-              <button
-                type="button"
-                class="btn btn-subtle btn-book-details"
-                data-id="${book.id}"
-                title="Ver Detalhes e Metadados"
-              >
-                Detalhes
-              </button>
-              <button
-                type="button"
-                class="btn btn-icon btn-edit-book-cover"
-                data-id="${book.id}"
-                data-title="${escapeHtml(book.title)}"
-                data-cover-url="${escapeHtml(coverUrl)}"
-                data-cover-type="${escapeHtml(book.cover_type || "none")}"
-                title="Alterar ou restaurar capa"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
-              </button>
-              <a href="/api/books/${encodeURIComponent(book.id)}/download" class="btn btn-icon btn-download-book" title="Baixar ${bookFormat}">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-              </a>
-              <button type="button" class="btn btn-icon btn-edit-book-col" data-id="${book.id}" data-title="${escapeHtml(book.title)}" title="Gerenciar Coleções">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
-              </button>
-              <a href="/reader/${book.id}" class="btn btn-primary" style="padding: 0.35rem 0.7rem;">Ler</a>
-            </div>
-          </div>
-        `;
-      }).join("");
+  // Vinculação de eventos nos cards de livros via delegação no container (executado uma única vez)
+  booksContainer.addEventListener("click", (e) => {
+    const coverBtn = e.target.closest(".btn-edit-book-cover");
+    if (coverBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      openBookCoverModal(
+        coverBtn.getAttribute("data-id"),
+        coverBtn.getAttribute("data-title"),
+        coverBtn.getAttribute("data-cover-url"),
+        coverBtn.getAttribute("data-cover-type")
+      );
+      return;
     }
 
-    // Vincula botões de personalização de capa
-    document.querySelectorAll(".btn-edit-book-cover").forEach(btn => {
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openBookCoverModal(
-          btn.getAttribute("data-id"),
-          btn.getAttribute("data-title"),
-          btn.getAttribute("data-cover-url"),
-          btn.getAttribute("data-cover-type")
-        );
-      });
-    });
+    const colBtn = e.target.closest(".btn-edit-book-col");
+    if (colBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      openBookCollectionsModal(colBtn.getAttribute("data-id"), colBtn.getAttribute("data-title"));
+      return;
+    }
 
-    // Vincula botões de atribuição de coleções
-    document.querySelectorAll(".btn-edit-book-col").forEach(btn => {
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openBookCollectionsModal(btn.getAttribute("data-id"), btn.getAttribute("data-title"));
-      });
-    });
+    const detailsBtn = e.target.closest(".btn-book-details");
+    if (detailsBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      openBookDetails(detailsBtn.getAttribute("data-id"));
+      return;
+    }
 
-    // Vincula botões de detalhes da obra
-    document.querySelectorAll(".btn-book-details").forEach(btn => {
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openBookDetails(btn.getAttribute("data-id"));
-      });
-    });
-
-    // Vincula botões de leitura coletiva nos cards
-    document.querySelectorAll(".btn-open-collective-read").forEach(btn => {
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openCollectiveReadDetail(btn.getAttribute("data-read-id"));
-      });
-    });
-  }
+    const crBtn = e.target.closest(".btn-open-collective-read");
+    if (crBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      openCollectiveReadDetail(crBtn.getAttribute("data-read-id"));
+      return;
+    }
+  });
 
   // --- Modal: Atribuição de Coleções ao Livro ---
   async function openBookCollectionsModal(bookId, bookTitle) {
@@ -748,8 +895,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (res.ok) {
         modalBookCol.classList.remove("active");
+        invalidateLibraryCache();
         await loadCollections();
-        loadBooks();
+        loadBooks({ forceRefresh: true });
       } else {
         alert("Erro ao atualizar coleções do livro.");
       }
@@ -783,8 +931,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (res.status === 201) {
         newColNameInput.value = "";
+        invalidateLibraryCache();
         await loadCollections();
-        loadBooks();
+        loadBooks({ forceRefresh: true });
       } else {
         const err = await res.json();
         alert(err.detail || "Erro ao criar coleção.");
@@ -854,19 +1003,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
   searchInput.addEventListener("input", () => {
     clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(loadBooks, 250);
+    searchTimeout = setTimeout(loadBooks, 100);
   });
 
   sortSelect.addEventListener("change", loadBooks);
 
   btnViewGrid.addEventListener("click", () => {
     setView("grid");
-    loadBooks();
   });
 
   btnViewList.addEventListener("click", () => {
     setView("list");
-    loadBooks();
   });
 
   btnScan.addEventListener("click", async () => {
@@ -882,8 +1029,9 @@ document.addEventListener("DOMContentLoaded", () => {
         scanText.textContent = "Escanear";
         btnScan.disabled = false;
       }, 2000);
+      invalidateLibraryCache();
       await loadCollections();
-      loadBooks();
+      loadBooks({ forceRefresh: true });
     } catch (err) {
       console.error(err);
       scanText.textContent = "Erro ao escanear";
@@ -937,6 +1085,9 @@ document.addEventListener("DOMContentLoaded", () => {
         btnOpenLogin.style.display = "none";
         if (adminControls) adminControls.style.display = "none";
       } else if (data.authenticated && data.user) {
+        if (!currentUser || currentUser.id !== data.user.id) {
+          clearUserSessionCache();
+        }
         currentUser = data.user;
         userBadgeContainer.style.display = "flex";
         btnOpenLogin.style.display = "none";
@@ -958,6 +1109,9 @@ document.addEventListener("DOMContentLoaded", () => {
         else if (currentMainTab === "social") loadSocialFeed();
         else if (currentMainTab === "admin" && currentUser.role === "admin") loadAdminPanel();
       } else {
+        if (currentUser) {
+          clearUserSessionCache();
+        }
         currentUser = null;
         userBadgeContainer.style.display = "none";
         btnOpenLogin.style.display = "inline-flex";
@@ -984,8 +1138,9 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     } catch (err) {
       console.warn("Falha ao inicializar autenticação:", err);
+      invalidateLibraryCache();
       await loadCollections();
-      loadBooks();
+      loadBooks({ forceRefresh: true });
       if (currentMainTab === "discovery") loadShelves();
     }
   }
@@ -1037,6 +1192,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       authPasswordInput.value = "";
       modalAuth.classList.remove("active");
+      clearUserSessionCache();
       await initAuth();
     } catch (e) {
       authErrorEl.textContent = e.message;
@@ -1070,6 +1226,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (btnLogout) {
     btnLogout.addEventListener("click", async () => {
       try {
+        clearUserSessionCache();
         await fetch("/api/auth/logout", { method: "POST" });
         window.location.reload();
       } catch {
@@ -1151,8 +1308,9 @@ document.addEventListener("DOMContentLoaded", () => {
             body: JSON.stringify({ is_active: !currentlyActive }),
           });
           if (res.ok) {
+            invalidateLibraryCache();
             await loadSources();
-            loadBooks();
+            loadBooks({ forceRefresh: true });
           }
         } catch {
           alert("Erro ao alterar estado da fonte.");
@@ -1169,8 +1327,9 @@ document.addEventListener("DOMContentLoaded", () => {
           if (res.ok) {
             const data = await res.json();
             alert(`Varredura concluída!\nNovos livros: ${data.stats.added}\nAtualizados: ${data.stats.updated}\nTotal ativo: ${data.stats.total}`);
+            invalidateLibraryCache();
             await loadSources();
-            loadBooks();
+            loadBooks({ forceRefresh: true });
           } else {
             const err = await res.json();
             alert(err.detail || "Erro ao escanear fonte.");
@@ -1230,8 +1389,9 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         newSourceLabelInput.value = "";
         newSourcePathInput.value = "";
+        invalidateLibraryCache();
         await loadSources();
-        loadBooks();
+        loadBooks({ forceRefresh: true });
       } catch (e) {
         sourceErrorEl.textContent = e.message;
         sourceErrorEl.style.display = "block";
@@ -1664,7 +1824,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const newUrl = data.cover_url || `/api/books/${encodeURIComponent(selectedBookForCover)}/cover?v=${Date.now()}`;
       coverModalPreviewImg.src = newUrl;
       updateCoverTypeBadge("custom");
-      loadBooks();
+      invalidateLibraryCache();
+      loadBooks({ forceRefresh: true });
     } catch (err) {
       coverModalError.textContent = err.message;
       coverModalError.style.display = "block";
@@ -1717,7 +1878,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const newUrl = data.cover_url || `/api/books/${encodeURIComponent(selectedBookForCover)}/cover?v=${Date.now()}`;
         coverModalPreviewImg.src = newUrl;
         updateCoverTypeBadge(data.cover_type || "none");
-        loadBooks();
+        invalidateLibraryCache();
+        loadBooks({ forceRefresh: true });
       } catch (err) {
         coverModalError.textContent = err.message;
         coverModalError.style.display = "block";
@@ -2187,8 +2349,9 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
           }
           await openBookDetails(activeBookForDetails.id);
+          invalidateLibraryCache();
           loadShelves();
-          loadBooks();
+          loadBooks({ forceRefresh: true });
         } catch (e) {
           alert("Erro de conexão ao aplicar metadados.");
           btn.disabled = false;
@@ -2256,8 +2419,9 @@ document.addEventListener("DOMContentLoaded", () => {
         btnSaveManualMetadata.disabled = false;
         if (res.ok) {
           await openBookDetails(activeBookForDetails.id);
+          invalidateLibraryCache();
           loadShelves();
-          loadBooks();
+          loadBooks({ forceRefresh: true });
           alert("Metadados atualizados com sucesso.");
         } else {
           const err = await res.json();
@@ -2507,7 +2671,8 @@ document.addEventListener("DOMContentLoaded", () => {
           currentBookUserReview = savedData.user_review || savedData.my_review;
         }
         await loadBookDetailsSocial(activeBookForDetails.id);
-        if (currentMainTab === "library") loadBooks();
+        invalidateLibraryCache();
+        if (currentMainTab === "library") loadBooks({ forceRefresh: true });
         else if (currentMainTab === "discovery") loadShelves();
         else if (currentMainTab === "social") loadSocialFeed();
       } else if (res.status === 401) {
@@ -2589,7 +2754,8 @@ document.addEventListener("DOMContentLoaded", () => {
           activeBookForDetails.is_completed = targetStatus === "completed";
           activeBookForDetails.progress_percentage = data.progress_percentage;
           updateDetailsReadingStatusBtn(activeBookForDetails);
-          if (currentMainTab === "library") loadBooks();
+          invalidateLibraryCache();
+          if (currentMainTab === "library") loadBooks({ forceRefresh: true });
           else if (currentMainTab === "discovery") loadShelves();
         }
       } catch (e) {
@@ -3970,7 +4136,8 @@ document.addEventListener("DOMContentLoaded", () => {
         body: JSON.stringify({ clear_api_cache: false, clear_auto_covers: true }),
       });
       loadAdminMaintenanceTab();
-      loadBooks();
+      invalidateLibraryCache();
+      loadBooks({ forceRefresh: true });
     });
   }
 
@@ -4604,7 +4771,8 @@ document.addEventListener("DOMContentLoaded", () => {
             if (res.ok) {
               openCollectiveReadDetail(read.id);
               if (activeClubId) loadClubReads(activeClubId, activeClubReadsFilter);
-              loadBooks();
+              invalidateLibraryCache();
+              loadBooks({ forceRefresh: true });
             }
           };
         } else {
@@ -4615,7 +4783,8 @@ document.addEventListener("DOMContentLoaded", () => {
             if (res.ok) {
               openCollectiveReadDetail(read.id);
               if (activeClubId) loadClubReads(activeClubId, activeClubReadsFilter);
-              loadBooks();
+              invalidateLibraryCache();
+              loadBooks({ forceRefresh: true });
             } else {
               const d = await res.json();
               alert(d.detail || "Erro ao participar da leitura.");
@@ -4893,7 +5062,8 @@ document.addEventListener("DOMContentLoaded", () => {
             loadClubReads(activeClubId, activeClubReadsFilter);
             openClubDetail(activeClubId);
           }
-          loadBooks();
+          invalidateLibraryCache();
+          loadBooks({ forceRefresh: true });
         } else {
           const errData = await res.json();
           if (readFormError) {
@@ -5003,6 +5173,15 @@ document.addEventListener("DOMContentLoaded", () => {
       modalSources.classList.remove("active");
       modalUsers.classList.remove("active");
       if (modalBookCover) modalBookCover.classList.remove("active");
+    }
+  });
+
+  // Revalidação em segundo plano ao retornar para a aplicação após ausência prolongada
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && currentMainTab === "library") {
+      if (Date.now() - libraryCache.timestamp > LIBRARY_CACHE_TTL_MS) {
+        loadBooks({ forceRefresh: true });
+      }
     }
   });
 
