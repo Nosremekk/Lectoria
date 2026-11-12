@@ -2,7 +2,7 @@
  * Lectoria — Aplicação da Biblioteca (v1.5.2)
  * JavaScript puro (Vanilla ES6), rápido e sem dependências pesadas.
  */
-window.LECTORIA_FRONTEND_VERSION = "1.6.2";
+window.LECTORIA_FRONTEND_VERSION = "1.6.3";
 
 function formatApiError(err, fallbackMsg = "Ocorreu um erro ao processar a solicitação.") {
   if (!err) return fallbackMsg;
@@ -648,11 +648,11 @@ document.addEventListener("DOMContentLoaded", () => {
     `).join("");
 
     return `
-      <article class="book-card list-item" data-id="${book.id}">
+      <article class="book-card" data-id="${book.id}">
         <div class="book-cover-wrapper">
-          <a href="/reader/${book.id}" class="book-cover list-cover-link" title="Ler ${escapeHtml(book.title)}">
+          <a href="/reader/${book.id}" class="book-cover" title="Ler ${escapeHtml(book.title)}">
             <img
-              class="book-cover-img list-cover-thumb"
+              class="book-cover-img"
               src="${escapeHtml(coverUrl)}"
               alt="Capa de ${escapeHtml(book.title)}"
               loading="lazy"
@@ -678,13 +678,13 @@ document.addEventListener("DOMContentLoaded", () => {
           </button>
         </div>
 
-        <div class="book-info list-info">
+        <div class="book-info">
           <a href="/reader/${book.id}" style="text-decoration: none; color: inherit;">
-            <h3 class="book-title list-title" title="${escapeHtml(book.title)}">${escapeHtml(book.title)}</h3>
+            <h3 class="book-title" title="${escapeHtml(book.title)}">${escapeHtml(book.title)}</h3>
           </a>
-          <div class="book-author list-author">${escapeHtml(book.author || "Autor não informado")}</div>
+          <div class="book-author">${escapeHtml(book.author || "Autor não informado")}</div>
 
-          <div class="book-meta-details list-meta">
+          <div class="book-meta-details">
             <span>${bookFormat === "EPUB" ? `${total} cap.` : `${total} págs.`}</span>
             <span>&bull;</span>
             <span>${formatBytes(book.filesize)}</span>
@@ -694,7 +694,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
           ${crBadgesHtml}
 
-          <div class="progress-container list-progress">
+          <div class="progress-container">
             <div class="progress-bar-bg">
               <div class="progress-bar-fill ${isCompleted ? "completed" : ""}" style="width: ${percentage}%"></div>
             </div>
@@ -705,7 +705,7 @@ document.addEventListener("DOMContentLoaded", () => {
           </div>
         </div>
 
-        <div class="card-actions-bar list-actions">
+        <div class="card-actions-bar">
           <button type="button" class="btn-card-menu btn-book-details" data-id="${book.id}" title="Ver Detalhes e Metadados">
             Detalhes
           </button>
