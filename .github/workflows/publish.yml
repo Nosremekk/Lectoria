@@ -123,11 +123,4 @@ jobs:
           done
 
           cat /tmp/health.json
-          python3 -c '
-          import json, os, sys
-          data = json.load(open("/tmp/health.json"))
-          expected = os.environ["CLEAN_VER"]
-          assert data.get("status") == "healthy", f"Unexpected status: {data}"
-          assert data.get("version") == expected, f"Expected version {expected}, got {data}"
-          print(f"Verified /api/health version={data[\"version\"]} status={data[\"status\"]}")
-          '
+          python3 -c "import json, os; data = json.load(open('/tmp/health.json')); expected = os.environ['CLEAN_VER']; assert data.get('status') == 'healthy', data; assert data.get('version') == expected, data; print('Verified /api/health:', data)"
