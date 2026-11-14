@@ -1263,3 +1263,32 @@ def get_book_collective_reads_for_user(book_id: str, user_id: int) -> List[Dict[
             (user_id, clean_book_id, user_id),
         )
         return [dict(r) for r in cursor.fetchall()]
+
+
+def get_publishable_collective_reads_for_book(book_id: str, user_id: int) -> List[Dict[str, Any]]:
+    """
+    Retorna apenas leituras coletivas elegíveis para publicação de citações pelo usuário:
+    - Mesmo book_id;
+    - Clube não arquivado (is_archived = 0) e usuário é membro ativo do clube;
+    - Leitura em estado gravável ('planned' ou 'in_progress').
+    """
+    clean_book_id = str(book_id).strip()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                r.id AS read_id, r.club_id, r.title, r.status,
+                c.name AS club_name, c.visibility AS club_visibility,
+                m.role AS user_club_role
+            FROM collective_reads r
+            JOIN reading_clubs c ON r.club_id = c.id
+            JOIN reading_club_members m ON m.club_id = c.id AND m.user_id = ?
+            WHERE r.book_id = ?
+              AND c.is_archived = 0
+              AND r.status IN ('planned', 'in_progress')
+            ORDER BY r.created_at DESC;
+            """,
+            (user_id, clean_book_id),
+        )
+        return [dict(r) for r in cursor.fetchall()]

@@ -564,46 +564,56 @@ def get_books(
                 EXISTS (
                     SELECT 1 FROM book_categories bc
                     JOIN categories c ON bc.category_id = c.id
-                    WHERE bc.book_id = b.id AND c.name = ? COLLATE NOCASE
+                    WHERE bc.book_id = b.id AND TRIM(c.name) = ? COLLATE NOCASE
                 )
-                OR EXISTS (
-                    SELECT 1 FROM book_subjects bs
-                    JOIN subjects s ON bs.subject_id = s.id
-                    WHERE bs.book_id = b.id AND s.category = ? COLLATE NOCASE
+                OR (
+                    NOT EXISTS (SELECT 1 FROM book_categories bc2 WHERE bc2.book_id = b.id)
+                    AND EXISTS (
+                        SELECT 1 FROM book_subjects bs
+                        JOIN subjects s ON bs.subject_id = s.id
+                        WHERE bs.book_id = b.id
+                          AND TRIM(s.category) = ? COLLATE NOCASE
+                          AND LOWER(TRIM(s.category)) != 'geral'
+                    )
                 )
             )"""
             params.extend([cat_val, cat_val])
 
         if subcategory_filter and subcategory_filter.strip():
             sub_val = subcategory_filter.strip()
+            sub_short = sub_val.split(":", 1)[1].strip() if ":" in sub_val else sub_val
             sql += """ AND (
                 EXISTS (
                     SELECT 1 FROM book_categories bc
-                    WHERE bc.book_id = b.id AND bc.subcategory = ? COLLATE NOCASE
+                    WHERE bc.book_id = b.id
+                      AND (TRIM(bc.subcategory) = ? COLLATE NOCASE OR TRIM(bc.subcategory) = ? COLLATE NOCASE)
                 )
                 OR EXISTS (
                     SELECT 1 FROM book_subjects bs
                     JOIN subjects s ON bs.subject_id = s.id
-                    WHERE bs.book_id = b.id AND s.subcategory = ? COLLATE NOCASE
+                    WHERE bs.book_id = b.id
+                      AND (TRIM(s.subcategory) = ? COLLATE NOCASE OR TRIM(s.subcategory) = ? COLLATE NOCASE OR TRIM(s.name) = ? COLLATE NOCASE)
                 )
             )"""
-            params.extend([sub_val, sub_val])
+            params.extend([sub_val, sub_short, sub_val, sub_short, sub_val])
 
-        if genre_filter:
+        if genre_filter and genre_filter.strip():
+            genre_val = genre_filter.strip()
             sql += """ AND b.id IN (
                 SELECT bs.book_id FROM book_subjects bs
                 JOIN subjects s ON bs.subject_id = s.id
-                WHERE s.genre = ?
+                WHERE TRIM(s.genre) = ? COLLATE NOCASE
             )"""
-            params.append(genre_filter)
+            params.append(genre_val)
 
-        if origin_filter:
+        if origin_filter and origin_filter.strip():
+            origin_val = origin_filter.strip()
             sql += """ AND b.id IN (
                 SELECT bs.book_id FROM book_subjects bs
                 JOIN subjects s ON bs.subject_id = s.id
-                WHERE s.origin = ?
+                WHERE TRIM(s.origin) = ? COLLATE NOCASE
             )"""
-            params.append(origin_filter)
+            params.append(origin_val)
 
         # Filtro por idioma
         if language_filter:

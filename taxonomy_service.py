@@ -714,36 +714,48 @@ def sync_book_taxonomy(
             # que colidam com outra categoria principal
             return
 
-        subjects_to_link: Set[Tuple[str, str, Optional[str]]] = set()
+        subjects_to_link: Set[Tuple[str, str, Optional[str], Optional[str], Optional[str], Optional[str]]] = set()
         if subcategories:
             for cat, subcat in subcategories:
                 if cat in categories:
-                    subjects_to_link.add((f"{cat}: {subcat}", cat, subcat))
+                    subjects_to_link.add((f"{cat}: {subcat}", cat, subcat, None, None, None))
         for cat in categories:
             if not any(item[1] == cat for item in subjects_to_link):
-                subjects_to_link.add((cat, cat, None))
+                subjects_to_link.add((cat, cat, None, None, None, None))
+
+        primary_cat = categories[0] if categories else "Geral"
 
         # Assuntos/tags importados: vincula apenas quando houver uma categoria válida
         if categories:
-            primary_cat = categories[0]
             for t in tags[:8]:
                 t_clean = t.strip()
                 if t_clean and not any(t_clean.lower() == item[0].lower() for item in subjects_to_link):
-                    subjects_to_link.add((f"{primary_cat} — {t_clean}", primary_cat, None))
+                    subjects_to_link.add((f"{primary_cat} — {t_clean}", primary_cat, None, None, None, None))
 
-        for name, cat, subcat in subjects_to_link:
+        # Facetas ortogonais (gênero, origem, período) isoladas por valor para não contaminar categorias compartilhadas
+        if genre and str(genre).strip():
+            g_clean = str(genre).strip()
+            subjects_to_link.add((f"{primary_cat} — Gênero — {g_clean}", primary_cat, None, g_clean, None, None))
+        if origin and str(origin).strip():
+            o_clean = str(origin).strip()
+            subjects_to_link.add((f"{primary_cat} — Origem — {o_clean}", primary_cat, None, None, o_clean, None))
+        if period and str(period).strip():
+            p_clean = str(period).strip()
+            subjects_to_link.add((f"{primary_cat} — Período — {p_clean}", primary_cat, None, None, None, p_clean))
+
+        for name, cat, subcat, subj_genre, subj_origin, subj_period in subjects_to_link:
             cursor.execute(
                 """
                 INSERT INTO subjects (name, category, subcategory, genre, origin, period)
                 VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(name) DO UPDATE SET
                     category = excluded.category,
-                    subcategory = COALESCE(excluded.subcategory, subjects.subcategory),
-                    genre = COALESCE(excluded.genre, subjects.genre),
-                    origin = COALESCE(excluded.origin, subjects.origin),
-                    period = COALESCE(excluded.period, subjects.period);
+                    subcategory = excluded.subcategory,
+                    genre = excluded.genre,
+                    origin = excluded.origin,
+                    period = excluded.period;
                 """,
-                (name, cat, subcat, genre, origin, period),
+                (name, cat, subcat, subj_genre, subj_origin, subj_period),
             )
             cursor.execute("SELECT id FROM subjects WHERE name = ? COLLATE NOCASE;", (name,))
             subj_id = int(cursor.fetchone()["id"])
@@ -827,62 +839,185 @@ def get_taxonomy_tree() -> List[Dict[str, Any]]:
     """
     Retorna a árvore taxonômica presente no acervo atual respeitando a ordem configurada
     pelo administrador (`categories.display_order`), exibindo apenas categorias que possuem
-    livros ativos associados.
+    livros ativos associados (considerando fontes ativas e fallback de subjects).
+    """
+    uncategorized_count = get_uncategorized_books_count()
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # 1. Contagem exata de livros distintos por categoria (primário em book_categories + fallback em book_subjects)
+        cursor.execute(
+            """
+            SELECT
+                c.id,
+                c.name AS category,
+                c.description,
+                c.display_order,
+                c.is_custom,
+                COUNT(DISTINCT b.id) AS total_books
+            FROM categories c
+            JOIN books b ON (
+                EXISTS (
+                    SELECT 1 FROM book_categories bc
+                    WHERE bc.book_id = b.id AND bc.category_id = c.id
+                )
+                OR (
+                    NOT EXISTS (SELECT 1 FROM book_categories bc2 WHERE bc2.book_id = b.id)
+                    AND EXISTS (
+                        SELECT 1 FROM book_subjects bs
+                        JOIN subjects s ON bs.subject_id = s.id
+                        WHERE bs.book_id = b.id
+                          AND TRIM(s.category) = TRIM(c.name) COLLATE NOCASE
+                          AND LOWER(TRIM(s.category)) != 'geral'
+                    )
+                )
+            )
+            LEFT JOIN library_sources ls ON b.source_id = ls.id
+            WHERE b.is_missing = 0 AND (ls.is_active = 1 OR ls.is_active IS NULL)
+            GROUP BY c.id
+            HAVING total_books > 0
+            ORDER BY c.display_order ASC, c.name COLLATE NOCASE ASC;
+            """
+        )
+        cat_rows = [dict(r) for r in cursor.fetchall()]
+
+        # 2. Contagem de subcategorias vinculadas a cada categoria em livros ativos
+        cursor.execute(
+            """
+            SELECT category_name, subcategory_name, COUNT(DISTINCT book_id) AS book_count
+            FROM (
+                SELECT c.name AS category_name, TRIM(bc.subcategory) AS subcategory_name, b.id AS book_id
+                FROM book_categories bc
+                JOIN categories c ON bc.category_id = c.id
+                JOIN books b ON bc.book_id = b.id
+                LEFT JOIN library_sources ls ON b.source_id = ls.id
+                WHERE b.is_missing = 0
+                  AND (ls.is_active = 1 OR ls.is_active IS NULL)
+                  AND bc.subcategory IS NOT NULL AND TRIM(bc.subcategory) != ''
+                UNION
+                SELECT TRIM(s.category) AS category_name, TRIM(s.subcategory) AS subcategory_name, b.id AS book_id
+                FROM book_subjects bs
+                JOIN subjects s ON bs.subject_id = s.id
+                JOIN books b ON bs.book_id = b.id
+                LEFT JOIN library_sources ls ON b.source_id = ls.id
+                WHERE b.is_missing = 0
+                  AND (ls.is_active = 1 OR ls.is_active IS NULL)
+                  AND s.category IS NOT NULL AND TRIM(s.category) != ''
+                  AND LOWER(TRIM(s.category)) != 'geral'
+                  AND s.subcategory IS NOT NULL AND TRIM(s.subcategory) != ''
+            )
+            GROUP BY category_name COLLATE NOCASE, subcategory_name COLLATE NOCASE
+            HAVING book_count > 0
+            ORDER BY book_count DESC, subcategory_name COLLATE NOCASE ASC;
+            """
+        )
+        subcat_rows = [dict(r) for r in cursor.fetchall()]
+
+    subcats_by_cat: Dict[str, List[Dict[str, Any]]] = {}
+    for sr in subcat_rows:
+        ckey = (sr["category_name"] or "").strip().lower()
+        subcats_by_cat.setdefault(ckey, []).append({
+            "name": sr["subcategory_name"],
+            "book_count": int(sr["book_count"]),
+        })
+
+    tree_list: List[Dict[str, Any]] = []
+    for r in cat_rows:
+        cat = r["category"]
+        ckey = cat.strip().lower()
+        tree_list.append({
+            "id": r["id"],
+            "category": cat,
+            "description": r["description"] or "",
+            "display_order": r["display_order"],
+            "is_custom": bool(r["is_custom"]),
+            "total_books": int(r["total_books"]),
+            "subcategories": subcats_by_cat.get(ckey, []),
+            "uncategorized_books": uncategorized_count,
+        })
+
+    return sorted(tree_list, key=lambda x: (x["display_order"], x["category"].lower()))
+
+
+def get_taxonomy_facets() -> Dict[str, Any]:
+    """
+    Retorna as facetas globais ativas (subcategorias, gêneros, origens e contagem sem categoria)
+    para popular os seletores de filtro da biblioteca de forma consistente com `list_books`.
     """
     with get_db() as conn:
         cursor = conn.cursor()
+
+        # Subcategorias globais em livros ativos
         cursor.execute(
             """
-            SELECT c.id, c.name AS category, c.description, c.display_order, c.is_custom,
-                   bc.subcategory, COUNT(DISTINCT bc.book_id) AS book_count
-            FROM categories c
-            JOIN book_categories bc ON c.id = bc.category_id
-            JOIN books b ON bc.book_id = b.id
-            WHERE b.is_missing = 0
-            GROUP BY c.id, bc.subcategory
+            SELECT subcategory_name AS name, COUNT(DISTINCT book_id) AS book_count
+            FROM (
+                SELECT TRIM(bc.subcategory) AS subcategory_name, b.id AS book_id
+                FROM book_categories bc
+                JOIN books b ON bc.book_id = b.id
+                LEFT JOIN library_sources ls ON b.source_id = ls.id
+                WHERE b.is_missing = 0
+                  AND (ls.is_active = 1 OR ls.is_active IS NULL)
+                  AND bc.subcategory IS NOT NULL AND TRIM(bc.subcategory) != ''
+                UNION
+                SELECT TRIM(s.subcategory) AS subcategory_name, b.id AS book_id
+                FROM book_subjects bs
+                JOIN subjects s ON bs.subject_id = s.id
+                JOIN books b ON bs.book_id = b.id
+                LEFT JOIN library_sources ls ON b.source_id = ls.id
+                WHERE b.is_missing = 0
+                  AND (ls.is_active = 1 OR ls.is_active IS NULL)
+                  AND s.subcategory IS NOT NULL AND TRIM(s.subcategory) != ''
+            )
+            GROUP BY name COLLATE NOCASE
             HAVING book_count > 0
-            ORDER BY c.display_order ASC, c.name COLLATE NOCASE ASC, book_count DESC;
+            ORDER BY name COLLATE NOCASE ASC;
             """
         )
-        rows = [dict(r) for r in cursor.fetchall()]
+        subcategories = [{"name": r["name"], "book_count": int(r["book_count"])} for r in cursor.fetchall()]
 
-        # Conta também livros sem categoria
+        # Gêneros literários em livros ativos
         cursor.execute(
             """
-            SELECT COUNT(*) AS cnt
-            FROM books b
+            SELECT TRIM(s.genre) AS name, COUNT(DISTINCT b.id) AS book_count
+            FROM book_subjects bs
+            JOIN subjects s ON bs.subject_id = s.id
+            JOIN books b ON bs.book_id = b.id
+            LEFT JOIN library_sources ls ON b.source_id = ls.id
             WHERE b.is_missing = 0
-              AND NOT EXISTS (SELECT 1 FROM book_categories bc WHERE bc.book_id = b.id);
+              AND (ls.is_active = 1 OR ls.is_active IS NULL)
+              AND s.genre IS NOT NULL AND TRIM(s.genre) != ''
+            GROUP BY TRIM(s.genre) COLLATE NOCASE
+            HAVING book_count > 0
+            ORDER BY name COLLATE NOCASE ASC;
             """
         )
-        uncat_row = cursor.fetchone()
-        uncategorized_count = int(uncat_row["cnt"]) if uncat_row else 0
+        genres = [{"name": r["name"], "book_count": int(r["book_count"])} for r in cursor.fetchall()]
 
-    tree_map: Dict[str, Dict[str, Any]] = {}
-    for r in rows:
-        cat = r["category"]
-        subcat = r["subcategory"]
-        count = int(r["book_count"])
+        # Origens literárias em livros ativos
+        cursor.execute(
+            """
+            SELECT TRIM(s.origin) AS name, COUNT(DISTINCT b.id) AS book_count
+            FROM book_subjects bs
+            JOIN subjects s ON bs.subject_id = s.id
+            JOIN books b ON bs.book_id = b.id
+            LEFT JOIN library_sources ls ON b.source_id = ls.id
+            WHERE b.is_missing = 0
+              AND (ls.is_active = 1 OR ls.is_active IS NULL)
+              AND s.origin IS NOT NULL AND TRIM(s.origin) != ''
+            GROUP BY TRIM(s.origin) COLLATE NOCASE
+            HAVING book_count > 0
+            ORDER BY name COLLATE NOCASE ASC;
+            """
+        )
+        origins = [{"name": r["name"], "book_count": int(r["book_count"])} for r in cursor.fetchall()]
 
-        if cat not in tree_map:
-            tree_map[cat] = {
-                "id": r["id"],
-                "category": cat,
-                "description": r["description"] or "",
-                "display_order": r["display_order"],
-                "is_custom": bool(r["is_custom"]),
-                "total_books": 0,
-                "subcategories": [],
-                "uncategorized_books": uncategorized_count,
-            }
-        tree_map[cat]["total_books"] += count
-        if subcat:
-            tree_map[cat]["subcategories"].append({
-                "name": subcat,
-                "book_count": count,
-            })
-
-    return sorted(list(tree_map.values()), key=lambda x: (x["display_order"], x["category"].lower()))
+    return {
+        "uncategorized_count": get_uncategorized_books_count(),
+        "subcategories": subcategories,
+        "genres": genres,
+        "origins": origins,
+    }
 
 
 # ==============================================================================
@@ -897,11 +1032,12 @@ def list_categories(include_empty: bool = True) -> List[Dict[str, Any]]:
             """
             SELECT c.id, c.name, c.description, c.display_order, c.is_custom,
                    c.created_at, c.updated_at,
-                   COUNT(DISTINCT CASE WHEN b.is_missing = 0 THEN bc.book_id END) AS book_count,
-                   COUNT(DISTINCT CASE WHEN b.is_missing = 0 AND bc.is_manual = 1 THEN bc.book_id END) AS manual_count
+                   COUNT(DISTINCT CASE WHEN b.is_missing = 0 AND (ls.is_active = 1 OR ls.is_active IS NULL) THEN bc.book_id END) AS book_count,
+                   COUNT(DISTINCT CASE WHEN b.is_missing = 0 AND (ls.is_active = 1 OR ls.is_active IS NULL) AND bc.is_manual = 1 THEN bc.book_id END) AS manual_count
             FROM categories c
             LEFT JOIN book_categories bc ON c.id = bc.category_id
             LEFT JOIN books b ON bc.book_id = b.id
+            LEFT JOIN library_sources ls ON b.source_id = ls.id
             GROUP BY c.id
             ORDER BY c.display_order ASC, c.name COLLATE NOCASE ASC;
             """
@@ -926,14 +1062,19 @@ def get_uncategorized_books_count() -> int:
             """
             SELECT COUNT(*) AS cnt
             FROM books b
+            LEFT JOIN library_sources ls ON b.source_id = ls.id
             WHERE b.is_missing = 0
+              AND (ls.is_active = 1 OR ls.is_active IS NULL)
               AND NOT EXISTS (
                   SELECT 1 FROM book_categories bc WHERE bc.book_id = b.id
               )
               AND NOT EXISTS (
                   SELECT 1 FROM book_subjects bs
                   JOIN subjects s ON bs.subject_id = s.id
-                  WHERE bs.book_id = b.id AND s.category IS NOT NULL AND TRIM(s.category) != ''
+                  WHERE bs.book_id = b.id
+                    AND s.category IS NOT NULL
+                    AND TRIM(s.category) != ''
+                    AND LOWER(TRIM(s.category)) != 'geral'
               );
             """
         )

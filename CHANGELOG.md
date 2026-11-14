@@ -7,6 +7,68 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.7.0] - 2026-11-14
+
+### Adicionado (`Added`)
+- **Persistência e Migração SQLite v10 → v11 (`database.py`)**:
+  - 5 novas tabelas para **Leitura Compartilhada**: `discussion_topics`, `discussion_replies`, `collective_reading_goals`, `collective_goal_progress` e `shared_quotes`.
+  - 10 índices compostos para consultas eficientes por leitura coletiva, tópico, meta, usuário e ordenação temporal.
+  - 6 *triggers* SQLite de integridade cruzada entre entidades (`trg_discussion_replies_topic_integrity_insert/update`, `trg_discussion_replies_parent_integrity_insert/update`, `trg_collective_goal_progress_goal_integrity_insert/update`), prevenindo associação de respostas a tópicos de outra leitura coletiva ou progresso a metas de outra leitura.
+  - Backup pré-migração seguro (`_create_pre_migration_backup_v11`) com sufixos únicos (`.1`, `.2`...) que nunca sobrescreve cópias existentes, transação atômica com rollback completo em caso de erro e preservação de histórico via `ON DELETE SET NULL` para usuários/notas e `is_deleted = 1` para exclusões lógicas.
+- **Serviço de Regras de Negócio da Leitura Compartilhada (`shared_reading_service.py`)**:
+  - Visão geral consolidada da leitura coletiva (`get_collective_read_overview`) com métricas agregadas, papel do usuário no clube (`user_club_role`), estado de participação (`is_participant`) e indicador `is_read_only`.
+  - Fórum de discussões por leitura coletiva (`create_discussion_topic`, `list_discussion_topics`, `get_discussion_topic_detail`, `update_discussion_topic`, `delete_discussion_topic`), com suporte a seção/capítulo (`chapter_or_section`), página (`page_reference`), marcação de spoilers (`has_spoilers`), fixação (`is_pinned`) e trancamento (`is_locked`).
+  - Respostas encadeadas (`create_discussion_reply`, `update_discussion_reply`, `delete_discussion_reply`) com validação de `parent_reply_id` no mesmo tópico, bloqueio em tópicos trancados/excluídos e soft delete preservando respostas-filhas.
+  - Metas coletivas (`create_reading_goal`, `list_reading_goals`, `update_reading_goal`, `delete_reading_goal`) restritas a `owner`/`moderator`, com ordenação determinística (`sort_order`) e estatísticas agregadas de conclusão.
+  - Progresso voluntário nas metas (`upsert_goal_progress`, `get_my_goal_progress`), totalmente desacoplado do progresso privado (`reading_progress`).
+  - Citações compartilhadas (`create_shared_quote`, `list_shared_quotes`, `update_shared_quote`, `delete_shared_quote`) com texto citado, comentário opcional, página/seção, referência técnica (`position_ref`), controle de spoilers e vinculação opcional verificada à nota privada do próprio autor (`source_note_id`).
+  - Listagem de leituras coletivas ativas elegíveis para um livro (`list_user_active_collective_reads_for_book`).
+- **API REST da Leitura Compartilhada (`main.py`)**:
+  - 19 novos endpoints REST sob `/api/collective-reads/{read_id}/...` e `/api/books/{book_id}/active-collective-reads`, protegidos por autenticação de sessão, verificação de CSRF (`x-csrf-token`) e modelos Pydantic v2 com `ConfigDict(extra="forbid")`.
+- **Interface Web da Leitura Compartilhada (`static/js/shared_reading.js`, `static/index.html`, `static/css/style.css`)**:
+  - Painel dedicado em 4 subabas (*Visão Geral*, *Discussões*, *Metas*, *Citações*) integrado à área de Clubes de Leitura.
+  - Ocultação visual de spoilers com botão explícito *"Revelar spoiler"*, filtros por seção/busca/spoilers, proteção contra condições de corrida com `AbortController` e layout responsivo sem overflow horizontal de `320px` a `1920px`.
+- **Integração com Leitores PDF.js e EPUB.js (`static/reader.html`, `static/js/reader.js`)**:
+  - Ação *"Compartilhar com leitura coletiva"* na barra flutuante de seleção de texto (PDF e EPUB) e nos cartões de notas privadas do próprio usuário.
+  - Navegação direta a partir da citação compartilhada (*"Abrir no leitor"*) para `#page=N` (PDF) ou `#cfi=epubcfi(...)` (EPUB), com tratamento gracioso de referências inválidas ou livros ausentes.
+- **Documentação Arquitetural e Diagnóstico (`AGENTS.md`, `docs/`, `scripts/diagnose_taxonomy.py`)**:
+  - Consolidação da documentação técnica em `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/DATABASE.md`, `docs/AUTHORIZATION.md`, `docs/READER.md`, `docs/FRONTEND.md`, `docs/API.md`, `docs/TESTING.md`, `docs/DEPLOYMENT.md` e `docs/DECISIONS/ADR-001..006.md`.
+  - Utilitário CLI read-only `scripts/diagnose_taxonomy.py` para auditoria não-destrutiva de integridade taxonômica em bancos SQLite locais ou de produção.
+  - Expansão da suíte automatizada para **248 testes aprovados** (`211` unitários/integração + `37` E2E no Chromium headless).
+
+### Alterado (`Changed`)
+- **Política Somente-Leitura para Leituras Encerradas ou Arquivadas (`shared_reading_service.py`, `static/js/shared_reading.js`)**:
+  - Leituras coletivas com status `completed`, `cancelled` ou vinculadas a clubes com `is_archived = 1` permanecem abertas para leitura histórica (`GET 200`), mas rejeitam qualquer criação, edição ou exclusão de tópicos, respostas, metas, progresso voluntário ou citações com `HTTP 400 Bad Request` e ocultam controles de escrita na UI.
+- **Sincronização de Versão (`config.py`, `static/index.html`, `static/reader.html`, `static/js/app.js`, `scripts/package.py`)**:
+  - Atualização coordenada da versão da aplicação e strings de cache-busting para `1.7.0`.
+
+### Corrigido (`Fixed`)
+- **Sistema de Filtros Taxonômicos e Contadores da Biblioteca (`static/js/app.js`, `taxonomy_service.py`, `library.py`, `main.py`, `static/css/style.css`)**:
+  - Correção da discrepância entre os contadores de `/api/taxonomy/tree` (ex.: `Filosofia (33)`) e os resultados exibidos na grade da biblioteca: `get_taxonomy_tree()` passou a contabilizar apenas livros disponíveis (`b.is_missing = 0`) pertencentes a fontes ativas (`s.is_active = 1`) e usar `COUNT(DISTINCT b.id)` por categoria.
+  - Desacoplamento das facetas ortogonais (`genre`, `origin`, `period`) em `taxonomy_service.sync_book_taxonomy()`, criando registros dedicados em `subjects` (`"{categoria} — Gênero — {genre}"`, etc.) em vez de sobrescrever as colunas de um registro de subcategoria compartilhado entre múltiplos livros.
+  - Correção da filtragem local e invalidação de cache em `static/js/app.js`, adicionando normalização Unicode NFC case-insensitive (`normTax`) e garantindo recarga fresca de `/api/books` ao salvar metadados, reclassificar obras ou gerenciar categorias.
+  - Ajuste de especificidade CSS mobile para `.taxonomy-filters-collapsible .taxonomy-select`, garantindo largura integral dentro do painel retrátil de filtros em viewports estreitos (`360px`).
+- **Inicialização de Snapshots do Agendador (`automation_service.py`)**:
+  - Limpeza de `_dir_snapshots` em `AutomationSchedulerLoop.start()` e `stop()`, evitando disparo redundante de varredura no boot quando o loop é reiniciado no mesmo processo.
+
+### Segurança (`Security`)
+- **Isolamento Anti-Enumeração e Anti-IDOR (`shared_reading_service.py`, `main.py`)**:
+  - Qualquer tentativa de acesso ou mutação por não-membros em leituras coletivas de clubes privados retorna `HTTP 404 Not Found`.
+  - Validação estrita de propriedade em `source_note_id`: usuários jamais podem vincular ou vazar notas privadas de terceiros ao compartilhar uma citação.
+  - Sanitização e escape integral de conteúdos gerados por usuários (`escapeHtml`) em tópicos, respostas, metas e citações, prevenindo XSS armazenado.
+
+---
+
+## [1.6.3] - 2026-11-12
+
+### Corrigido (`Fixed`)
+- **Correção de Regressão Visual das Capas no Modo Grade e Lista (`static/js/app.js`, `static/css/style.css`)**:
+  - Remoção de classes legadas `list-*` (`list-item`, `list-cover-link`, `list-cover-thumb`, etc.) do template unificado `generateBookCardHtml` em `static/js/app.js`, que vazavam regras de miniatura (`48x68px`) para a visualização em Grade.
+  - Preservação estrita de `aspect-ratio: 1 / 1.42` em `.book-cover-wrapper` no modo Grade e `aspect-ratio: auto` com ocultação da lombada (`.book-cover::after { display: none; }`) no modo Lista.
+  - Adição da suíte de regressão `tests/test_v163_cover_rendering.py`.
+
+---
+
 ## [1.6.2] - 2026-11-11
 
 ### Corrigido e Otimizado

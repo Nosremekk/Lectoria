@@ -1,4 +1,4 @@
-# Lectoria — Servidor Pessoal de Livros Digitais (v1.6.1 — Otimização de Desempenho do Leitor PDF)
+# Lectoria — Servidor Pessoal de Livros Digitais e Leitura Compartilhada (v1.7.0 — Leitura Compartilhada)
 
 O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para organização, identificação inteligente, automação, clubes de leitura e leitura colaborativa de documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
 
@@ -8,6 +8,16 @@ Foi concebido para operar perfeitamente mesmo em hardware modesto — como compu
 
 ## 1. Principais Recursos
 
+- **Leitura Compartilhada (v1.7.0 — Schema SQLite v11)**:
+  - **Discussões por Leitura Coletiva (`discussion_topics` e `discussion_replies`)**: Fóruns estruturados vinculados a cada leitura coletiva, com suporte a seção/capítulo de referência (`chapter_or_section`), página ou intervalo (`page_reference`), marcação de spoilers (`has_spoilers`) com ocultação visual segura no frontend, respostas encadeadas (`parent_reply_id` validado contra o mesmo tópico), fixação (`is_pinned`), trancamento de tópicos (`is_locked`) e exclusão lógica (`is_deleted = 1`) que preserva o histórico de conversas encadeadas.
+  - **Metas Coletivas e Progresso Voluntário (`collective_reading_goals` e `collective_goal_progress`)**: Criação de marcos e cronogramas coletivos por proprietários ou moderadores do clube (`owner`/`moderator`), nos quais cada participante da leitura coletiva registra **voluntariamente** seu status (`planned`, `in_progress`, `completed`) e nota opcional — sem qualquer sincronização automática ou compulsória com o progresso privado (`reading_progress`).
+  - **Citações Compartilhadas (`shared_quotes`)**: Mural colaborativo de trechos marcantes da obra dentro da leitura coletiva, com comentário opcional do participante, referência de página/seção, posição técnica (`position_ref`), filtro e máscara anti-spoiler.
+  - **Compartilhamento Direto a partir dos Leitores PDF.js e EPUB.js**: Botão contextual *"Compartilhar com leitura coletiva"* ao selecionar um trecho no leitor PDF ou EPUB, bem como a partir de notas privadas do próprio usuário no Caderno de Estudos, preenchendo automaticamente texto, página ou EPUB-CFI e listando apenas as leituras coletivas ativas elegíveis daquele livro.
+  - **Navegação Direta de Citação para o Leitor**: Ação *"Abrir no leitor"* em cada citação compartilhada que abre diretamente o documento na página exata (`#page=N` para PDF) ou localização canônica (`#cfi=epubcfi(...)` para EPUB), com fallback gracioso caso a obra esteja ausente ou a referência seja inválida.
+  - **Controles Rígidos de Privacidade, Permissões e Modo Somente-Leitura**: Isolamento absoluto de clubes privados (`HTTP 404 Not Found` para não-membros), proteção anti-IDOR nas notas privadas e política estrita somente-leitura para leituras coletivas `completed`, `cancelled` ou pertencentes a clubes arquivados (`is_archived = 1`), permitindo consulta histórica completa (`GET 200`) e bloqueando mutações (`HTTP 400 Bad Request`).
+  - **Correção e Robustez dos Filtros Taxonômicos da Biblioteca**: Paridade exata entre os contadores da árvore taxonômica (`/api/taxonomy/tree`) e a listagem de obras (`/api/books`), desacoplamento de facetas ortogonais (`genre`, `origin`, `period`) em `taxonomy_service.py` para evitar sobrescrita cruzada entre livros da mesma subcategoria, invalidação precisa do cache em memória no frontend (`static/js/app.js`) e ferramenta de diagnóstico read-only (`scripts/diagnose_taxonomy.py`).
+- **Correção de Renderização de Capas em Grade e Lista (v1.6.3)**:
+  - Unificação estrutural dos cards de livros entre os modos Grade e Lista, garantindo proporção editorial `1 / 1.42` e prevenindo encolhimento de capas para dimensões de miniatura na visualização em grade.
 - **Otimização de Desempenho do Leitor PDF (v1.6.1)**:
   - **Abertura Ultrarrápida de Documentos**: Redução drástica do tráfego inicial para renderizar a 1ª página em mais de 90%, passando de dezenas de segundos para ~1 segundo em redes remotas e < 0,3s em rede local.
   - **Eliminação de Streaming Monolítico (`disableStream: true`)**: Evita o download concorrente não intencional de 100% do arquivo enquanto a primeira página é requisitada.
@@ -182,17 +192,23 @@ Caso seja necessário restaurar os dados a partir de um backup anterior, siga es
 ## 3. Arquitetura e Decisões de Design
 
 - **Backend**: Python 3.10+ com FastAPI e Uvicorn em processo único (`workers=1`), sem threads em background ou workers concorrentes desnecessários.
-- **Banco de Dados**: SQLite3 em modo **WAL** (`Write-Ahead Logging`), com `synchronous=NORMAL` e controle de migrações (`schema_migrations`), garantindo persistência rápida, sem bloqueios de leitura e com baixo desgaste de disco SSD.
+- **Banco de Dados**: SQLite3 em modo **WAL** (`Write-Ahead Logging`), com `synchronous=NORMAL`, `foreign_keys=ON` e controle incremental de migrações (`schema_migrations` — **Schema Atual: v11**), garantindo persistência rápida, sem bloqueios de leitura e com baixo desgaste de disco SSD.
   - **Schema V1**: tabelas `users`, `books` e `reading_progress`.
   - **Schema V2**: tabelas `collections` e `collection_books`.
   - **Schema V3**: tabelas `highlights`, `notes` e `page_drawings`.
   - **Schema V4**: tabelas `library_sources`, `sessions` e isolamento multiusuário (`user_id`, `role`, `password_hash`).
   - **Schema V5**: metadados de capas em `books` (`cover_type`, `cover_path`, `cover_source_hash`, `cover_updated_at`).
+  - **Schema V6**: suporte nativo a EPUB (`format`, `cfi_progress`).
+  - **Schema V7**: taxonomia multidimensional (`subjects`, `book_subjects`, `metadata_candidates`, `metadata_jobs`, `metadata_api_cache`, `books_fts`).
+  - **Schema V8**: camada comunitária "Nossa Biblioteca", automação e proveniência (`book_reviews`, `book_lists`, `shared_annotations`, `book_recommendations`, `user_activity_events`, `user_privacy_settings`, `metadata_provenance`, `scheduled_jobs`, `background_jobs`).
+  - **Schema V9**: categorias customizáveis administráveis (`custom_categories`).
+  - **Schema V10**: clubes de leitura e leituras coletivas (`reading_clubs`, `reading_club_members`, `reading_club_invites`, `collective_reads`, `collective_read_participants`).
+  - **Schema V11 (v1.7.0)**: Leitura Compartilhada (`discussion_topics`, `discussion_replies`, `collective_reading_goals`, `collective_goal_progress`, `shared_quotes`) com triggers SQLite de integridade cruzada e backup preventivo com sufixo único.
 - **Frontend**: HTML5 semântico, CSS3 enxuto e JavaScript Vanilla (ES6). Zero frameworks pesados (sem React, Vue, Angular ou Node.js).
-- **Leitor PDF**: Baseado em **PDF.js** estático local (`static/vendor/pdfjs/`). A renderização ocorre integralmente no navegador do cliente, sem requisições a CDNs externas e sem telemetria.
-- **Streaming de Arquivos**: Suporte nativo a **HTTP Range Requests (206 Partial Content)**. O servidor serve blocos sob demanda, permitindo abrir documentos grandes sem carregar o arquivo PDF inteiro na memória RAM do servidor.
+- **Leitores PDF e EPUB**: Baseados em **PDF.js** (`static/vendor/pdfjs/`) e **EPUB.js + JSZip** (`static/vendor/epubjs/`) estáticos locais. A renderização ocorre integralmente no navegador do cliente, sem requisições a CDNs externas e sem telemetria.
+- **Streaming de Arquivos**: Suporte nativo a **HTTP Range Requests (206 Partial Content)** com blocos de 512 KB (`rangeChunkSize: 524288`) e `disableStream: true`. O servidor serve blocos sob demanda, permitindo abrir documentos grandes sem carregar o arquivo PDF inteiro na memória RAM.
 - **Segurança de Caminhos**: Prevenção estrita contra *Path Traversal* com resolução canônica de caminhos (`pathlib.Path.resolve()`). Identificadores UUID estáveis em vez de expor caminhos do sistema operacional nas rotas públicas.
-- **Zero Ociosidade Forçada**: A aplicação consome 0% de CPU quando ociosa (sem file watchers contínuos com `inotify`). O escaneamento da biblioteca é acionado sob demanda pelo usuário.
+- **Zero Ociosidade Forçada**: A aplicação consome ~0% de CPU quando ociosa (sem file watchers contínuos com `inotify` e sem polling constante no frontend).
 
 ---
 
@@ -200,77 +216,55 @@ Caso seja necessário restaurar os dados a partir de um backup anterior, siga es
 
 ```text
 lectoria/
-├── .github/
-│   └── workflows/
-│       └── ci.yml              # Pipeline de Integração Contínua (Python 3.12 e 3.13)
-├── .gitignore                  # Exclusões do Git (ignora data/, *.db, backups/, dist/)
-├── .env.example                # Modelo documentado de variáveis de ambiente
-├── config.py                   # Configurações centralizadas com carregamento de .env
-├── database.py                 # Conexão SQLite (WAL mode), migrações V1..V5 e reconciliação
-├── auth_service.py             # Autenticação scrypt, sessões SHA-256 e controle de papéis
+├── AGENTS.md                   # Guia de governança e arquitetura para agentes e mantenedores
+├── Dockerfile                  # Imagem de contêiner enxuta (Python 3.12-slim)
+├── docker-compose.yml          # Orquestração Docker Compose pronta para uso self-hosted
+├── docker-compose.example.yml  # Modelo comentando volumes de acervo, dados e backups
+├── config.py                   # Configurações centralizadas com carregamento de .env (APP_VERSION=1.7.0)
+├── database.py                 # Conexão SQLite (WAL mode), migrações V1..V11 e triggers de integridade
+├── main.py                     # API FastAPI, CSRF, autenticação, streaming HTTP Range e rotas v1.7.0
+├── shared_reading_service.py   # Regras de negócio da Leitura Compartilhada (tópicos, respostas, metas, citações)
+├── clubs_service.py            # Ciclo de vida de Clubes de Leitura, papéis, convites e leituras coletivas
+├── social_service.py           # Camada comunitária "Nossa Biblioteca" e configurações de privacidade
+├── taxonomy_service.py         # Árvore taxonômica, facetas desacopladas e categorias customizáveis
+├── metadata_service.py         # Enriquecimento bibliográfico multi-provedor e fila assíncrona
+├── automation_service.py       # Agendador persistente e fila de tarefas em segundo plano
+├── auth_service.py             # Autenticação scrypt, sessões SHA-256, rate limiting e papéis
 ├── sources_service.py          # Gestão de múltiplas fontes e validação de caminhos
 ├── directory_picker_service.py # Navegador visual de diretórios e seletor nativo (Zenity/KDialog)
-├── covers_service.py           # Extração de capas de PDF, capas personalizadas e SVG editorial
+├── covers_service.py           # Extração em 3 camadas de capas (PDF/EPUB, personalizada e SVG)
 ├── collections_service.py      # Serviço de coleções (CRUD e associações de livros)
-├── annotations_service.py      # Serviço de marcações, anotações e desenhos livres
+├── annotations_service.py      # Destaques, notas privadas e desenhos vetoriais
 ├── export_service.py           # Exportação (.md, .json) e importação segura de cadernos
-├── backup_service.py           # Backup SQLite + capas personalizadas com Lock e integridade
-├── library.py                  # Scanner leve (pypdf), filtros, busca e ordenação
-├── progress.py                 # Persistência e restauração do progresso de leitura
-├── main.py                     # API FastAPI, rotas estáticas e streaming com Range
-├── pytest.ini                  # Configurações do framework de testes
-├── requirements.txt            # Dependências mínimas de produção (FastAPI, Uvicorn, pypdf)
-├── requirements-dev.txt        # Dependências de desenvolvimento e teste (pytest, httpx)
-├── CHANGELOG.md                # Histórico de alterações e versões
-├── CONTRIBUTING.md             # Guia de contribuição e ambiente de desenvolvimento
-├── SECURITY.md                 # Política de reporte de vulnerabilidades
-├── LICENSE                     # Licença de uso (MIT)
-├── README.md                   # Documentação completa do projeto
-├── deployment/                 # Scripts de implantação, manutenção e serviço systemd
-│   ├── install.sh              # Instalação idempotente para Linux Mint / Ubuntu / Debian
-│   ├── configure.sh            # Configuração de .env e lectoria.service
-│   ├── update.sh               # Atualização com backup prévio e migração de schema
-│   ├── backup.sh               # Atalho para backup consistente (SQLite + capas)
-│   ├── restore.sh              # Atalho para restauração segura de backup e capas
-│   ├── uninstall.sh            # Desinstalação preservando dados do usuário
-│   ├── diagnose.sh             # Diagnóstico de ambiente e desempenho
-│   ├── verify-package.sh       # Verificador de integridade de pacote de distribuição
-│   ├── lectoria.service        # Unidade systemd com sandboxing e cgroup
-│   └── README.md               # Guia operacional de implantação systemd
+├── backup_service.py           # Backup SQLite Online API + capas personalizadas com Lock
+├── library.py                  # Scanner leve (pypdf/EPUB), filtros taxonômicos, busca FTS5 e ordenação
+├── progress.py                 # Persistência e restauração do progresso individual de leitura
+├── docs/                       # Documentação técnica e relatórios de validação
+│   ├── ARCHITECTURE.md         # Visão arquitetural e diagramas de componentes
+│   ├── DATABASE.md             # Documentação do Schema SQLite v11, FKs e migrações
+│   ├── AUTHORIZATION.md        # Matriz de permissões, CSRF, anti-IDOR e privacidade
+│   ├── READER.md               # Arquitetura dos leitores PDF.js e EPUB.js, HTTP Range e citações
+│   ├── FRONTEND.md             # Estado Vanilla JS, filtros, máscaras de spoiler e responsividade
+│   ├── API.md                  # Contratos detalhados dos endpoints REST
+│   ├── TESTING.md              # Guia das suítes Pytest e Playwright E2E
+│   ├── DEPLOYMENT.md           # Guia de implantação Docker, systemd, backup e atualização
+│   └── DECISIONS/              # Architecture Decision Records (ADR-001 a ADR-006)
 ├── scripts/
 │   ├── backup.py               # Utilitário CLI para backup, restauração e retenção
 │   ├── diagnose.py             # Utilitário CLI de diagnóstico de ambiente e desempenho
+│   ├── diagnose_taxonomy.py    # Diagnóstico read-only de consistência taxonômica do banco SQLite
 │   ├── manage_users.py         # Utilitário CLI para gestão de usuários, senhas e papéis
 │   └── package.py              # Utilitário de empacotamento para distribuição
-├── backups/                    # Armazenamento de backups locais (ignorado no Git)
-├── books/                      # Diretório local padrão para PDFs (mantido intacto)
-├── data/                       # Dados persistentes locais (lectoria.db, covers/) (ignorado no Git)
-├── static/                     # Frontend estático
-│   ├── index.html              # Interface da Biblioteca (acervo, capas, seletor de pastas)
-│   ├── reader.html             # Interface do Leitor (PDF.js, Estudos, Miniaturas)
-│   ├── css/
-│   │   └── style.css           # Design system editorial e responsividade móvel
+├── static/                     # Frontend estático Vanilla HTML5/CSS3/ES6
+│   ├── index.html              # Interface principal da Biblioteca e Clubes
+│   ├── reader.html             # Interface do Leitor Adaptativo (PDF.js e EPUB.js)
+│   ├── css/style.css           # Folha de estilo editorial (Claro, Escuro, Sépia)
 │   ├── js/
-│   │   ├── app.js              # Lógica da biblioteca, capas, administração
-│   │   └── reader.js           # Lógica do leitor, toque/gestos móveis e anotações
-│   └── vendor/
-│       └── pdfjs/              # PDF.js e worker embutidos (Licença Apache 2.0)
-└── tests/                      # Suíte de testes automatizados (82 testes)
-    ├── conftest.py             # Fixtures e isolamento de ambiente em tmp_path
-    ├── test_annotations.py     # Destaques, notas e desenhos vetoriais
-    ├── test_collections.py     # CRUD e associação de coleções
-    ├── test_filters_and_sorting.py # Filtros de status e ordenação
-    ├── test_iteration2_features.py # Coleções em lote e PDFs grandes
-    ├── test_iteration4.py      # Exportação MD/JSON e backups
-    ├── test_iteration5.py      # Limites DoS, concorrência e segurança
-    ├── test_iteration6.py      # Downloads, múltiplas fontes, auth e isolamento
-    ├── test_iteration7.py      # Auditoria de segurança, CSRF, IDOR e sessões
-    ├── test_iteration8.py      # Capas de livros e seleção visual de diretórios
-    ├── test_iteration9.py      # Portabilidade (.env), migração segura e scripts
-    ├── test_iteration11.py     # Experiência e controles móveis do leitor
-    ├── test_library.py         # Catálogo e busca
-    ├── test_progress.py        # Progresso de leitura e beacon
-    └── test_security.py        # Range requests, path traversal e integridade
+│   │   ├── app.js              # Lógica da biblioteca, filtros taxonômicos, clubes e admin
+│   │   ├── shared_reading.js   # Painel de Leitura Compartilhada (Visão Geral, Discussões, Metas, Citações)
+│   │   └── reader.js           # Motor do leitor PDF/EPUB, seleção e compartilhamento de citações
+│   └── vendor/                 # PDF.js, EPUB.js e JSZip locais
+└── tests/                      # Suíte de testes automatizados (248 testes: 211 unit/int + 37 E2E)
 ```
 
 ---
@@ -382,6 +376,23 @@ python3 main.py
 O servidor iniciará escutando em `http://0.0.0.0:8765`.
 
 > **Coexistência com o Jellyfin**: A porta padrão do Lectoria é `8765`, não interferindo com as portas `8096` ou `8920` do Jellyfin.
+
+### 8.3 Execução via Docker Compose
+
+O repositório inclui `Dockerfile` e `docker-compose.yml` prontos para implantação auto-hospedada:
+
+```bash
+# Construir e subir o contêiner em segundo plano
+docker compose up -d --build
+
+# Acompanhar logs de inicialização e migração automática SQLite (v10 -> v11)
+docker compose logs -f
+
+# Verificar saúde do serviço
+curl -fsS http://127.0.0.1:8765/api/health
+```
+
+Os volumes persistentes são mapeados por padrão para `./books:/books:ro` (acervo somente leitura), `./data:/data` (banco SQLite `lectoria.db` e capas) e `./backups:/backups`. Consulte [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) para detalhes de operação e atualização.
 
 ---
 
@@ -516,61 +527,52 @@ Executa uma bateria completa de verificações (SO, CPU, RAM disponível, permis
 Com o ambiente virtual ativado e as dependências de desenvolvimento instaladas (`requirements-dev.txt`):
 
 ```bash
-source .venv/bin/activate
-pytest -v tests/
+# Executa os 211 testes unitários e de integração de API/persistência
+./.venv/bin/pytest --ignore=tests/e2e -q
+
+# Executa os 37 testes de ponta a ponta (E2E) em navegador real Playwright Chromium
+./.venv/bin/pytest tests/e2e -q
 ```
 
-A suíte completa possui **119 testes automatizados** aprovados, cobrindo testes unitários, testes de integração de sistema e testes de ponta a ponta (E2E) com navegador real Chromium:
-
-```bash
-# Executa os 106 testes unitários e de integração
-pytest -v tests/test_*.py
-
-# Executa os 13 testes de ponta a ponta (E2E) em navegador real Playwright Chromium
-pytest -v tests/e2e/test_browser_e2e.py
-
-# Executa toda a suíte (119 testes)
-pytest -v tests/
-```
-
-> **Nota para execução de testes E2E:** Para executar os testes E2E com Chromium em ambiente local de desenvolvimento, instale as dependências com `pip install -r requirements-dev.txt` e baixe o binário do Chromium com `playwright install chromium`. Ambientes de produção não necessitam de Playwright nem Chromium.
-
-A suíte cobre exaustivamente:
-- Catálogo, scanner e metadados (`test_library.py`).
-- Coleções e associações em lote (`test_collections.py`, `test_iteration2_features.py`).
-- Filtros de estado de leitura, busca e ordenação (`test_filters_and_sorting.py`).
-- Progresso de leitura e Beacon API (`test_progress.py`).
-- Streaming por chunks HTTP Range e path traversal (`test_security.py`).
-- Destaques, notas, desenhos vetoriais e algoritmo geométrico da borracha (`test_annotations.py`).
-- Exportação Markdown/JSON, preview de importação e rollback (`test_iteration4.py`).
-- Limites de DoS na importação, validação de profundidade JSON, concorrência de backups e retenção (`test_iteration5.py`).
-- Download de documentos originais, gerenciamento de fontes, symlinks, scrypt, rate limiting, controle de papéis e isolamento de dados por usuário (`test_iteration6.py`).
-- Hashing de sessões, invalidação de sessões, CSRF Double Submit, Origin check, IDOR em anotações, probing de coleções, proteção de fontes (.venv, .git) e integridade em restauração multiusuário (`test_iteration7.py`).
-- Extração de capas de PDF, cache em disco, invalidação por hash, upload/substituição/remoção de capas personalizadas, bloqueio de uploads maliciosos, fallback SVG editorial, navegador visual de diretórios e seletor nativo local (`test_iteration8.py`).
-- Carregamento e precedência de `.env`, reconciliação automática do caminho da biblioteca principal entre máquinas, backup preventivo e preservação total de dados na migração de schema V3->V5, preservação de capas personalizadas no backup/restauração e validação dos scripts de deploy e diagnóstico (`test_iteration9.py`).
-- Experiência móvel, controles de toque e adaptação visual no leitor de PDF (`test_iteration11.py`).
-- Suporte a EPUB, extração de capas, metadados, defesa contra ZIP bomb, path traversal e proteção contra ataques de entidade XML (`test_epub.py`).
-- Migração de banco SQLite v5 para v6, cabeçalhos de segurança HTTP, integridade de scripts e PDFs sintéticos de 5 a 200 páginas (`test_iteration19.py`).
-- Componentes e estilização do leitor adaptativo e travas de rolagem (`test_reader_interface.py`).
-- Testes E2E reais no Chromium Playwright cobrindo 8 resoluções de tela, ausência de rolagem involuntária de PDF, gestos de desenho livre, ergonomia da barra de tablet e segurança de scripts no EPUB (`tests/e2e/test_browser_e2e.py`).
+A suíte completa da **v1.7.0** possui **248 testes automatizados aprovados** (`211` unitários/integração + `37` E2E no Chromium headless), cobrindo:
+- **Leitura Compartilhada (v1.7.0)**: migração SQLite v10 → v11 com backup pré-migração único e rollback em falha injetada (`test_v170_shared_reading_schema.py`), regras de negócio e permissões de tópicos, respostas, metas, progresso voluntário e citações (`test_v170_shared_reading_service.py`), 19 endpoints REST, CSRF, anti-IDOR, validação Pydantic `extra="forbid"` e política somente-leitura para leituras concluídas/canceladas/arquivadas (`test_v170_shared_reading_api.py`), interface web desktop/mobile da leitura coletiva (`test_v170_shared_reading_ui_e2e.py`), compartilhamento direto de citações nos leitores PDF.js e EPUB.js e navegação reversa (`test_v170_reader_shared_reading_e2e.py`) e endurecimento de segurança (`test_v170_phase6_hardening.py`).
+- **Filtros Taxonômicos da Biblioteca (v1.7.0)**: paridade entre contadores da árvore taxonômica e listagem filtrada, desacoplamento de facetas ortogonais, diagnóstico read-only e filtros combinados desktop/mobile (`test_v170_library_filters_regression.py` e `test_v170_library_filters_e2e.py`).
+- **Clubes de Leitura, Nossa Biblioteca, Leitor Adaptativo, Segurança e Persistência (v1.0.0–v1.6.3)**: cobertura integral de regressão em todos os subsistemas anteriores.
 
 ---
 
-## 13. Desempenho e Limitações Conhecidas
+## 13. Documentação Técnica e Arquitetural
 
-### 13.1 Medições Reais e Perfil de Consumo
+Para desenvolvedores, mantenedores e agentes de IA, consulte o guia mestre e os documentos especializados:
+
+- **[AGENTS.md](AGENTS.md)**: Ponto de entrada obrigatório, regras de governança e mapa de módulos.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: Arquitetura geral do sistema e diagramas de fluxo.
+- **[docs/DATABASE.md](docs/DATABASE.md)**: Schema SQLite v11, tabelas, FKs, triggers e política de migração.
+- **[docs/AUTHORIZATION.md](docs/AUTHORIZATION.md)**: Matriz de permissões, autenticação scrypt, CSRF, anti-IDOR e privacidade.
+- **[docs/READER.md](docs/READER.md)**: Leitores PDF.js e EPUB.js, HTTP Range (512 KB), citações e navegação.
+- **[docs/FRONTEND.md](docs/FRONTEND.md)**: Arquitetura Vanilla JS, cache em memória, máscaras de spoiler e responsividade.
+- **[docs/API.md](docs/API.md)**: Contratos da API REST e modelos de requisição/resposta.
+- **[docs/TESTING.md](docs/TESTING.md)**: Organização das suítes Pytest e Playwright E2E.
+- **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**: Implantação via Docker Compose, systemd, backups e atualização em produção.
+- **[docs/DECISIONS/](docs/DECISIONS/)**: Registros de Decisões Arquiteturais (`ADR-001` a `ADR-006`).
+
+---
+
+## 14. Desempenho e Limitações Conhecidas
+
+### 14.1 Medições Reais e Perfil de Consumo
 - **Consumo de Memória RAM (RSS medido via `scripts/diagnose.py`)**: **~54 MB a 65 MB** em processo único Uvicorn/FastAPI.
 - **Latência de Listagem SQLite (WAL)**: **~0.5 ms**.
 - **Consumo de CPU em Repouso**: **0.0%** (zero file watchers contínuos com `inotify`).
 - **Coexistência com o Jellyfin**: Limites cgroup no `systemd` (`MemoryMax=512M`, `CPUWeight=100`), somados ao streaming sob demanda por blocos (HTTP Range), protegem o servidor doméstico contra sobrecargas.
 
-### 13.2 Limitações Conhecidas da Versão 1.3.0
+### 14.2 Limitações Conhecidas
 - **Livros Protegidos por DRM**: O Lectoria é projetado para bibliotecas pessoais e acervos abertos; livros comerciais protegidos por DRM proprietário (Adobe Adept, Apple FairPlay, Readium LCP com chave privada) não são descriptografados e exigem remoção prévia da proteção.
-- **Varredura Sob Demanda**: Para não degradar a CPU nem gastar ciclos com sentinelas contínuos de disco, novos arquivos adicionados às pastas de fontes são indexados sob demanda ao clicar no botão "Escanear" na interface web ou via API.
+- **Varredura Sob Demanda ou Agendada**: Para não degradar a CPU nem gastar ciclos com sentinelas contínuos de arquivos, novos arquivos adicionados às pastas de fontes são indexados sob demanda (botão "Escanear") ou pelo agendador leve de diretórios (`automation_service.py`).
 
 ---
 
-## 14. Licenciamento
+## 15. Licenciamento
 
 - **Lectoria**: Distribuído sob os termos da [Licença MIT](LICENSE) (Copyright © 2026 Emerson Vinicius Santos de Santana).
 - **Componentes de Terceiros**:

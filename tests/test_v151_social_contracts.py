@@ -24,25 +24,36 @@ def _login_user(client: TestClient, username: str, password: str) -> dict:
 
 
 def test_v151_frontend_backend_version_alignment(client):
-    """Confirma que backend, index.html e app.js declaram e servem a versão da aplicação em sincronia."""
-    assert config.APP_VERSION in ("1.5.1", "1.5.2", "1.6.0", "1.6.1", "1.6.2", "1.6.3")
+    """Confirma que backend, index.html, reader.html e app.js declaram e servem a versão da aplicação em sincronia."""
+    allowed_versions = ("1.5.1", "1.5.2", "1.6.0", "1.6.1", "1.6.2", "1.6.3", "1.7.0")
+    assert config.APP_VERSION in allowed_versions
+    assert config.APP_VERSION == "1.7.0"
 
     status_res = client.get("/api/auth/status")
     assert status_res.status_code == 200
-    assert status_res.json().get("version") in ("1.5.1", "1.5.2", "1.6.0", "1.6.1", "1.6.2", "1.6.3")
+    assert status_res.json().get("version") == config.APP_VERSION
 
     index_res = client.get("/")
     assert index_res.status_code == 200
     html = index_res.text
-    assert any(v in html for v in ('data-app-version="1.5.1"', 'data-app-version="1.5.2"', 'data-app-version="1.6.0"', 'data-app-version="1.6.1"', 'data-app-version="1.6.2"', 'data-app-version="1.6.3"'))
-    assert any(v in html for v in ('/static/js/app.js?v=1.5.1', '/static/js/app.js?v=1.5.2', '/static/js/app.js?v=1.6.0', '/static/js/app.js?v=1.6.1', '/static/js/app.js?v=1.6.2', '/static/js/app.js?v=1.6.3'))
-    assert any(v in html for v in ('/static/css/style.css?v=1.5.1', '/static/css/style.css?v=1.5.2', '/static/css/style.css?v=1.6.0', '/static/css/style.css?v=1.6.1', '/static/css/style.css?v=1.6.2', '/static/css/style.css?v=1.6.3'))
+    assert f'data-app-version="{config.APP_VERSION}"' in html
+    assert f'/static/js/app.js?v={config.APP_VERSION}' in html
+    assert f'/static/js/shared_reading.js?v={config.APP_VERSION}' in html
+    assert f'/static/css/style.css?v={config.APP_VERSION}' in html
+
+    reader_html_path = Path(config.BASE_DIR).parent / "static" / "reader.html"
+    if not reader_html_path.exists():
+        reader_html_path = Path(__file__).resolve().parent.parent / "static" / "reader.html"
+    reader_html = reader_html_path.read_text(encoding="utf-8")
+    assert f'data-app-version="{config.APP_VERSION}"' in reader_html
+    assert f'/static/js/reader.js?v={config.APP_VERSION}' in reader_html
+    assert f'/static/css/style.css?v={config.APP_VERSION}' in reader_html
 
     app_js = Path(config.BASE_DIR).parent / "static" / "js" / "app.js"
     if not app_js.exists():
         app_js = Path(__file__).resolve().parent.parent / "static" / "js" / "app.js"
     js_text = app_js.read_text(encoding="utf-8")
-    assert any(v in js_text for v in ('window.LECTORIA_FRONTEND_VERSION = "1.5.1";', 'window.LECTORIA_FRONTEND_VERSION = "1.5.2";', 'window.LECTORIA_FRONTEND_VERSION = "1.6.0";', 'window.LECTORIA_FRONTEND_VERSION = "1.6.1";', 'window.LECTORIA_FRONTEND_VERSION = "1.6.2";', 'window.LECTORIA_FRONTEND_VERSION = "1.6.3";'))
+    assert f'window.LECTORIA_FRONTEND_VERSION = "{config.APP_VERSION}";' in js_text
     assert "function formatApiError(" in js_text
 
 

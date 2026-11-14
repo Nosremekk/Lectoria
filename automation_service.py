@@ -818,6 +818,7 @@ class AutomationSchedulerLoop:
     def start(self) -> None:
         if self._running:
             return
+        _dir_snapshots.clear()
         self._running = True
         try:
             loop = asyncio.get_running_loop()
@@ -827,6 +828,7 @@ class AutomationSchedulerLoop:
 
     def stop(self) -> None:
         self._running = False
+        _dir_snapshots.clear()
         if self._task:
             self._task.cancel()
             self._task = None
