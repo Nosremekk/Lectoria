@@ -5,20 +5,21 @@ Suporta streaming com HTTP Range, downloads, múltiplas fontes e perfis com isol
 """
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 from email.utils import formatdate
 import hashlib
 import json
 from pathlib import Path
 import secrets
 import shutil
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 import config
 from database import SCHEMA_VERSION, get_db, init_db
@@ -86,6 +87,7 @@ from taxonomy_service import (
     create_category,
     delete_category,
     get_book_taxonomy,
+    get_taxonomy_facets,
     get_taxonomy_tree,
     get_uncategorized_books_count,
     list_categories,
@@ -157,6 +159,13 @@ from clubs_service import (
     CollectiveReadNotFoundError,
     InviteNotFoundError,
     InvalidOperationError,
+)
+import shared_reading_service
+from shared_reading_service import (
+    GoalNotFoundError,
+    PostNotFoundError,
+    QuoteNotFoundError,
+    TopicNotFoundError,
 )
 
 
@@ -530,6 +539,216 @@ class CollectiveReadUpdatePayload(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     status: Optional[str] = None
+
+
+def _validate_epub_cfi_value(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    clean = v.strip()
+    if not clean:
+        return None
+    if not (clean.startswith("epubcfi(") and clean.endswith(")")) or "<" in clean or ">" in clean:
+        raise ValueError("Localizador EPUB CFI inválido.")
+    return clean
+
+
+def _validate_iso_date_value(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    clean = v.strip()
+    if not clean:
+        return None
+    try:
+        datetime.strptime(clean, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError("Data inválida. Utilize o formato YYYY-MM-DD.") from exc
+    return clean
+
+
+class SharedTopicCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=10000)
+    chapter_ref: Optional[str] = Field(default=None, max_length=150)
+    page_start: Optional[int] = Field(default=None, ge=1, le=100000)
+    page_end: Optional[int] = Field(default=None, ge=1, le=100000)
+    epub_cfi: Optional[str] = Field(default=None, max_length=500)
+    is_spoiler: bool = False
+
+    @field_validator("title", "content")
+    @classmethod
+    def _strip_required(cls, v: str) -> str:
+        clean = v.strip()
+        if not clean:
+            raise ValueError("O campo não pode ser vazio.")
+        return clean
+
+    @field_validator("epub_cfi")
+    @classmethod
+    def _check_cfi(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_epub_cfi_value(v)
+
+    @model_validator(mode="after")
+    def _check_page_range(self):
+        if self.page_start is not None and self.page_end is not None and self.page_end < self.page_start:
+            raise ValueError("page_end não pode ser menor que page_start.")
+        return self
+
+
+class SharedTopicUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    content: Optional[str] = Field(default=None, min_length=1, max_length=10000)
+    chapter_ref: Optional[str] = Field(default=None, max_length=150)
+    page_start: Optional[int] = Field(default=None, ge=1, le=100000)
+    page_end: Optional[int] = Field(default=None, ge=1, le=100000)
+    epub_cfi: Optional[str] = Field(default=None, max_length=500)
+    is_spoiler: Optional[bool] = None
+
+    @field_validator("title", "content")
+    @classmethod
+    def _strip_optional_non_empty(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        clean = v.strip()
+        if not clean:
+            raise ValueError("O campo não pode ser vazio.")
+        return clean
+
+    @field_validator("epub_cfi")
+    @classmethod
+    def _check_cfi(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_epub_cfi_value(v)
+
+    @model_validator(mode="after")
+    def _check_page_range(self):
+        if self.page_start is not None and self.page_end is not None and self.page_end < self.page_start:
+            raise ValueError("page_end não pode ser menor que page_start.")
+        return self
+
+
+class SharedTopicModeratePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    is_pinned: Optional[bool] = None
+    is_locked: Optional[bool] = None
+
+
+class SharedPostCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(min_length=1, max_length=5000)
+    parent_post_id: Optional[str] = Field(default=None, max_length=64)
+    is_spoiler: bool = False
+
+    @field_validator("content")
+    @classmethod
+    def _strip_required(cls, v: str) -> str:
+        clean = v.strip()
+        if not clean:
+            raise ValueError("O conteúdo da resposta não pode ser vazio.")
+        return clean
+
+
+class SharedPostUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content: Optional[str] = Field(default=None, min_length=1, max_length=5000)
+    is_spoiler: Optional[bool] = None
+
+    @field_validator("content")
+    @classmethod
+    def _strip_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        clean = v.strip()
+        if not clean:
+            raise ValueError("O conteúdo da resposta não pode ser vazio.")
+        return clean
+
+
+class SharedGoalCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=150)
+    description: str = Field(default="", max_length=2000)
+    target_date: Optional[str] = Field(default=None, max_length=32)
+    chapter_ref: Optional[str] = Field(default=None, max_length=150)
+    target_page: Optional[int] = Field(default=None, ge=1, le=100000)
+    display_order: Optional[int] = Field(default=None, ge=0, le=10000)
+
+    @field_validator("title")
+    @classmethod
+    def _strip_title(cls, v: str) -> str:
+        clean = v.strip()
+        if not clean:
+            raise ValueError("O título da meta não pode ser vazio.")
+        return clean
+
+    @field_validator("target_date")
+    @classmethod
+    def _check_date(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_iso_date_value(v)
+
+
+class SharedGoalUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    target_date: Optional[str] = Field(default=None, max_length=32)
+    chapter_ref: Optional[str] = Field(default=None, max_length=150)
+    target_page: Optional[int] = Field(default=None, ge=1, le=100000)
+    display_order: Optional[int] = Field(default=None, ge=0, le=10000)
+    is_archived: Optional[bool] = None
+
+    @field_validator("title")
+    @classmethod
+    def _strip_title(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        clean = v.strip()
+        if not clean:
+            raise ValueError("O título da meta não pode ser vazio.")
+        return clean
+
+    @field_validator("target_date")
+    @classmethod
+    def _check_date(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_iso_date_value(v)
+
+
+class SharedGoalProgressPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["pending", "in_progress", "completed"]
+
+
+class SharedQuoteCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quote_text: Optional[str] = Field(default=None, max_length=1500)
+    comment_text: Optional[str] = Field(default=None, max_length=2000)
+    chapter_name: Optional[str] = Field(default=None, max_length=150)
+    page_number: Optional[int] = Field(default=None, ge=1, le=100000)
+    epub_cfi: Optional[str] = Field(default=None, max_length=500)
+    is_spoiler: bool = False
+    note_id: Optional[str] = Field(default=None, max_length=64)
+
+    @field_validator("epub_cfi")
+    @classmethod
+    def _check_cfi(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_epub_cfi_value(v)
+
+    @model_validator(mode="after")
+    def _check_quote_or_note(self):
+        has_note = bool(self.note_id and self.note_id.strip())
+        has_quote = bool(self.quote_text and self.quote_text.strip())
+        if not has_note and not has_quote:
+            raise ValueError("Informe quote_text ou note_id para compartilhar uma citação.")
+        return self
 
 
 # =========================================================================
@@ -969,10 +1188,17 @@ async def discovery_shelves_endpoint(request: Request):
 
 @app.get("/api/taxonomy/tree")
 async def taxonomy_tree_endpoint(request: Request):
-    """Retorna a árvore taxonômica estruturada de categorias presentes no acervo."""
+    """Retorna a árvore taxonômica estruturada de categorias e facetas presentes no acervo."""
     require_user(request)
     tree = get_taxonomy_tree()
-    return {"tree": tree}
+    facets = get_taxonomy_facets()
+    return {
+        "tree": tree,
+        "uncategorized_count": facets["uncategorized_count"],
+        "subcategories": facets["subcategories"],
+        "genres": facets["genres"],
+        "origins": facets["origins"],
+    }
 
 
 @app.get("/api/categories")
@@ -3243,6 +3469,431 @@ async def leave_collective_read_endpoint(read_id: str, request: Request):
     except CollectiveReadNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
+
+# =========================================================================
+# ENDPOINTS REST: LEITURA COMPARTILHADA (v1.7.0)
+# =========================================================================
+
+def _handle_shared_reading_error(exc: Exception) -> HTTPException:
+    """Padroniza o mapeamento das exceções de Leitura Compartilhada para HTTP."""
+    if isinstance(
+        exc,
+        (
+            CollectiveReadNotFoundError,
+            TopicNotFoundError,
+            PostNotFoundError,
+            GoalNotFoundError,
+            QuoteNotFoundError,
+        ),
+    ):
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    if isinstance(exc, ClubPermissionError):
+        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    if isinstance(exc, InvalidOperationError):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Erro interno ao processar operação de leitura compartilhada.",
+    )
+
+
+@app.get("/api/collective-reads/{read_id}/overview")
+async def get_shared_reading_overview_endpoint(read_id: str, request: Request):
+    """Retorna visão geral da leitura coletiva (contadores, discussões recentes sem spoiler e metas)."""
+    user = require_user(request)
+    try:
+        return shared_reading_service.get_shared_reading_overview(read_id=read_id, user_id=user["id"])
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.get("/api/collective-reads/{read_id}/topics")
+async def list_shared_topics_endpoint(
+    read_id: str,
+    request: Request,
+    page: int = Query(default=1, ge=1, le=10000),
+    limit: int = Query(default=20, ge=1, le=50),
+    filter: Literal["all", "pinned", "spoilers"] = Query(default="all"),
+):
+    """Lista tópicos paginados da leitura coletiva com mascaramento de spoilers."""
+    user = require_user(request)
+    try:
+        return shared_reading_service.list_topics(
+            read_id=read_id,
+            user_id=user["id"],
+            page=page,
+            limit=limit,
+            filter_mode=filter,
+        )
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.post("/api/collective-reads/{read_id}/topics", status_code=status.HTTP_201_CREATED)
+async def create_shared_topic_endpoint(
+    read_id: str,
+    payload: SharedTopicCreatePayload,
+    request: Request,
+):
+    """Cria um novo tópico de discussão na leitura coletiva."""
+    user = require_user(request)
+    try:
+        topic = shared_reading_service.create_topic(
+            read_id=read_id,
+            user_id=user["id"],
+            title=payload.title,
+            content=payload.content,
+            chapter_ref=payload.chapter_ref,
+            page_start=payload.page_start,
+            page_end=payload.page_end,
+            epub_cfi=payload.epub_cfi,
+            is_spoiler=payload.is_spoiler,
+        )
+        return {"status": "success", "topic": topic}
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.get("/api/collective-reads/{read_id}/topics/{topic_id}")
+async def get_shared_topic_detail_endpoint(
+    read_id: str,
+    topic_id: str,
+    request: Request,
+    page: int = Query(default=1, ge=1, le=10000),
+    limit: int = Query(default=50, ge=1, le=100),
+):
+    """Retorna os detalhes do tópico (revelação intencional) e suas respostas paginadas."""
+    user = require_user(request)
+    try:
+        return shared_reading_service.get_topic_detail(
+            read_id=read_id,
+            topic_id=topic_id,
+            user_id=user["id"],
+            page=page,
+            limit=limit,
+        )
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.put("/api/collective-reads/{read_id}/topics/{topic_id}")
+async def edit_shared_topic_endpoint(
+    read_id: str,
+    topic_id: str,
+    payload: SharedTopicUpdatePayload,
+    request: Request,
+):
+    """Edita conteúdo/metadados de um tópico existente (somente autor)."""
+    user = require_user(request)
+    try:
+        topic = shared_reading_service.edit_topic(
+            read_id=read_id,
+            topic_id=topic_id,
+            user_id=user["id"],
+            title=payload.title,
+            content=payload.content,
+            chapter_ref=payload.chapter_ref,
+            page_start=payload.page_start,
+            page_end=payload.page_end,
+            epub_cfi=payload.epub_cfi,
+            is_spoiler=payload.is_spoiler,
+        )
+        return {"status": "success", "topic": topic}
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.patch("/api/collective-reads/{read_id}/topics/{topic_id}/moderate")
+async def moderate_shared_topic_endpoint(
+    read_id: str,
+    topic_id: str,
+    payload: SharedTopicModeratePayload,
+    request: Request,
+):
+    """Fixa ou tranca um tópico (exclusivo para owner/moderator)."""
+    user = require_user(request)
+    try:
+        topic = shared_reading_service.moderate_topic(
+            read_id=read_id,
+            topic_id=topic_id,
+            user_id=user["id"],
+            is_pinned=payload.is_pinned,
+            is_locked=payload.is_locked,
+        )
+        return {"status": "success", "topic": topic}
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.delete("/api/collective-reads/{read_id}/topics/{topic_id}")
+async def delete_shared_topic_endpoint(
+    read_id: str,
+    topic_id: str,
+    request: Request,
+):
+    """Exclusão lógica de tópico (owner/moderator ou autor), preservando respostas."""
+    user = require_user(request)
+    try:
+        topic = shared_reading_service.moderate_topic(
+            read_id=read_id,
+            topic_id=topic_id,
+            user_id=user["id"],
+            is_deleted=True,
+        )
+        return {"status": "success", "topic": topic}
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.post("/api/collective-reads/{read_id}/topics/{topic_id}/posts", status_code=status.HTTP_201_CREATED)
+async def create_shared_post_endpoint(
+    read_id: str,
+    topic_id: str,
+    payload: SharedPostCreatePayload,
+    request: Request,
+):
+    """Cria uma resposta em um tópico de discussão (profundidade máxima 1)."""
+    user = require_user(request)
+    try:
+        post = shared_reading_service.create_post(
+            read_id=read_id,
+            topic_id=topic_id,
+            user_id=user["id"],
+            content=payload.content,
+            parent_post_id=payload.parent_post_id,
+            is_spoiler=payload.is_spoiler,
+        )
+        return {"status": "success", "post": post}
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.put("/api/collective-reads/{read_id}/topics/{topic_id}/posts/{post_id}")
+async def edit_shared_post_endpoint(
+    read_id: str,
+    topic_id: str,
+    post_id: str,
+    payload: SharedPostUpdatePayload,
+    request: Request,
+):
+    """Edita uma resposta própria em um tópico."""
+    user = require_user(request)
+    try:
+        post = shared_reading_service.edit_post(
+            read_id=read_id,
+            topic_id=topic_id,
+            post_id=post_id,
+            user_id=user["id"],
+            content=payload.content,
+            is_spoiler=payload.is_spoiler,
+        )
+        return {"status": "success", "post": post}
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.delete("/api/collective-reads/{read_id}/topics/{topic_id}/posts/{post_id}")
+async def delete_shared_post_endpoint(
+    read_id: str,
+    topic_id: str,
+    post_id: str,
+    request: Request,
+):
+    """Exclusão lógica de resposta (autor ou owner/moderator)."""
+    user = require_user(request)
+    try:
+        res = shared_reading_service.delete_post(
+            read_id=read_id,
+            topic_id=topic_id,
+            post_id=post_id,
+            user_id=user["id"],
+        )
+        return {"status": "success", "result": res}
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.get("/api/collective-reads/{read_id}/goals")
+async def list_shared_goals_endpoint(
+    read_id: str,
+    request: Request,
+    include_archived: bool = False,
+):
+    """Lista metas coletivas da leitura e o progresso voluntário agregado."""
+    user = require_user(request)
+    try:
+        return shared_reading_service.list_goals(
+            read_id=read_id,
+            user_id=user["id"],
+            include_archived=include_archived,
+        )
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.post("/api/collective-reads/{read_id}/goals", status_code=status.HTTP_201_CREATED)
+async def create_shared_goal_endpoint(
+    read_id: str,
+    payload: SharedGoalCreatePayload,
+    request: Request,
+):
+    """Cria uma meta coletiva (exclusivo para owner/moderator)."""
+    user = require_user(request)
+    try:
+        goal = shared_reading_service.create_goal(
+            read_id=read_id,
+            user_id=user["id"],
+            title=payload.title,
+            description=payload.description,
+            target_date=payload.target_date,
+            chapter_ref=payload.chapter_ref,
+            target_page=payload.target_page,
+            display_order=payload.display_order,
+        )
+        return {"status": "success", "goal": goal}
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.put("/api/collective-reads/{read_id}/goals/{goal_id}")
+async def update_shared_goal_endpoint(
+    read_id: str,
+    goal_id: str,
+    payload: SharedGoalUpdatePayload,
+    request: Request,
+):
+    """Atualiza, reordena ou arquiva uma meta coletiva (exclusivo para owner/moderator)."""
+    user = require_user(request)
+    try:
+        goal = shared_reading_service.update_goal(
+            read_id=read_id,
+            goal_id=goal_id,
+            user_id=user["id"],
+            title=payload.title,
+            description=payload.description,
+            target_date=payload.target_date,
+            chapter_ref=payload.chapter_ref,
+            target_page=payload.target_page,
+            display_order=payload.display_order,
+            is_archived=payload.is_archived,
+        )
+        return {"status": "success", "goal": goal}
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.delete("/api/collective-reads/{read_id}/goals/{goal_id}")
+async def delete_shared_goal_endpoint(
+    read_id: str,
+    goal_id: str,
+    request: Request,
+):
+    """Arquiva uma meta coletiva preservando seu histórico (exclusivo para owner/moderator)."""
+    user = require_user(request)
+    try:
+        goal = shared_reading_service.update_goal(
+            read_id=read_id,
+            goal_id=goal_id,
+            user_id=user["id"],
+            is_archived=True,
+        )
+        return {"status": "success", "goal": goal}
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.put("/api/collective-reads/{read_id}/goals/{goal_id}/progress")
+async def update_shared_goal_progress_endpoint(
+    read_id: str,
+    goal_id: str,
+    payload: SharedGoalProgressPayload,
+    request: Request,
+):
+    """Atualiza voluntariamente o progresso individual do usuário em uma meta."""
+    user = require_user(request)
+    try:
+        progress = shared_reading_service.update_voluntary_goal_progress(
+            read_id=read_id,
+            goal_id=goal_id,
+            user_id=user["id"],
+            status=payload.status,
+        )
+        return {"status": "success", "progress": progress}
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.get("/api/collective-reads/{read_id}/quotes")
+async def list_shared_quotes_endpoint(
+    read_id: str,
+    request: Request,
+    page: int = Query(default=1, ge=1, le=10000),
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    """Lista citações compartilhadas da leitura coletiva com paginação."""
+    user = require_user(request)
+    try:
+        return shared_reading_service.list_quotes(
+            read_id=read_id,
+            user_id=user["id"],
+            page=page,
+            limit=limit,
+        )
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.post("/api/collective-reads/{read_id}/quotes", status_code=status.HTTP_201_CREATED)
+async def share_quote_endpoint(
+    read_id: str,
+    payload: SharedQuoteCreatePayload,
+    request: Request,
+):
+    """Compartilha voluntariamente uma citação manual ou oriunda de nota privada própria."""
+    user = require_user(request)
+    try:
+        quote = shared_reading_service.share_quote(
+            read_id=read_id,
+            user_id=user["id"],
+            quote_text=payload.quote_text,
+            comment_text=payload.comment_text,
+            chapter_name=payload.chapter_name,
+            page_number=payload.page_number,
+            epub_cfi=payload.epub_cfi,
+            is_spoiler=payload.is_spoiler,
+            note_id=payload.note_id,
+        )
+        return {"status": "success", "quote": quote}
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+@app.delete("/api/collective-reads/{read_id}/quotes/{quote_id}")
+async def delete_shared_quote_endpoint(
+    read_id: str,
+    quote_id: str,
+    request: Request,
+):
+    """Exclusão lógica de citação compartilhada (autor ou owner/moderator)."""
+    user = require_user(request)
+    try:
+        res = shared_reading_service.delete_quote(
+            read_id=read_id,
+            quote_id=quote_id,
+            user_id=user["id"],
+        )
+        return {"status": "success", "result": res}
+    except ClubError as exc:
+        raise _handle_shared_reading_error(exc)
+
+
+
+@app.get("/api/books/{book_id}/collective-reads")
+async def list_publishable_book_collective_reads_endpoint(book_id: str, request: Request):
+    """Lista leituras coletivas elegíveis para publicação de citações pelo usuário nesta obra."""
+    user = require_user(request)
+    reads = clubs_service.get_publishable_collective_reads_for_book(book_id=book_id, user_id=user["id"])
+    return {"reads": reads, "count": len(reads)}
 
 
 if __name__ == "__main__":

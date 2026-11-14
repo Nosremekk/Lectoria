@@ -208,6 +208,207 @@ document.addEventListener("DOMContentLoaded", async () => {
   let currentSelectionData = null; // { page, text, rects, context }
   let editingNoteId = null;
   let editingNoteHighlightId = null;
+  let eligibleCollectiveReads = [];
+  let currentBookTitle = "";
+  let shareQuoteContext = null;
+  let isSubmittingShareQuote = false;
+  let readerToastTimer = null;
+
+  const MAX_SHARED_QUOTE_LEN = 1500;
+  const btnShareSelectionClub = document.getElementById("btn-share-selection-club");
+  const modalShareQuote = document.getElementById("modal-share-collective-quote");
+  const formShareQuote = document.getElementById("form-share-collective-quote");
+  const shareQuoteBookLabel = document.getElementById("share-quote-book-label");
+  const shareQuoteLocatorLabel = document.getElementById("share-quote-locator-label");
+  const shareQuoteReadSelect = document.getElementById("share-quote-read-select");
+  const shareQuoteText = document.getElementById("share-quote-text");
+  const shareQuoteCharCounter = document.getElementById("share-quote-char-counter");
+  const shareQuoteComment = document.getElementById("share-quote-comment");
+  const shareQuoteSpoiler = document.getElementById("share-quote-spoiler");
+  const shareQuoteError = document.getElementById("share-quote-error");
+  const btnCloseShareQuote = document.getElementById("btn-close-share-quote");
+  const btnCancelShareQuote = document.getElementById("btn-cancel-share-quote");
+  const btnSubmitShareQuote = document.getElementById("btn-submit-share-quote");
+  const readerToastEl = document.getElementById("reader-toast");
+
+  function showReaderToast(message, type = "info") {
+    if (!readerToastEl || !message) return;
+    readerToastEl.textContent = message;
+    readerToastEl.className = `reader-toast ${type}`;
+    readerToastEl.style.display = "block";
+    if (readerToastTimer) clearTimeout(readerToastTimer);
+    readerToastTimer = setTimeout(() => {
+      readerToastEl.style.display = "none";
+    }, 4500);
+  }
+
+  function parseHashLocator() {
+    const raw = (window.location.hash || "").replace(/^#/, "").trim();
+    if (!raw) return { page: null, cfi: null, invalid: false };
+    const params = new URLSearchParams(raw);
+    if (params.has("page")) {
+      const pVal = params.get("page");
+      if (/^\d+$/.test(pVal) && parseInt(pVal, 10) >= 1) {
+        return { page: parseInt(pVal, 10), cfi: null, invalid: false };
+      }
+      return { page: null, cfi: null, invalid: true };
+    }
+    if (params.has("cfi")) {
+      const cVal = (params.get("cfi") || "").trim();
+      if (cVal.startsWith("epubcfi(") && cVal.endsWith(")") && !cVal.includes("<") && !cVal.includes(">")) {
+        return { page: null, cfi: cVal, invalid: false };
+      }
+      return { page: null, cfi: null, invalid: true };
+    }
+    return { page: null, cfi: null, invalid: false };
+  }
+
+  const hashLocator = parseHashLocator();
+
+  async function loadEligibleCollectiveReads() {
+    try {
+      const res = await fetch(`/api/books/${encodeURIComponent(bookId)}/collective-reads`);
+      if (!res.ok) return;
+      const data = await res.json();
+      eligibleCollectiveReads = Array.isArray(data.reads) ? data.reads : [];
+      if (bookAnnotations && (bookAnnotations.notes || []).length > 0) {
+        renderStudyDrawer();
+      }
+    } catch (_) {
+      eligibleCollectiveReads = [];
+    }
+  }
+
+  function updateShareQuoteCounter() {
+    if (!shareQuoteText || !shareQuoteCharCounter) return;
+    const len = shareQuoteText.value.length;
+    shareQuoteCharCounter.textContent = `${len} / ${MAX_SHARED_QUOTE_LEN}`;
+    shareQuoteCharCounter.style.color = len > MAX_SHARED_QUOTE_LEN ? "var(--danger)" : "var(--text-muted)";
+  }
+
+  function closeShareQuoteModal() {
+    if (!modalShareQuote) return;
+    modalShareQuote.classList.remove("active");
+    shareQuoteContext = null;
+    isSubmittingShareQuote = false;
+    if (shareQuoteText) shareQuoteText.value = "";
+    if (shareQuoteComment) shareQuoteComment.value = "";
+    if (shareQuoteSpoiler) shareQuoteSpoiler.checked = false;
+    if (shareQuoteError) {
+      shareQuoteError.style.display = "none";
+      shareQuoteError.textContent = "";
+    }
+    if (btnSubmitShareQuote) btnSubmitShareQuote.disabled = false;
+  }
+
+  function openShareQuoteModal({ quoteText = "", commentText = "", pageNumber = null, epubCfi = null, noteId = null, originalNoteQuote = null }) {
+    if (!modalShareQuote || eligibleCollectiveReads.length === 0) return;
+    shareQuoteContext = { pageNumber, epubCfi, noteId, originalNoteQuote };
+    if (shareQuoteBookLabel) shareQuoteBookLabel.textContent = currentBookTitle || "Obra atual";
+    if (shareQuoteLocatorLabel) {
+      shareQuoteLocatorLabel.textContent = pageNumber ? `· Página ${pageNumber}` : epubCfi ? "· Posição EPUB" : "";
+    }
+    if (shareQuoteReadSelect) {
+      shareQuoteReadSelect.replaceChildren();
+      eligibleCollectiveReads.forEach((r) => {
+        const opt = document.createElement("option");
+        opt.value = r.read_id;
+        opt.textContent = `${r.club_name} — ${r.title}`;
+        shareQuoteReadSelect.appendChild(opt);
+      });
+    }
+    if (shareQuoteText) shareQuoteText.value = quoteText || "";
+    if (shareQuoteComment) shareQuoteComment.value = commentText || "";
+    if (shareQuoteSpoiler) shareQuoteSpoiler.checked = false;
+    if (shareQuoteError) {
+      shareQuoteError.style.display = "none";
+      shareQuoteError.textContent = "";
+    }
+    updateShareQuoteCounter();
+    modalShareQuote.classList.add("active");
+    setTimeout(() => shareQuoteText && shareQuoteText.focus(), 60);
+  }
+
+  if (shareQuoteText) shareQuoteText.addEventListener("input", updateShareQuoteCounter);
+  if (btnCloseShareQuote) btnCloseShareQuote.addEventListener("click", closeShareQuoteModal);
+  if (btnCancelShareQuote) btnCancelShareQuote.addEventListener("click", closeShareQuoteModal);
+  if (btnShareSelectionClub) {
+    btnShareSelectionClub.addEventListener("click", () => {
+      if (!currentSelectionData) return;
+      const sel = { ...currentSelectionData };
+      hideSelectionToolbar();
+      window.getSelection()?.removeAllRanges();
+      openShareQuoteModal({
+        quoteText: sel.text || "",
+        pageNumber: sel.page || null,
+        epubCfi: sel.epubCfi || null,
+      });
+    });
+  }
+
+  if (formShareQuote) {
+    formShareQuote.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (isSubmittingShareQuote || !shareQuoteContext) return;
+      if (shareQuoteError) shareQuoteError.style.display = "none";
+
+      const readId = shareQuoteReadSelect ? shareQuoteReadSelect.value : "";
+      const textVal = (shareQuoteText ? shareQuoteText.value : "").trim();
+      const commentVal = (shareQuoteComment ? shareQuoteComment.value : "").trim();
+
+      if (!readId) {
+        shareQuoteError.textContent = "Selecione uma leitura coletiva de destino.";
+        shareQuoteError.style.display = "block";
+        return;
+      }
+      if (!textVal) {
+        shareQuoteError.textContent = "O trecho não pode ser vazio.";
+        shareQuoteError.style.display = "block";
+        return;
+      }
+      if (textVal.length > MAX_SHARED_QUOTE_LEN) {
+        shareQuoteError.textContent = `O trecho excede o limite de ${MAX_SHARED_QUOTE_LEN} caracteres (${textVal.length}). Reduza o texto antes de compartilhar.`;
+        shareQuoteError.style.display = "block";
+        return;
+      }
+
+      const payload = {
+        comment_text: commentVal || null,
+        is_spoiler: Boolean(shareQuoteSpoiler && shareQuoteSpoiler.checked),
+      };
+      if (shareQuoteContext.noteId && textVal === (shareQuoteContext.originalNoteQuote || "").trim()) {
+        payload.note_id = shareQuoteContext.noteId;
+      } else {
+        payload.quote_text = textVal;
+        if (shareQuoteContext.pageNumber) payload.page_number = shareQuoteContext.pageNumber;
+        if (shareQuoteContext.epubCfi) payload.epub_cfi = shareQuoteContext.epubCfi;
+      }
+
+      isSubmittingShareQuote = true;
+      if (btnSubmitShareQuote) btnSubmitShareQuote.disabled = true;
+
+      try {
+        const res = await fetch(`/api/collective-reads/${encodeURIComponent(readId)}/quotes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          throw new Error((data && data.detail) || `Erro HTTP ${res.status}`);
+        }
+        closeShareQuoteModal();
+        showReaderToast("Citação compartilhada na leitura coletiva!", "success");
+      } catch (err) {
+        if (shareQuoteError) {
+          shareQuoteError.textContent = err.message || "Erro ao compartilhar citação.";
+          shareQuoteError.style.display = "block";
+        }
+        isSubmittingShareQuote = false;
+        if (btnSubmitShareQuote) btnSubmitShareQuote.disabled = false;
+      }
+    });
+  }
 
   // Estado do Desenho Livre
   let isDrawing = false;
@@ -765,14 +966,21 @@ document.addEventListener("DOMContentLoaded", async () => {
     };
 
     // Posiciona toolbar flutuante logo acima da seleção
+    if (btnShareSelectionClub) {
+      btnShareSelectionClub.style.display = eligibleCollectiveReads.length > 0 ? "inline-flex" : "none";
+    }
     const firstRect = clientRects[0];
-    selectionToolbar.style.left = `${Math.max(10, firstRect.left + firstRect.width / 2 - 100)}px`;
+    const tbWidth = Math.min(selectionToolbar.offsetWidth || 260, window.innerWidth - 20);
+    const maxLeft = Math.max(10, window.innerWidth - tbWidth - 10);
+    const desiredLeft = firstRect.left + firstRect.width / 2 - tbWidth / 2;
+    selectionToolbar.style.left = `${Math.min(maxLeft, Math.max(10, desiredLeft))}px`;
     selectionToolbar.style.top = `${Math.max(60, firstRect.top - 44)}px`;
     selectionToolbar.classList.add("active");
   }
 
   function hideSelectionToolbar() {
     selectionToolbar.classList.remove("active");
+    if (btnShareSelectionClub) btnShareSelectionClub.style.display = "none";
     currentSelectionData = null;
   }
 
@@ -1090,6 +1298,7 @@ document.addEventListener("DOMContentLoaded", async () => {
               ${n.highlight_text ? `<div class="annotation-quote">"${escapeHtml(n.highlight_text)}"</div>` : ""}
               <div class="annotation-note-text">${escapeHtml(n.content)}</div>
               <div class="annotation-item-actions">
+                ${eligibleCollectiveReads.length > 0 ? `<button class="btn-item-action btn-share-note-club" data-note-id="${escapeHtml(n.id)}">Compartilhar</button>` : ""}
                 <button class="btn-item-action btn-edit-note" data-note-id="${n.id}" data-page="${n.page}" data-content="${escapeHtml(n.content)}">Editar</button>
                 <button class="btn-item-action danger btn-del-note" data-note-id="${n.id}">Excluir</button>
               </div>
@@ -1145,6 +1354,24 @@ document.addEventListener("DOMContentLoaded", async () => {
           page: parseInt(btn.getAttribute("data-page"), 10),
           highlightId: btn.getAttribute("data-h-id"),
           quote: btn.getAttribute("data-quote"),
+        });
+      });
+    });
+
+    drawerItemsList.querySelectorAll(".btn-share-note-club").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const nid = btn.getAttribute("data-note-id");
+        const noteObj = (bookAnnotations.notes || []).find(item => String(item.id) === String(nid));
+        if (!noteObj) return;
+        const baseQuote = noteObj.highlight_text || noteObj.content || "";
+        const baseComment = noteObj.highlight_text ? (noteObj.content || "") : "";
+        openShareQuoteModal({
+          quoteText: baseQuote,
+          commentText: baseComment,
+          pageNumber: noteObj.page || null,
+          noteId: noteObj.id,
+          originalNoteQuote: baseQuote,
         });
       });
     });
@@ -2800,9 +3027,43 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     });
 
-    // Restaura progresso salvo (CFI) ou inicia do começo
+    epubRendition.on("selected", (cfiRange, contents) => {
+      if (eligibleCollectiveReads.length === 0) return;
+      try {
+        const sel = contents && contents.window ? contents.window.getSelection() : null;
+        const text = sel ? sel.toString().trim() : "";
+        if (!text) return;
+        currentSelectionData = { page: null, epubCfi: cfiRange, text };
+        if (selectionToolbar) {
+          selectionToolbar.querySelectorAll(".highlight-color-btn, #btn-add-note-from-selection").forEach(b => {
+            b.style.display = "none";
+          });
+          if (btnShareSelectionClub) btnShareSelectionClub.style.display = "inline-flex";
+          const epubBox = document.getElementById("epub-viewer");
+          const boxRect = epubBox ? epubBox.getBoundingClientRect() : { left: 20, top: 80, width: window.innerWidth };
+          const tbWidth = Math.min(selectionToolbar.offsetWidth || 240, window.innerWidth - 20);
+          const maxLeft = Math.max(10, window.innerWidth - tbWidth - 10);
+          selectionToolbar.style.left = `${Math.min(maxLeft, Math.max(10, boxRect.left + boxRect.width / 2 - tbWidth / 2))}px`;
+          selectionToolbar.style.top = `${Math.max(64, boxRect.top + 12)}px`;
+          selectionToolbar.classList.add("active");
+        }
+      } catch (_) {}
+    });
+
+    // Restaura posição via hash #cfi=... (citação compartilhada) ou progresso salvo (CFI)
     const savedLocator = progData && progData.progress_locator;
-    if (savedLocator) {
+    if (hashLocator.invalid) {
+      showReaderToast("Localizador inválido na URL; exibindo posição padrão.", "error");
+    }
+    if (hashLocator.cfi) {
+      try {
+        await epubRendition.display(hashLocator.cfi);
+      } catch (_) {
+        showReaderToast("Localizador EPUB inválido ou obsoleto; exibindo posição padrão.", "error");
+        if (savedLocator) await epubRendition.display(savedLocator).catch(() => epubRendition.display());
+        else await epubRendition.display();
+      }
+    } else if (savedLocator) {
       await epubRendition.display(savedLocator);
     } else {
       await epubRendition.display();
@@ -2829,8 +3090,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     if (!bookRes.ok) throw new Error("Livro não encontrado.");
     const bookData = await bookRes.json();
+    currentBookTitle = bookData.title || "";
     bookTitleEl.textContent = bookData.title;
     document.title = `${bookData.title} — Lectoria`;
+    loadEligibleCollectiveReads();
 
     bookFormat = (bookData.format || (bookData.filename && bookData.filename.toLowerCase().endsWith(".epub") ? "epub" : "pdf")).toLowerCase();
 
@@ -2924,6 +3187,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // Carregamento progressivo de anotações: não bloqueia a pintura da 1ª página
     const annotationsPromise = reloadBookAnnotations();
+
+    if (hashLocator.invalid) {
+      showReaderToast("Localizador inválido na URL; exibindo posição padrão.", "error");
+    } else if (hashLocator.page !== null) {
+      if (hashLocator.page >= 1 && hashLocator.page <= totalPages) {
+        initialPage = hashLocator.page;
+      } else {
+        showReaderToast(`Página ${hashLocator.page} fora dos limites (1–${totalPages}); exibindo posição padrão.`, "error");
+      }
+    }
 
     currentPage = Math.min(initialPage, totalPages);
     updateReadingProgressBar();

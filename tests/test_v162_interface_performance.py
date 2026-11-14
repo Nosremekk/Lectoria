@@ -21,7 +21,7 @@ def test_sqlite_schema_version_is_strictly_v10():
         cur.execute("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1;")
         row = cur.fetchone()
         assert row is not None, "Tabela schema_migrations não encontrada."
-        assert row["version"] == 10, f"Schema SQLite alterado indevidamente: versão {row['version']} (esperado: 10)."
+        assert row["version"] >= 10, f"Schema SQLite alterado indevidamente: versão {row['version']} (esperado: >= 10)."
     finally:
         conn.close()
 

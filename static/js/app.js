@@ -1,8 +1,8 @@
 /**
- * Lectoria — Aplicação da Biblioteca (v1.5.2)
+ * Lectoria — Aplicação da Biblioteca (v1.7.0)
  * JavaScript puro (Vanilla ES6), rápido e sem dependências pesadas.
  */
-window.LECTORIA_FRONTEND_VERSION = "1.6.3";
+window.LECTORIA_FRONTEND_VERSION = "1.7.0";
 
 function formatApiError(err, fallbackMsg = "Ocorreu um erro ao processar a solicitação.") {
   if (!err) return fallbackMsg;
@@ -264,7 +264,17 @@ document.addEventListener("DOMContentLoaded", () => {
   function clearUserSessionCache() {
     invalidateLibraryCache();
     libraryCache.userId = null;
+    if (window.LectoriaSharedReading) {
+      window.LectoriaSharedReading.reset();
+    }
   }
+
+  window.LectoriaGetCurrentUser = () => currentUser;
+  window.LectoriaReturnToClub = (clubId) => {
+    setMainTab("clubs");
+    if (clubId) openClubDetail(clubId);
+    else loadClubs();
+  };
 
   // --- Gerenciamento de Tema (Claro / Escuro) ---
   function applyTheme(theme) {
@@ -482,6 +492,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const selectedOrigin = originSelect ? originSelect.value : "";
     const selectedIdStatus = idStatusSelect ? idStatusSelect.value : "";
 
+    const selectedCategoryNorm = selectedCategory ? selectedCategory.trim().toLowerCase() : "";
+    const selectedSubcatNorm = selectedSubcategory ? selectedSubcategory.trim().toLowerCase() : "";
+    const selectedGenreNorm = selectedGenre ? selectedGenre.trim().toLowerCase() : "";
+    const selectedOriginNorm = selectedOrigin ? selectedOrigin.trim().toLowerCase() : "";
+
     return books.filter(book => {
       // 1. Busca por texto (título, autor, descrição)
       if (query) {
@@ -523,28 +538,55 @@ document.addEventListener("DOMContentLoaded", () => {
         if (bookFmt !== currentFormat.toLowerCase()) return false;
       }
 
+      // Extração normalizada de metadados taxonômicos a partir de book.taxonomy (com fallback de topo)
+      const tax = book.taxonomy || {};
+      const bookCategories = (Array.isArray(tax.categories) ? tax.categories : (Array.isArray(book.categories) ? book.categories : []))
+        .map(c => String(c || "").trim())
+        .filter(Boolean);
+      const bookSubcategories = (Array.isArray(tax.subcategories) ? tax.subcategories : (Array.isArray(book.taxonomy_subcategories) ? book.taxonomy_subcategories : []))
+        .map(s => String(s || "").trim())
+        .filter(Boolean);
+      const rawGenres = Array.isArray(tax.genres) && tax.genres.length > 0
+        ? tax.genres
+        : (tax.genre ? [tax.genre] : (Array.isArray(book.taxonomy_genres) ? book.taxonomy_genres : []));
+      const bookGenres = rawGenres.map(g => String(g || "").trim()).filter(Boolean);
+      const rawOrigins = Array.isArray(tax.origins) && tax.origins.length > 0
+        ? tax.origins
+        : (tax.origin ? [tax.origin] : (book.taxonomy_origin ? [book.taxonomy_origin] : []));
+      const bookOrigins = rawOrigins.map(o => String(o || "").trim()).filter(Boolean);
+
       // 5. Categoria
       if (selectedCategory) {
         if (selectedCategory === "__uncategorized__") {
-          if (book.categories && book.categories.length > 0) return false;
+          if (bookCategories.length > 0) return false;
         } else {
-          if (!book.categories || !book.categories.includes(selectedCategory)) return false;
+          const hasCategory = bookCategories.some(c => c.toLowerCase() === selectedCategoryNorm);
+          if (!hasCategory) return false;
         }
       }
 
       // 6. Taxonomia: Subcategoria
-      if (selectedSubcategory) {
-        if (!book.taxonomy_subcategories || !book.taxonomy_subcategories.includes(selectedSubcategory)) return false;
+      if (selectedSubcatNorm) {
+        const subShort = selectedSubcatNorm.includes(":")
+          ? selectedSubcatNorm.split(":").slice(1).join(":").trim()
+          : selectedSubcatNorm;
+        const hasSubcategory = bookSubcategories.some(s => {
+          const sNorm = s.toLowerCase();
+          return sNorm === selectedSubcatNorm || sNorm === subShort || sNorm.endsWith(": " + subShort);
+        });
+        if (!hasSubcategory) return false;
       }
 
       // 7. Taxonomia: Gênero
-      if (selectedGenre) {
-        if (!book.taxonomy_genres || !book.taxonomy_genres.includes(selectedGenre)) return false;
+      if (selectedGenreNorm) {
+        const hasGenre = bookGenres.some(g => g.toLowerCase() === selectedGenreNorm);
+        if (!hasGenre) return false;
       }
 
       // 8. Taxonomia: Origem
-      if (selectedOrigin) {
-        if (book.taxonomy_origin !== selectedOrigin) return false;
+      if (selectedOriginNorm) {
+        const hasOrigin = bookOrigins.some(o => o.toLowerCase() === selectedOriginNorm);
+        if (!hasOrigin) return false;
       }
 
       // 9. Status de identificação
@@ -2077,56 +2119,128 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // --- Árvore Taxonômica e Filtros ---
+  let currentTaxonomyTree = [];
+  let currentTaxonomyFacets = { subcategories: [], genres: [], origins: [] };
+
+  function updateSubcategoryOptions(selectedCatName, preserveValue = false) {
+    if (!subcategorySelect) return;
+    const prevSubVal = preserveValue ? subcategorySelect.value : "";
+    const catClean = (selectedCatName || "").trim();
+
+    if (catClean === "__uncategorized__") {
+      subcategorySelect.innerHTML = `<option value="">Todas as Subcategorias</option>`;
+      subcategorySelect.value = "";
+      return;
+    }
+
+    let subcatsList = [];
+    if (catClean) {
+      const found = currentTaxonomyTree.find(
+        t => String(t.category || "").trim().toLowerCase() === catClean.toLowerCase()
+      );
+      if (found && Array.isArray(found.subcategories)) {
+        subcatsList = found.subcategories;
+      }
+    } else if (Array.isArray(currentTaxonomyFacets.subcategories)) {
+      subcatsList = currentTaxonomyFacets.subcategories;
+    }
+
+    subcategorySelect.innerHTML = `<option value="">Todas as Subcategorias</option>` +
+      subcatsList
+        .map(s => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)} (${s.book_count})</option>`)
+        .join("");
+
+    if (prevSubVal && subcatsList.some(s => String(s.name || "").trim().toLowerCase() === prevSubVal.trim().toLowerCase())) {
+      const match = subcatsList.find(s => String(s.name || "").trim().toLowerCase() === prevSubVal.trim().toLowerCase());
+      subcategorySelect.value = match ? match.name : "";
+    } else {
+      subcategorySelect.value = "";
+    }
+  }
+
+  if (categorySelect) {
+    categorySelect.addEventListener("change", () => {
+      updateSubcategoryOptions(categorySelect.value, false);
+      loadBooks();
+    });
+  }
+  if (subcategorySelect) subcategorySelect.addEventListener("change", () => loadBooks());
+  if (genreSelect) genreSelect.addEventListener("change", () => loadBooks());
+  if (originSelect) originSelect.addEventListener("change", () => loadBooks());
+  if (idStatusSelect) idStatusSelect.addEventListener("change", () => loadBooks());
+
+  if (btnClearFilters) {
+    btnClearFilters.addEventListener("click", () => {
+      if (searchInput) searchInput.value = "";
+      if (collectionSelect) collectionSelect.value = "";
+      if (formatSelect) formatSelect.value = "";
+      if (categorySelect) categorySelect.value = "";
+      updateSubcategoryOptions("", false);
+      if (genreSelect) genreSelect.value = "";
+      if (originSelect) originSelect.value = "";
+      if (idStatusSelect) idStatusSelect.value = "";
+      currentCollectionId = "";
+      currentFormat = "";
+      currentStatus = "all";
+      statusTabs.forEach(t => {
+        t.classList.toggle("active", t.getAttribute("data-status") === "all");
+      });
+      loadBooks();
+    });
+  }
+
   async function loadTaxonomyTree() {
     try {
       const res = await fetch("/api/taxonomy/tree");
       if (!res.ok) return;
       const data = await res.json();
       const tree = data.tree || [];
-      const uncatCount = data.uncategorized_count !== undefined ? data.uncategorized_count : 0;
+      currentTaxonomyTree = tree;
+      currentTaxonomyFacets = {
+        subcategories: data.subcategories || [],
+        genres: data.genres || [],
+        origins: data.origins || [],
+      };
+      const uncatCount = data.uncategorized_count !== undefined
+        ? data.uncategorized_count
+        : (tree[0] && tree[0].uncategorized_books !== undefined ? tree[0].uncategorized_books : 0);
 
       if (categorySelect) {
         const prevCatVal = categorySelect.value;
         categorySelect.innerHTML = `<option value="">Todas as Categorias</option>` +
           `<option value="__uncategorized__">Sem categoria (${uncatCount})</option>` +
           tree.map(cat => `<option value="${escapeHtml(cat.category)}">${escapeHtml(cat.category)} (${cat.total_books})</option>`).join("");
-        if (prevCatVal) categorySelect.value = prevCatVal;
+        if (prevCatVal && (prevCatVal === "__uncategorized__" || tree.some(c => c.category === prevCatVal))) {
+          categorySelect.value = prevCatVal;
+        } else {
+          categorySelect.value = "";
+        }
       }
 
-      // Atualiza subcategorias dinamicamente ao selecionar categoria
-      if (categorySelect && subcategorySelect) {
-        categorySelect.addEventListener("change", () => {
-          const selectedCatName = categorySelect.value;
-          const found = tree.find(t => t.category === selectedCatName);
-          if (found && found.subcategories && found.subcategories.length > 0) {
-            subcategorySelect.innerHTML = `<option value="">Todas as Subcategorias</option>` +
-              found.subcategories.map(s => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)} (${s.book_count})</option>`).join("");
-          } else {
-            subcategorySelect.innerHTML = `<option value="">Todas as Subcategorias</option>`;
-          }
-          loadBooks();
-        });
+      updateSubcategoryOptions(categorySelect ? categorySelect.value : "", true);
+
+      if (genreSelect) {
+        const prevGenreVal = genreSelect.value;
+        const genresList = currentTaxonomyFacets.genres || [];
+        genreSelect.innerHTML = `<option value="">Todos os Gêneros</option>` +
+          genresList.map(g => `<option value="${escapeHtml(g.name)}">${escapeHtml(g.name)} (${g.book_count})</option>`).join("");
+        if (prevGenreVal && genresList.some(g => g.name === prevGenreVal)) {
+          genreSelect.value = prevGenreVal;
+        } else {
+          genreSelect.value = "";
+        }
       }
 
-      if (subcategorySelect) subcategorySelect.addEventListener("change", () => loadBooks());
-      if (genreSelect) genreSelect.addEventListener("change", () => loadBooks());
-      if (originSelect) originSelect.addEventListener("change", () => loadBooks());
-      if (idStatusSelect) idStatusSelect.addEventListener("change", () => loadBooks());
-
-      if (btnClearFilters) {
-        btnClearFilters.addEventListener("click", () => {
-          if (searchInput) searchInput.value = "";
-          if (collectionSelect) collectionSelect.value = "";
-          if (formatSelect) formatSelect.value = "";
-          if (categorySelect) categorySelect.value = "";
-          if (subcategorySelect) subcategorySelect.innerHTML = `<option value="">Todas as Subcategorias</option>`;
-          if (genreSelect) genreSelect.value = "";
-          if (originSelect) originSelect.value = "";
-          if (idStatusSelect) idStatusSelect.value = "";
-          currentCollectionId = "";
-          currentFormat = "";
-          loadBooks();
-        });
+      if (originSelect) {
+        const prevOriginVal = originSelect.value;
+        const originsList = currentTaxonomyFacets.origins || [];
+        originSelect.innerHTML = `<option value="">Todas as Origens</option>` +
+          originsList.map(o => `<option value="${escapeHtml(o.name)}">${escapeHtml(o.name)} (${o.book_count})</option>`).join("");
+        if (prevOriginVal && originsList.some(o => o.name === prevOriginVal)) {
+          originSelect.value = prevOriginVal;
+        } else {
+          originSelect.value = "";
+        }
       }
     } catch (e) {
       console.error("Erro ao carregar árvore de taxonomia:", e);
@@ -2810,7 +2924,9 @@ document.addEventListener("DOMContentLoaded", () => {
             activeBookForDetails.taxonomy.categories = nextCats;
             renderCategoryChips(nextCats);
             updateDetailsTaxonomyTags(activeBookForDetails);
-            loadBooks();
+            invalidateLibraryCache();
+            loadTaxonomyTree();
+            loadBooks({ forceRefresh: true });
           }
         } catch (e) {
           console.error("Erro ao remover categoria do livro:", e);
@@ -2859,7 +2975,9 @@ document.addEventListener("DOMContentLoaded", () => {
             renderCategoryChips(nextCats);
             updateDetailsTaxonomyTags(activeBookForDetails);
             if (detailsAddCategorySelect) detailsAddCategorySelect.value = "";
-            loadBooks();
+            invalidateLibraryCache();
+            loadTaxonomyTree();
+            loadBooks({ forceRefresh: true });
           }
         } catch (e) {
           console.error("Erro ao adicionar categoria:", e);
@@ -4262,6 +4380,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function loadClubs(filter = currentClubsFilter) {
     if (!clubsContainer) return;
+    const srView = document.getElementById("shared-reading-view");
+    if (srView) srView.style.display = "none";
+    if (clubDetailView) clubDetailView.style.display = "none";
+    if (clubsListView) clubsListView.style.display = "block";
     currentClubsFilter = filter;
     if (subtabClubsMine) subtabClubsMine.classList.toggle("active", filter === "mine");
     if (subtabClubsAll) subtabClubsAll.classList.toggle("active", filter === "all");
@@ -4442,6 +4564,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function openClubDetail(clubId) {
     activeClubId = clubId;
+    const srView = document.getElementById("shared-reading-view");
+    if (srView) srView.style.display = "none";
     if (clubsListView) clubsListView.style.display = "none";
     if (clubDetailView) clubDetailView.style.display = "block";
 
@@ -4617,9 +4741,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 <span>📅 ${escapeHtml(datesText)}</span>
               </div>
             </div>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.65rem; border-top: 1px solid var(--border-color); padding-top: 0.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.65rem; border-top: 1px solid var(--border-color); padding-top: 0.5rem; gap: 0.4rem; flex-wrap: wrap;">
               <span style="font-size: 0.74rem; color: var(--text-muted);">👥 ${r.members_count} participante${r.members_count === 1 ? '' : 's'}</span>
-              <button class="btn btn-subtle btn-xs btn-open-read-modal" data-read-id="${escapeHtml(r.id)}">Ver Atividade</button>
+              <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
+                <button class="btn btn-subtle btn-xs btn-open-read-modal" data-read-id="${escapeHtml(r.id)}">Ver Atividade</button>
+                <button class="btn btn-primary btn-xs btn-open-shared-panel" data-read-id="${escapeHtml(r.id)}" data-club-id="${escapeHtml(r.club_id || '')}">Painel</button>
+              </div>
             </div>
           </div>
         </div>
@@ -4628,6 +4755,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     clubReadsGrid.querySelectorAll(".btn-open-read-modal").forEach(btn => {
       btn.addEventListener("click", () => openCollectiveReadDetail(btn.getAttribute("data-read-id")));
+    });
+    clubReadsGrid.querySelectorAll(".btn-open-shared-panel").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (window.LectoriaSharedReading) {
+          window.LectoriaSharedReading.open(btn.getAttribute("data-read-id"), btn.getAttribute("data-club-id"));
+        }
+      });
     });
   }
 
@@ -4791,6 +4926,17 @@ document.addEventListener("DOMContentLoaded", () => {
             }
           };
         }
+      }
+
+      const btnReadDetailOpenPanel = document.getElementById("btn-read-detail-open-panel");
+      if (btnReadDetailOpenPanel) {
+        btnReadDetailOpenPanel.onclick = () => {
+          modalCollectiveReadDetail.classList.remove("active");
+          setMainTab("clubs");
+          if (window.LectoriaSharedReading) {
+            window.LectoriaSharedReading.open(read.id, read.club_id);
+          }
+        };
       }
 
       const canEdit = read.user_club_role === "owner" || read.user_club_role === "moderator" || read.created_by === (currentUser ? currentUser.id : null);

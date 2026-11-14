@@ -51,13 +51,34 @@ Ao propor melhorias ou correções, mantenha em mente as seguintes diretrizes:
 
 ## 3. Executando os Testes Automatizados
 
-Antes de abrir qualquer Pull Request, certifique-se de que todos os testes estejam passando:
+Antes de abrir qualquer Pull Request ou submeter alterações, certifique-se de que todos os testes estejam passando.
 
 ```bash
-pytest -v tests/
+# Executar testes unitários e de integração de API:
+./.venv/bin/pytest --ignore=tests/e2e -v
+
+# Executar suíte End-to-End no navegador real (Playwright):
+./.venv/bin/pytest tests/e2e -v
+
+# Executar a suíte completa consolidada:
+./.venv/bin/pytest -v
 ```
 
-Caso crie novas rotas, serviços ou funcionalidades, adicione testes correspondentes na pasta `tests/`.
+Para detalhes sobre fixtures, bancos temporários e geradores sintéticos, consulte [docs/TESTING.md](docs/TESTING.md).
+
+---
+
+## 4. Documentação Arquitetural e Diretrizes para Agentes
+
+Antes de propor alterações em subsistemas específicos, consulte a documentação técnica correspondente:
+- **Ponto de entrada para agentes e regras de governança**: [AGENTS.md](AGENTS.md)
+- **Visão geral da arquitetura**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- **Banco de dados e schema SQLite v11**: [docs/DATABASE.md](docs/DATABASE.md)
+- **Permissões e segurança**: [docs/AUTHORIZATION.md](docs/AUTHORIZATION.md)
+- **Motores de leitura (PDF.js e EPUB.js)**: [docs/READER.md](docs/READER.md)
+- **Frontend Vanilla JS**: [docs/FRONTEND.md](docs/FRONTEND.md)
+- **API REST**: [docs/API.md](docs/API.md)
+- **Registro de decisões**: [docs/DECISIONS/](docs/DECISIONS/)
 
 ---
 

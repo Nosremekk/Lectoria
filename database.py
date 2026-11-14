@@ -6,11 +6,12 @@ Gerencia conexão, modo WAL, chaves estrangeiras e controle de migrações de sc
 import shutil
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 import config
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -79,9 +80,19 @@ def init_db(db_path: Optional[Path] = None) -> None:
                     f"Banco de dados '{target_db}' falhou na verificação de integridade antes da migração."
                 )
 
-            pre_migration_bak = target_db.with_name(
-                f"lectoria_pre_migration_v{current_version}_to_v{SCHEMA_VERSION}.db.bak"
-            )
+            base_bak_name = f"lectoria_pre_migration_v{current_version}_to_v{SCHEMA_VERSION}"
+            pre_migration_bak = target_db.with_name(f"{base_bak_name}.db.bak")
+            if pre_migration_bak.exists():
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                counter = 1
+                while True:
+                    suffix = f"_{ts}" if counter == 1 else f"_{ts}_{counter}"
+                    candidate = target_db.with_name(f"{base_bak_name}{suffix}.db.bak")
+                    if not candidate.exists():
+                        pre_migration_bak = candidate
+                        break
+                    counter += 1
+
             bak_conn = sqlite3.connect(str(pre_migration_bak))
             try:
                 conn.backup(bak_conn)
@@ -94,6 +105,7 @@ def init_db(db_path: Optional[Path] = None) -> None:
             # dispare ON DELETE CASCADE nas tabelas filhas (reading_progress, highlights, notes, etc.)
             conn.commit()
             conn.execute("PRAGMA foreign_keys=OFF;")
+            conn.execute("BEGIN;")
 
         try:
             if current_version < 1:
@@ -136,7 +148,14 @@ def init_db(db_path: Optional[Path] = None) -> None:
                 _apply_migration_v10(cursor)
                 cursor.execute("INSERT INTO schema_migrations (version) VALUES (10);")
 
+            if current_version < 11:
+                _apply_migration_v11(cursor)
+                cursor.execute("INSERT INTO schema_migrations (version) VALUES (11);")
+
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.execute("PRAGMA foreign_keys=ON;")
 
@@ -1234,6 +1253,172 @@ def _apply_migration_v10(cursor: sqlite3.Cursor) -> None:
         """
     )
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_collective_read_members_user ON collective_read_members(user_id);")
+
+
+def _apply_migration_v11(cursor: sqlite3.Cursor) -> None:
+    """
+    Migração v11 — Leitura Compartilhada (v1.7.0).
+    Cria as tabelas de discussões de leitura coletiva (tópicos e respostas encadeadas),
+    metas e cronogramas do clube com progresso voluntário estrito,
+    e compartilhamento de citações com integridade referencial e preservação de histórico.
+    """
+    # 0. Garante índice único composto em collective_reads(id, book_id) para integridade referencial de citações
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_collective_reads_id_book ON collective_reads(id, book_id);"
+    )
+
+    # 1. Tabela de Tópicos de Discussão da Leitura Coletiva
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS collective_discussion_topics (
+            id TEXT PRIMARY KEY,
+            read_id TEXT NOT NULL REFERENCES collective_reads(id) ON DELETE CASCADE,
+            user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            chapter_ref TEXT NULL,
+            page_start INTEGER NULL CHECK (page_start IS NULL OR page_start >= 1),
+            page_end INTEGER NULL CHECK (page_end IS NULL OR (page_start IS NOT NULL AND page_end >= page_start)),
+            epub_cfi TEXT NULL,
+            is_spoiler INTEGER NOT NULL DEFAULT 0 CHECK (is_spoiler IN (0, 1)),
+            is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1)),
+            is_locked INTEGER NOT NULL DEFAULT 0 CHECK (is_locked IN (0, 1)),
+            is_deleted INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1)),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_col_disc_topics_read ON collective_discussion_topics(read_id, is_pinned DESC, updated_at DESC);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_col_disc_topics_user ON collective_discussion_topics(user_id);"
+    )
+
+    # 2. Tabela de Respostas Encadeadas aos Tópicos
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS collective_discussion_posts (
+            id TEXT PRIMARY KEY,
+            topic_id TEXT NOT NULL REFERENCES collective_discussion_topics(id) ON DELETE CASCADE,
+            user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+            parent_post_id TEXT NULL REFERENCES collective_discussion_posts(id) ON DELETE SET NULL,
+            content TEXT NOT NULL,
+            is_spoiler INTEGER NOT NULL DEFAULT 0 CHECK (is_spoiler IN (0, 1)),
+            is_deleted INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1)),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CHECK (parent_post_id IS NULL OR parent_post_id != id)
+        );
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_col_disc_posts_topic ON collective_discussion_posts(topic_id, created_at ASC);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_col_disc_posts_parent ON collective_discussion_posts(parent_post_id);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_col_disc_posts_user ON collective_discussion_posts(user_id);"
+    )
+
+    # Triggers para garantir integridade relacional entre parent_post e topic_id
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_col_disc_posts_parent_same_topic_ins
+        BEFORE INSERT ON collective_discussion_posts
+        FOR EACH ROW
+        WHEN NEW.parent_post_id IS NOT NULL
+        BEGIN
+            SELECT CASE
+                WHEN (SELECT topic_id FROM collective_discussion_posts WHERE id = NEW.parent_post_id) != NEW.topic_id
+                THEN RAISE(ABORT, 'O post pai deve pertencer ao mesmo tópico de discussão.')
+            END;
+        END;
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_col_disc_posts_parent_same_topic_upd
+        BEFORE UPDATE OF parent_post_id, topic_id ON collective_discussion_posts
+        FOR EACH ROW
+        WHEN NEW.parent_post_id IS NOT NULL
+        BEGIN
+            SELECT CASE
+                WHEN (SELECT topic_id FROM collective_discussion_posts WHERE id = NEW.parent_post_id) != NEW.topic_id
+                THEN RAISE(ABORT, 'O post pai deve pertencer ao mesmo tópico de discussão.')
+            END;
+        END;
+        """
+    )
+
+    # 3. Tabela de Metas e Cronogramas da Leitura Coletiva
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS collective_reading_goals (
+            id TEXT PRIMARY KEY,
+            read_id TEXT NOT NULL REFERENCES collective_reads(id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            target_date TEXT NULL,
+            chapter_ref TEXT NULL,
+            target_page INTEGER NULL CHECK (target_page IS NULL OR target_page >= 1),
+            display_order INTEGER NOT NULL DEFAULT 0,
+            is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),
+            created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_col_goals_read ON collective_reading_goals(read_id, display_order ASC, target_date ASC);"
+    )
+
+    # 4. Tabela de Progresso Voluntário Individual nas Metas
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS collective_goal_progress (
+            goal_id TEXT NOT NULL REFERENCES collective_reading_goals(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed')),
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (goal_id, user_id)
+        );
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_col_goal_prog_user ON collective_goal_progress(user_id, status);"
+    )
+
+    # 5. Tabela de Citações Compartilhadas no Contexto da Leitura Coletiva
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS collective_shared_quotes (
+            id TEXT PRIMARY KEY,
+            read_id TEXT NOT NULL,
+            book_id TEXT NOT NULL,
+            user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+            quote_text TEXT NOT NULL,
+            comment_text TEXT NULL,
+            chapter_name TEXT NULL,
+            page_number INTEGER NULL CHECK (page_number IS NULL OR page_number >= 1),
+            epub_cfi TEXT NULL,
+            is_spoiler INTEGER NOT NULL DEFAULT 0 CHECK (is_spoiler IN (0, 1)),
+            is_deleted INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1)),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (read_id, book_id) REFERENCES collective_reads(id, book_id) ON DELETE CASCADE
+        );
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_col_quotes_read ON collective_shared_quotes(read_id, created_at DESC);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_col_quotes_book ON collective_shared_quotes(book_id);"
+    )
 
 
 

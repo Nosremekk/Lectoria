@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="pt-BR" data-theme="dark" data-app-version="1.6.3">
+<html lang="pt-BR" data-theme="dark" data-app-version="1.7.0">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lectoria — Biblioteca Pessoal</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=1.6.3">
+  <link rel="stylesheet" href="/static/css/style.css?v=1.7.0">
 </head>
 <body>
   <header class="app-header">
@@ -455,6 +455,97 @@
               <tbody id="club-members-tbody"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <!-- Painel Integrado de Leitura Compartilhada (v1.7.0) -->
+      <div id="shared-reading-view" class="shared-reading-view" style="display: none;">
+        <div class="club-detail-topbar">
+          <button id="btn-back-from-shared-reading" class="btn btn-subtle" type="button" title="Voltar para o clube">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+            <span>Voltar ao Clube</span>
+          </button>
+          <div class="sr-topbar-actions">
+            <a id="sr-open-book-link" href="#" class="btn btn-primary" target="_blank">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>
+              <span>Abrir Livro</span>
+            </a>
+          </div>
+        </div>
+
+        <div id="sr-header-card" class="sr-header-card">
+          <img id="sr-book-cover" class="sr-book-cover" src="" alt="Capa do livro">
+          <div class="sr-header-info">
+            <div class="sr-header-badges">
+              <span id="sr-club-badge" class="tag-badge tag-subtle">Clube</span>
+              <span id="sr-status-badge" class="tag-badge">Em andamento</span>
+              <span id="sr-role-badge" class="tag-badge tag-subtle">Membro</span>
+            </div>
+            <h3 id="sr-read-title" class="sr-read-title">Carregando leitura...</h3>
+            <p id="sr-book-meta" class="sr-book-meta"></p>
+            <div id="sr-readonly-banner" class="sr-readonly-banner" style="display: none;" role="status"></div>
+          </div>
+        </div>
+
+        <div id="sr-tabs-bar" class="sr-tabs-bar" role="tablist" aria-label="Seções da Leitura Compartilhada">
+          <button id="sr-tab-overview" class="subtab-btn active" type="button" role="tab" aria-selected="true" aria-controls="sr-panel-overview" data-sr-tab="overview">Visão Geral</button>
+          <button id="sr-tab-discussions" class="subtab-btn" type="button" role="tab" aria-selected="false" aria-controls="sr-panel-discussions" data-sr-tab="discussions">Discussões</button>
+          <button id="sr-tab-goals" class="subtab-btn" type="button" role="tab" aria-selected="false" aria-controls="sr-panel-goals" data-sr-tab="goals">Metas</button>
+          <button id="sr-tab-quotes" class="subtab-btn" type="button" role="tab" aria-selected="false" aria-controls="sr-panel-quotes" data-sr-tab="quotes">Citações</button>
+        </div>
+
+        <!-- Aba 1: Visão Geral -->
+        <div id="sr-panel-overview" class="sr-tab-panel" role="tabpanel" aria-labelledby="sr-tab-overview">
+          <div id="sr-overview-content"></div>
+        </div>
+
+        <!-- Aba 2: Discussões -->
+        <div id="sr-panel-discussions" class="sr-tab-panel" role="tabpanel" aria-labelledby="sr-tab-discussions" style="display: none;">
+          <div id="sr-topics-list-container">
+            <div class="sr-panel-toolbar">
+              <div class="sr-filter-pills" role="group" aria-label="Filtrar tópicos">
+                <button type="button" class="filter-pill active" data-sr-topic-filter="all">Todos</button>
+                <button type="button" class="filter-pill" data-sr-topic-filter="pinned">Fixados</button>
+                <button type="button" class="filter-pill" data-sr-topic-filter="spoilers">Com Spoiler</button>
+              </div>
+              <button id="btn-sr-new-topic" type="button" class="btn btn-primary">+ Novo Tópico</button>
+            </div>
+            <div id="sr-topics-list" class="sr-stack-list"></div>
+            <div id="sr-topics-pagination" class="sr-pagination"></div>
+          </div>
+
+          <div id="sr-topic-detail-container" style="display: none;">
+            <div class="sr-panel-toolbar">
+              <button id="btn-sr-back-topics" type="button" class="btn btn-subtle">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                <span>Voltar aos Tópicos</span>
+              </button>
+            </div>
+            <div id="sr-topic-detail-body"></div>
+          </div>
+        </div>
+
+        <!-- Aba 3: Metas -->
+        <div id="sr-panel-goals" class="sr-tab-panel" role="tabpanel" aria-labelledby="sr-tab-goals" style="display: none;">
+          <div class="sr-panel-toolbar">
+            <label class="sr-checkbox-label">
+              <input type="checkbox" id="sr-goals-include-archived">
+              <span>Mostrar metas arquivadas</span>
+            </label>
+            <button id="btn-sr-new-goal" type="button" class="btn btn-primary" style="display: none;">+ Nova Meta</button>
+          </div>
+          <p class="sr-privacy-hint">Seu progresso nas metas do clube é estritamente voluntário e independente da sua leitura privada.</p>
+          <div id="sr-goals-list" class="sr-stack-list"></div>
+        </div>
+
+        <!-- Aba 4: Citações -->
+        <div id="sr-panel-quotes" class="sr-tab-panel" role="tabpanel" aria-labelledby="sr-tab-quotes" style="display: none;">
+          <div class="sr-panel-toolbar">
+            <span class="sr-toolbar-subtitle">Trechos e comentários compartilhados voluntariamente pelo clube</span>
+            <button id="btn-sr-new-quote" type="button" class="btn btn-primary">+ Compartilhar Citação</button>
+          </div>
+          <div id="sr-quotes-list" class="sr-stack-list"></div>
+          <div id="sr-quotes-pagination" class="sr-pagination"></div>
         </div>
       </div>
     </section>
@@ -1477,10 +1568,11 @@
         </div>
         <div id="read-detail-error" style="display: none; color: var(--danger); font-size: 0.82rem; margin-top: 0.5rem;"></div>
       </div>
-      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
         <button id="btn-read-detail-edit" class="btn btn-subtle" style="display: none;">Editar Atividade</button>
-        <div style="display: flex; gap: 0.5rem; margin-left: auto;">
+        <div style="display: flex; gap: 0.5rem; margin-left: auto; flex-wrap: wrap;">
           <button id="btn-read-detail-toggle-join" class="btn">Participar</button>
+          <button id="btn-read-detail-open-panel" class="btn btn-subtle" type="button">Painel Compartilhado</button>
           <a id="btn-read-detail-open-book" href="#" class="btn btn-primary" target="_blank">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>
             <span>Ler Obra Agora</span>
@@ -1540,6 +1632,141 @@
     </div>
   </div>
 
-  <script src="/static/js/app.js?v=1.6.3"></script>
+  <!-- Modal: Criar / Editar Tópico de Discussão (v1.7.0) -->
+  <div id="modal-sr-topic" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-sr-topic-title">
+    <div class="modal-content" style="max-width: 560px;">
+      <div class="modal-header">
+        <h3 id="modal-sr-topic-title" class="modal-title">Novo Tópico de Discussão</h3>
+        <button id="btn-close-sr-topic" class="btn btn-icon" type="button" title="Fechar">&times;</button>
+      </div>
+      <form id="form-sr-topic">
+        <div class="modal-body">
+          <input type="hidden" id="sr-topic-form-id" value="">
+          <div class="form-group">
+            <label class="form-label" for="sr-topic-title">Título *</label>
+            <input type="text" id="sr-topic-title" class="form-input" maxlength="200" required placeholder="Ex: Reflexões sobre o Capítulo 4">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="sr-topic-content">Conteúdo *</label>
+            <textarea id="sr-topic-content" class="form-input" rows="5" maxlength="10000" required placeholder="Compartilhe sua análise ou dúvida com o clube..."></textarea>
+          </div>
+          <div class="sr-form-row">
+            <div class="form-group">
+              <label class="form-label" for="sr-topic-chapter">Capítulo / Parte</label>
+              <input type="text" id="sr-topic-chapter" class="form-input" maxlength="150" placeholder="Ex: Cap. 4">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sr-topic-page-start">Página inicial</label>
+              <input type="number" id="sr-topic-page-start" class="form-input" min="1" max="100000" placeholder="Opcional">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sr-topic-page-end">Página final</label>
+              <input type="number" id="sr-topic-page-end" class="form-input" min="1" max="100000" placeholder="Opcional">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="sr-checkbox-label">
+              <input type="checkbox" id="sr-topic-spoiler">
+              <span>Contém spoiler (ocultar prévia e exigir clique para revelar)</span>
+            </label>
+          </div>
+          <div id="sr-topic-form-error" class="sr-form-error" style="display: none;"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-cancel-sr-topic" type="button" class="btn">Cancelar</button>
+          <button id="btn-save-sr-topic" type="submit" class="btn btn-primary">Salvar Tópico</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Criar / Editar Meta Coletiva (v1.7.0) -->
+  <div id="modal-sr-goal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-sr-goal-title">
+    <div class="modal-content" style="max-width: 520px;">
+      <div class="modal-header">
+        <h3 id="modal-sr-goal-title" class="modal-title">Nova Meta Coletiva</h3>
+        <button id="btn-close-sr-goal" class="btn btn-icon" type="button" title="Fechar">&times;</button>
+      </div>
+      <form id="form-sr-goal">
+        <div class="modal-body">
+          <input type="hidden" id="sr-goal-form-id" value="">
+          <div class="form-group">
+            <label class="form-label" for="sr-goal-title">Título da Meta *</label>
+            <input type="text" id="sr-goal-title" class="form-input" maxlength="150" required placeholder="Ex: Semana 1 — Capítulos 1 a 10">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="sr-goal-desc">Descrição</label>
+            <textarea id="sr-goal-desc" class="form-input" rows="3" maxlength="2000" placeholder="Orientações opcionais para os participantes..."></textarea>
+          </div>
+          <div class="sr-form-row">
+            <div class="form-group">
+              <label class="form-label" for="sr-goal-date">Data-alvo</label>
+              <input type="date" id="sr-goal-date" class="form-input">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sr-goal-chapter">Capítulo de referência</label>
+              <input type="text" id="sr-goal-chapter" class="form-input" maxlength="150" placeholder="Ex: Cap. 10">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sr-goal-page">Página-alvo</label>
+              <input type="number" id="sr-goal-page" class="form-input" min="1" max="100000" placeholder="Opcional">
+            </div>
+          </div>
+          <div id="sr-goal-form-error" class="sr-form-error" style="display: none;"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-cancel-sr-goal" type="button" class="btn">Cancelar</button>
+          <button id="btn-save-sr-goal" type="submit" class="btn btn-primary">Salvar Meta</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Compartilhar Citação Manual (v1.7.0) -->
+  <div id="modal-sr-quote" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-sr-quote-title">
+    <div class="modal-content" style="max-width: 540px;">
+      <div class="modal-header">
+        <h3 id="modal-sr-quote-title" class="modal-title">Compartilhar Citação</h3>
+        <button id="btn-close-sr-quote" class="btn btn-icon" type="button" title="Fechar">&times;</button>
+      </div>
+      <form id="form-sr-quote">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="sr-quote-text">Trecho citado * (máx. 1500 caracteres)</label>
+            <textarea id="sr-quote-text" class="form-input" rows="4" maxlength="1500" required placeholder="Cole ou digite o trecho da obra que deseja compartilhar..."></textarea>
+            <div id="sr-quote-char-counter" class="sr-char-counter">0 / 1500</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="sr-quote-comment">Seu comentário (opcional)</label>
+            <textarea id="sr-quote-comment" class="form-input" rows="2" maxlength="2000" placeholder="Por que esse trecho chamou sua atenção?"></textarea>
+          </div>
+          <div class="sr-form-row">
+            <div class="form-group">
+              <label class="form-label" for="sr-quote-chapter">Capítulo</label>
+              <input type="text" id="sr-quote-chapter" class="form-input" maxlength="150" placeholder="Ex: Cap. III">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sr-quote-page">Página</label>
+              <input type="number" id="sr-quote-page" class="form-input" min="1" max="100000" placeholder="Opcional">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="sr-checkbox-label">
+              <input type="checkbox" id="sr-quote-spoiler">
+              <span>Marcar citação como spoiler</span>
+            </label>
+          </div>
+          <div id="sr-quote-form-error" class="sr-form-error" style="display: none;"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-cancel-sr-quote" type="button" class="btn">Cancelar</button>
+          <button id="btn-save-sr-quote" type="submit" class="btn btn-primary">Publicar Citação</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js?v=1.7.0"></script>
+  <script src="/static/js/shared_reading.js?v=1.7.0"></script>
 </body>
 </html>

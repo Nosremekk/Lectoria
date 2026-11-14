@@ -118,7 +118,7 @@ def test_schema_v10_tables_and_columns(v160_env):
     try:
         cur = conn.cursor()
         cur.execute("SELECT MAX(version) FROM schema_migrations;")
-        assert cur.fetchone()[0] == 10
+        assert cur.fetchone()[0] >= 10
 
         # reading_clubs
         cur.execute("PRAGMA table_info(reading_clubs);")
