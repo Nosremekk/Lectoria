@@ -2,6 +2,8 @@ name: Publish Docker Image (GHCR)
 
 on:
   push:
+    branches:
+      - "main"
     tags:
       - "v*"
   workflow_dispatch:
@@ -80,6 +82,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -91,3 +94,40 @@ jobs:
             ghcr.io/nosremekk/lectoria:stable
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Validate published GHCR image and /api/health
+        env:
+          RAW_VER: ${{ steps.meta.outputs.raw_version }}
+          CLEAN_VER: ${{ steps.meta.outputs.clean_version }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "Published digest: ${IMAGE_DIGEST}"
+          docker pull "ghcr.io/nosremekk/lectoria:${RAW_VER}"
+          docker pull "ghcr.io/nosremekk/lectoria:${CLEAN_VER}"
+          docker pull "ghcr.io/nosremekk/lectoria:stable"
+
+          ID_RAW="$(docker image inspect --format='{{.Id}}' "ghcr.io/nosremekk/lectoria:${RAW_VER}")"
+          ID_CLEAN="$(docker image inspect --format='{{.Id}}' "ghcr.io/nosremekk/lectoria:${CLEAN_VER}")"
+          ID_STABLE="$(docker image inspect --format='{{.Id}}' "ghcr.io/nosremekk/lectoria:stable")"
+          test "$ID_RAW" = "$ID_CLEAN"
+          test "$ID_CLEAN" = "$ID_STABLE"
+
+          docker run -d --name lectoria-smoke -p 18765:8765 "ghcr.io/nosremekk/lectoria:stable"
+          trap 'docker rm -f lectoria-smoke >/dev/null 2>&1 || true' EXIT
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18765/api/health > /tmp/health.json 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          cat /tmp/health.json
+          python3 -c '
+          import json, os, sys
+          data = json.load(open("/tmp/health.json"))
+          expected = os.environ["CLEAN_VER"]
+          assert data.get("status") == "healthy", f"Unexpected status: {data}"
+          assert data.get("version") == expected, f"Expected version {expected}, got {data}"
+          print(f"Verified /api/health version={data[\"version\"]} status={data[\"status\"]}")
+          '

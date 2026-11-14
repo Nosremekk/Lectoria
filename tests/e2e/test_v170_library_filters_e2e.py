@@ -30,8 +30,8 @@ import taxonomy_service
 from tests.conftest import create_sample_pdf
 
 
-ARTIFACT_DIR = Path("/home/vini/.gemini/antigravity/brain/9ae11ae2-ebc0-44c2-9e79-22a1b0910e27")
-ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+EVIDENCE_DIR = Path("/tmp/lectoria_v170_screenshots")
+EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _find_free_port() -> int:
@@ -244,7 +244,7 @@ def test_e2e_library_filters_isolated_combined_clear_and_mobile(filters_e2e_serv
         assert titles_phil == {"A República", "Ética a Nicômaco", "Meditações Metafísicas"}
 
         # Captura evidência visual desktop com filtro Filosofia (3) ativo
-        page.screenshot(path=str(ARTIFACT_DIR / "v170_filter_filosofia_desktop.png"))
+        page.screenshot(path=str(EVIDENCE_DIR / "v170_filter_filosofia_desktop.png"))
 
         # 2. Combinação: Categoria "Filosofia" + Subcategoria "Ética e política"
         page.select_option("#subcategory-select", "Ética e política")
@@ -291,6 +291,6 @@ def test_e2e_library_filters_isolated_combined_clear_and_mobile(filters_e2e_serv
         assert page.locator("#active-filters-count-badge").inner_text() == "3"
 
         # Captura evidência visual mobile com filtros combinados ativos
-        page.screenshot(path=str(ARTIFACT_DIR / "v170_filter_combined_mobile.png"), full_page=True)
+        page.screenshot(path=str(EVIDENCE_DIR / "v170_filter_combined_mobile.png"), full_page=True)
 
         browser.close()

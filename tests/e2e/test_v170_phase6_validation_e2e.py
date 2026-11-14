@@ -29,7 +29,6 @@ import shared_reading_service as srs
 
 EVIDENCE_DIR = Path("/tmp/lectoria_v170_screenshots")
 EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
-ARTIFACT_DIR = Path("/home/vini/.gemini/antigravity/brain/9ae11ae2-ebc0-44c2-9e79-22a1b0910e27")
 
 
 def _find_free_port() -> int:
@@ -184,8 +183,6 @@ def _save_shot(page, filename: str):
     page.wait_for_timeout(250)
     dest = EVIDENCE_DIR / filename
     page.screenshot(path=str(dest), full_page=False)
-    if ARTIFACT_DIR.exists():
-        shutil.copy2(dest, ARTIFACT_DIR / filename)
 
 
 def test_phase6_spoilers_concurrency_responsive_and_covers(p6_e2e_server):

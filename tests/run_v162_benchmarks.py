@@ -78,7 +78,8 @@ def run_benchmarks():
     time.sleep(2.5)
 
     base_url = f"http://127.0.0.1:{port}"
-    artifacts_dir = Path("/home/vini/.gemini/antigravity/brain/9ae11ae2-ebc0-44c2-9e79-22a1b0910e27")
+    artifacts_dir = Path("/tmp/lectoria_v162_screenshots")
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     results = {
         "viewports": {},
