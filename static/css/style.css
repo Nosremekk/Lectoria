@@ -1272,12 +1272,13 @@ body {
 .reader-header {
   background-color: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
-  padding: 0.4rem 1rem;
+  padding: 0.4rem 0.85rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.6rem;
+  gap: 0.45rem;
   height: 54px;
+  max-width: 100%;
   flex-shrink: 0;
   z-index: 50;
   box-shadow: var(--shadow-sm);
@@ -1286,7 +1287,38 @@ body {
 .reader-left, .reader-center, .reader-right {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
+}
+
+.reader-left {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.reader-right {
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+@media (max-width: 1440px) {
+  .reader-header {
+    padding: 0.4rem 0.65rem;
+    gap: 0.35rem;
+  }
+  .reader-title {
+    max-width: 140px !important;
+  }
+  .reader-right {
+    gap: 0.28rem;
+  }
+  .layer-view-select {
+    max-width: 112px;
+    font-size: 0.72rem;
+    padding: 0.24rem 0.35rem;
+  }
+  .tool-mode-btn span {
+    display: none;
+  }
 }
 
 .reader-cover-mini {
@@ -1517,7 +1549,27 @@ body {
   opacity: 0.7;
 }
 
+.highlight-box.highlight-public-other {
+  opacity: 0.36;
+  outline: 1.5px dashed rgba(30, 41, 59, 0.55);
+  outline-offset: -1px;
+}
+
+.highlight-box.highlight-public-other:hover {
+  opacity: 0.62;
+}
+
 /* Camada de Desenho Vetorial */
+.public-drawing-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none !important;
+  z-index: 2;
+}
+
 .drawing-layer {
   position: absolute;
   top: 0;
@@ -1526,6 +1578,259 @@ body {
   height: 100%;
   pointer-events: none;
   z-index: 3;
+}
+
+/* Ocultação Temporária de Camadas Visuais (Controle de Ruído Visual) */
+.reader-viewport.layers-hidden .highlights-layer,
+.reader-viewport.layers-hidden .drawing-layer,
+.reader-viewport.layers-hidden .public-drawing-layer,
+.reader-viewport.layers-hidden .page-note-pins-layer,
+.reader-viewport.layers-hidden .epub-note-pins-layer {
+  display: none !important;
+}
+
+.epub-note-pins-layer {
+  z-index: 12;
+  pointer-events: none;
+}
+
+.epub-note-pins-layer .page-note-pins-stack {
+  top: 0.75rem;
+  right: 1.25rem;
+}
+
+/* Camada de Pins de Notas e Selo de Autoria de Desenhos na Página */
+.page-note-pins-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.page-note-pins-stack {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+  pointer-events: none;
+}
+
+.page-note-pin {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.5rem;
+  border-radius: 999px;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  font-size: 0.72rem;
+  font-weight: 500;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22);
+  cursor: pointer;
+  max-width: 180px;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+.page-note-pin:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+}
+
+.page-note-pin.is-public-other {
+  border-style: dashed;
+}
+
+.page-note-pin-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-public-drawings-badge {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background-color: rgba(15, 23, 42, 0.85);
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: 0.7rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+.page-public-drawings-badge .author-avatar-dot {
+  width: 8px;
+  height: 8px;
+}
+
+/* Controle de Camadas e Barra de Busca no PDF */
+.layer-view-control {
+  display: inline-flex;
+  align-items: center;
+}
+
+.layer-view-select {
+  background-color: var(--bg-tertiary);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 0.28rem 0.45rem;
+  font-size: 0.76rem;
+  cursor: pointer;
+  max-width: 150px;
+}
+
+.reader-search-bar {
+  position: fixed;
+  top: 3.6rem;
+  right: 1.25rem;
+  z-index: 260;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.4rem 0.6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  box-shadow: var(--shadow);
+  max-width: calc(100vw - 1.5rem);
+}
+
+.reader-search-input {
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+  width: 185px;
+  max-width: 46vw;
+}
+
+.reader-search-status {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  min-width: 52px;
+  text-align: center;
+}
+
+/* Popover Contextual de Destaque e Nota na Página */
+.annotation-popover {
+  position: fixed;
+  z-index: 350;
+  width: min(330px, calc(100vw - 24px));
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 0.85rem;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  color: var(--text-main);
+}
+
+.annotation-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.annotation-popover-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.author-avatar-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.visibility-pill {
+  font-size: 0.68rem;
+  padding: 0.14rem 0.45rem;
+  border-radius: 999px;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.visibility-pill.is-public {
+  border-color: rgba(56, 189, 248, 0.45);
+  color: #38bdf8;
+}
+
+.annotation-popover-quote {
+  font-size: 0.8rem;
+  line-height: 1.45;
+  padding: 0.4rem 0.55rem;
+  border-left: 3px solid var(--accent);
+  background-color: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.55rem;
+  max-height: 110px;
+  overflow-y: auto;
+  word-break: break-word;
+}
+
+.annotation-popover-note,
+.annotation-popover-body {
+  font-size: 0.82rem;
+  line-height: 1.48;
+  color: var(--text-main);
+  margin-bottom: 0.6rem;
+  max-height: 140px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.annotation-popover-meta {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.annotation-popover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-end;
+}
+
+.visibility-notice {
+  margin-top: 0.4rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius-sm);
+  background-color: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--text-main);
+}
+
+.btn-visibility-toggle.is-public {
+  background-color: rgba(56, 189, 248, 0.16);
+  border-color: rgba(56, 189, 248, 0.5);
+  color: #38bdf8;
 }
 
 .drawing-layer.active {
@@ -1675,8 +1980,74 @@ body {
   font-weight: 600;
 }
 
+.drawer-collab-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  flex-wrap: wrap;
+}
+
+.drawer-scope-group {
+  display: inline-flex;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+
+.drawer-scope-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 0.22rem 0.45rem;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.drawer-scope-btn.active {
+  background-color: var(--accent);
+  color: #ffffff;
+}
+
+.drawer-sort-select {
+  background-color: var(--bg-tertiary);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 0.22rem 0.4rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.drawer-load-more-container {
+  padding: 0.6rem 0.85rem;
+  border-top: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
+}
+
+#btn-toggle-bookmark.is-bookmarked {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.45);
+  background-color: rgba(251, 191, 36, 0.12);
+}
+
+.badge-bookmark {
+  background-color: rgba(251, 191, 36, 0.18);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+
 .drawer-tabs {
   display: flex;
+  flex-wrap: wrap;
   border-bottom: 1px solid var(--border-color);
   background-color: var(--bg-secondary);
 }

@@ -1,6 +1,6 @@
 # Banco de Dados e Persistência do Lectoria
 
-Este documento descreve o modelo de dados, o schema atual (versão 11), a política de integridade relacional, as regras de migração e os mecanismos de backup do **Lectoria**.
+Este documento descreve o modelo de dados, o schema atual (versão 12), a política de integridade relacional, as regras de migração e os mecanismos de backup do **Lectoria**.
 
 ---
 
@@ -15,9 +15,9 @@ O Lectoria utiliza **SQLite 3** como seu único banco de dados de produção:
 
 ---
 
-## 2. Visão do Schema e Entidades (Schema v11)
+## 2. Visão do Schema e Entidades (Schema v12)
 
-O schema está na **versão 11**, versionado pela tabela `schema_migrations`.
+O schema está na **versão 12**, versionado pela tabela `schema_migrations`.
 
 O código DDL completo e canônico reside em [database.py](file:///home/vini/Jellyfin%20livros/database.py).
 
@@ -114,6 +114,51 @@ As tabelas colaborativas da v1.7.0 foram criadas com restrições rigorosas de d
 - **Índices**:
   - `idx_col_quotes_read ON collective_shared_quotes(read_id, created_at DESC)`
   - `idx_col_quotes_book ON collective_shared_quotes(book_id)`
+
+---
+
+## 3.1 Evolução na v1.8.0 (Fase 1 / Schema v12 — Anotações Colaborativas e Marcadores)
+
+A migração `_apply_migration_v12` evoluiu as tabelas de estudo do leitor sem perda de dados, garantindo que 100% dos registros existentes e novos nasçam com `visibility = 'private'`:
+
+### Evolução de `highlights`
+- `visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public'))`
+- `epub_cfi TEXT NULL` (localizador canônico `epubcfi(...)` para livros EPUB)
+- `chapter_label TEXT NULL`
+- `updated_at TIMESTAMP NULL`
+- **Índices adicionados**:
+  - `idx_highlights_book_vis_page ON highlights(book_id, visibility, page)`
+  - `idx_highlights_book_user_page ON highlights(book_id, user_id, page)`
+  - `idx_highlights_book_cfi ON highlights(book_id, epub_cfi)`
+
+### Evolução de `notes`
+- `visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public'))`
+- `epub_cfi TEXT NULL`
+- `chapter_label TEXT NULL`
+- **Índices adicionados**:
+  - `idx_notes_book_vis_page ON notes(book_id, visibility, page)`
+  - `idx_notes_book_user_page ON notes(book_id, user_id, page)`
+  - `idx_notes_book_cfi ON notes(book_id, epub_cfi)`
+
+### Evolução de `page_drawings`
+- `visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public'))`
+- `created_at TIMESTAMP NULL`
+- **Índices adicionados**:
+  - `idx_drawings_book_vis_page ON page_drawings(book_id, visibility, page)`
+  - `idx_drawings_book_user_page ON page_drawings(book_id, user_id, page)`
+
+### Nova tabela `bookmarks` (Marcadores Pessoais de Leitura)
+- **Finalidade**: Marcadores rápidos de página PDF ou posição EPUB CFI, estritamente privados por usuário.
+- **Campos Chave**:
+  - `id TEXT PRIMARY KEY`
+  - `book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE`
+  - `user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE`
+  - `page INTEGER NOT NULL DEFAULT 1 CHECK (page >= 1)`
+  - `epub_cfi TEXT NULL, chapter_label TEXT NULL, label TEXT NOT NULL DEFAULT ''`
+  - `created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`
+- **Índices**:
+  - `idx_bookmarks_book_user_page ON bookmarks(book_id, user_id, page)`
+  - `uq_bookmarks_book_user_pos ON bookmarks(book_id, user_id, page, COALESCE(epub_cfi, ''))` (previne duplicação na mesma posição)
 
 ---
 

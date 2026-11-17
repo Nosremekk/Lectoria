@@ -125,17 +125,33 @@ from collections_service import (
 )
 from annotations_service import (
     AnnotationNotFoundError,
+    AnnotationPermissionError,
+    MAX_BOOKMARK_LABEL_LEN,
+    MAX_CHAPTER_LABEL_LEN,
+    MAX_EPUB_CFI_LEN,
+    MAX_NOTE_CONTENT_LEN,
+    MAX_RECTS_PER_HIGHLIGHT,
+    MAX_SELECTED_TEXT_LEN,
+    MAX_STROKES_PER_DRAWING,
+    MAX_TEXT_CONTEXT_LEN,
+    create_bookmark,
     create_highlight,
-    get_highlights,
-    delete_highlight,
     create_note,
-    get_notes,
-    update_note,
+    delete_bookmark,
+    delete_highlight,
     delete_note,
-    get_page_drawing,
-    save_page_drawing,
     delete_page_drawing,
     get_book_annotations_summary,
+    get_highlights,
+    get_notes,
+    get_page_drawing,
+    get_page_drawings_bundle,
+    list_bookmarks,
+    save_page_drawing,
+    set_highlight_visibility,
+    set_note_visibility,
+    set_page_drawing_visibility,
+    update_note,
 )
 from backup_service import (
     BackupError,
@@ -339,27 +355,59 @@ class BookCollectionsPayload(BaseModel):
 
 
 class HighlightCreatePayload(BaseModel):
-    page: int = Field(ge=1, description="Número da página")
-    color: str = Field(default="#fef08a", description="Cor de destaque em hexadecimal")
-    rects: list[dict] = Field(description="Retângulos normalizados de seleção")
-    selected_text: str = Field(min_length=1, description="Texto selecionado")
-    text_context: Optional[str] = Field(default=None, description="Contexto do texto")
+    model_config = ConfigDict(extra="forbid")
+
+    page: int = Field(default=1, ge=1, description="Número da página")
+    color: str = Field(default="#fef08a", max_length=32, description="Cor de destaque em hexadecimal")
+    rects: list[dict] = Field(default_factory=list, max_length=MAX_RECTS_PER_HIGHLIGHT, description="Retângulos normalizados de seleção")
+    selected_text: str = Field(min_length=1, max_length=MAX_SELECTED_TEXT_LEN, description="Texto selecionado")
+    text_context: Optional[str] = Field(default=None, max_length=MAX_TEXT_CONTEXT_LEN, description="Contexto do texto")
+    epub_cfi: Optional[str] = Field(default=None, max_length=MAX_EPUB_CFI_LEN, description="Âncora EPUB CFI")
+    chapter_label: Optional[str] = Field(default=None, max_length=MAX_CHAPTER_LABEL_LEN, description="Rótulo do capítulo")
+    visibility: Literal["private", "public"] = Field(default="private", description="Visibilidade do destaque")
 
 
 class NoteCreatePayload(BaseModel):
-    page: int = Field(ge=1, description="Número da página")
-    content: str = Field(min_length=1, description="Conteúdo da anotação")
-    color: Optional[str] = Field(default="#fef08a", description="Cor temática")
-    highlight_id: Optional[str] = Field(default=None, description="ID do destaque vinculado se houver")
+    model_config = ConfigDict(extra="forbid")
+
+    page: int = Field(default=1, ge=1, description="Número da página")
+    content: str = Field(min_length=1, max_length=MAX_NOTE_CONTENT_LEN, description="Conteúdo da anotação")
+    color: Optional[str] = Field(default="#fef08a", max_length=32, description="Cor temática")
+    highlight_id: Optional[str] = Field(default=None, max_length=128, description="ID do destaque vinculado se houver")
+    epub_cfi: Optional[str] = Field(default=None, max_length=MAX_EPUB_CFI_LEN, description="Âncora EPUB CFI")
+    chapter_label: Optional[str] = Field(default=None, max_length=MAX_CHAPTER_LABEL_LEN, description="Rótulo do capítulo")
+    visibility: Literal["private", "public"] = Field(default="private", description="Visibilidade da nota")
 
 
 class NoteUpdatePayload(BaseModel):
-    content: str = Field(min_length=1, description="Conteúdo da anotação")
-    color: Optional[str] = Field(default=None, description="Cor temática")
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(min_length=1, max_length=MAX_NOTE_CONTENT_LEN, description="Conteúdo da anotação")
+    color: Optional[str] = Field(default=None, max_length=32, description="Cor temática")
+    visibility: Optional[Literal["private", "public"]] = Field(default=None, description="Visibilidade opcional da nota")
+    chapter_label: Optional[str] = Field(default=None, max_length=MAX_CHAPTER_LABEL_LEN, description="Rótulo do capítulo")
 
 
 class DrawingSavePayload(BaseModel):
-    strokes: list[dict] = Field(description="Array de traços vetoriais com pontos normalizados")
+    model_config = ConfigDict(extra="forbid")
+
+    strokes: list[dict] = Field(max_length=MAX_STROKES_PER_DRAWING, description="Array de traços vetoriais com pontos normalizados")
+    visibility: Optional[Literal["private", "public"]] = Field(default=None, description="Visibilidade opcional do desenho")
+
+
+class AnnotationVisibilityPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    visibility: Literal["private", "public"] = Field(description="Visibilidade da anotação: 'private' ou 'public'")
+
+
+class BookmarkCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    page: int = Field(default=1, ge=1, description="Número da página")
+    epub_cfi: Optional[str] = Field(default=None, max_length=MAX_EPUB_CFI_LEN, description="Âncora EPUB CFI")
+    chapter_label: Optional[str] = Field(default=None, max_length=MAX_CHAPTER_LABEL_LEN, description="Rótulo do capítulo")
+    label: Optional[str] = Field(default="", max_length=MAX_BOOKMARK_LABEL_LEN, description="Rótulo opcional do marcador")
 
 
 class MetadataSearchPayload(BaseModel):
@@ -1928,52 +1976,109 @@ async def update_book_collections_endpoint(book_id: str, payload: BookCollection
 
 
 # =========================================================================
-# ENDPOINTS DE ANOTAÇÕES, MARCA-TEXTO E DESENHOS (ISOLADOS POR USUÁRIO)
+# ENDPOINTS DE ANOTAÇÕES, MARCA-TEXTO, DESENHOS E MARCADORES (v1.8.0)
 # =========================================================================
 
 @app.get("/api/books/{book_id}/annotations")
-async def get_all_book_annotations(book_id: str, request: Request):
-    """Retorna as anotações, destaques e desenhos do usuário autenticado."""
+async def get_all_book_annotations(
+    book_id: str,
+    request: Request,
+    response: Response,
+    scope: Literal["mine", "public", "all_visible"] = Query(default="mine"),
+    search: Optional[str] = Query(default=None, max_length=300),
+    sort: Literal["position", "recent"] = Query(default="position"),
+    epub_cfi: Optional[str] = Query(default=None, max_length=MAX_EPUB_CFI_LEN),
+    limit: Optional[int] = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """Retorna o resumo de anotações, destaques, desenhos e marcadores conforme o escopo."""
     user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
     try:
         get_book(book_id, user_id=user["id"])
+        summary = get_book_annotations_summary(
+            book_id=book_id,
+            user_id=user["id"],
+            scope=scope,
+            epub_cfi=epub_cfi,
+            search=search,
+            sort_by=sort,
+            limit=limit,
+            offset=offset,
+        )
+        return summary
     except SecurityError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except BookNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-
-    summary = get_book_annotations_summary(book_id, user_id=user["id"])
-    return summary
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @app.get("/api/books/{book_id}/pages/{page}/annotations")
-async def get_page_annotations(book_id: str, page: int, request: Request):
-    """Retorna os destaques, notas e desenhos de uma página para o usuário autenticado."""
+async def get_page_annotations(
+    book_id: str,
+    page: int,
+    request: Request,
+    response: Response,
+    scope: Literal["mine", "public", "all_visible"] = Query(default="mine"),
+    epub_cfi: Optional[str] = Query(default=None, max_length=MAX_EPUB_CFI_LEN),
+    search: Optional[str] = Query(default=None, max_length=300),
+    sort: Literal["position", "recent"] = Query(default="position"),
+):
+    """Retorna os destaques, notas e desenhos (próprios e públicos) de uma página/posição."""
     user = require_user(request)
+    if page < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Número de página inválido.")
+    response.headers["Cache-Control"] = "private, no-store"
     try:
         get_book(book_id, user_id=user["id"])
+        highlights = get_highlights(
+            book_id,
+            page=page,
+            user_id=user["id"],
+            scope=scope,
+            epub_cfi=epub_cfi,
+            search=search,
+            sort_by=sort,
+        )
+        notes = get_notes(
+            book_id,
+            page=page,
+            user_id=user["id"],
+            scope=scope,
+            epub_cfi=epub_cfi,
+            search=search,
+            sort_by=sort,
+        )
+        bundle = get_page_drawings_bundle(book_id, page=page, user_id=user["id"])
     except SecurityError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except BookNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    highlights = get_highlights(book_id, page=page, user_id=user["id"])
-    notes = get_notes(book_id, page=page, user_id=user["id"])
-    drawing = get_page_drawing(book_id, page, user_id=user["id"])
+    own_drawing = bundle["own_drawing"]
+    public_drawings = bundle["public_drawings"] if scope in ("public", "all_visible") else []
 
     return {
         "page": page,
+        "scope": scope,
         "highlights": highlights,
         "notes": notes,
-        "drawing": drawing,
+        "drawing": own_drawing,
+        "own_drawing": own_drawing,
+        "public_drawings": public_drawings,
     }
 
 
 @app.post("/api/books/{book_id}/highlights", status_code=status.HTTP_201_CREATED)
 async def create_new_highlight(book_id: str, payload: HighlightCreatePayload, request: Request):
-    """Cria um novo destaque de texto vinculado ao usuário autenticado."""
+    """Cria um novo destaque de texto vinculado ao usuário autenticado (privado por padrão)."""
     user = require_user(request)
     try:
+        get_book(book_id, user_id=user["id"])
         highlight = create_highlight(
             book_id=book_id,
             page=payload.page,
@@ -1982,8 +2087,43 @@ async def create_new_highlight(book_id: str, payload: HighlightCreatePayload, re
             selected_text=payload.selected_text,
             text_context=payload.text_context,
             user_id=user["id"],
+            epub_cfi=payload.epub_cfi,
+            chapter_label=payload.chapter_label,
+            visibility=payload.visibility,
         )
         return {"status": "success", "highlight": highlight}
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.patch("/api/books/{book_id}/highlights/{highlight_id}/visibility")
+@app.patch("/api/highlights/{highlight_id}/visibility")
+async def patch_highlight_visibility(
+    highlight_id: str,
+    payload: AnnotationVisibilityPayload,
+    request: Request,
+    book_id: Optional[str] = None,
+):
+    """Altera explicitamente a visibilidade ('private' | 'public') de um destaque do próprio usuário."""
+    user = require_user(request)
+    try:
+        if book_id is not None:
+            get_book(book_id, user_id=user["id"])
+        updated = set_highlight_visibility(
+            highlight_id=highlight_id,
+            visibility=payload.visibility,
+            user_id=user["id"],
+            book_id=book_id,
+        )
+        return {"status": "success", "highlight": updated}
+    except (SecurityError, AnnotationPermissionError) as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except (BookNotFoundError, AnnotationNotFoundError) as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -1993,7 +2133,15 @@ async def create_new_highlight(book_id: str, payload: HighlightCreatePayload, re
 async def remove_highlight(highlight_id: str, request: Request, book_id: Optional[str] = None):
     """Remove um destaque do usuário autenticado."""
     user = require_user(request)
-    deleted = delete_highlight(highlight_id, user_id=user["id"])
+    try:
+        if book_id is not None:
+            get_book(book_id, user_id=user["id"])
+        deleted = delete_highlight(highlight_id, user_id=user["id"], book_id=book_id)
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Destaque não encontrado.")
     return {"status": "success", "message": "Destaque removido com sucesso."}
@@ -2001,9 +2149,10 @@ async def remove_highlight(highlight_id: str, request: Request, book_id: Optiona
 
 @app.post("/api/books/{book_id}/notes", status_code=status.HTTP_201_CREATED)
 async def create_new_note(book_id: str, payload: NoteCreatePayload, request: Request):
-    """Cria uma nova nota textual vinculada ao usuário autenticado."""
+    """Cria uma nova nota textual vinculada ao usuário autenticado (privada por padrão)."""
     user = require_user(request)
     try:
+        get_book(book_id, user_id=user["id"])
         note = create_note(
             book_id=book_id,
             page=payload.page,
@@ -2011,8 +2160,15 @@ async def create_new_note(book_id: str, payload: NoteCreatePayload, request: Req
             color=payload.color,
             highlight_id=payload.highlight_id,
             user_id=user["id"],
+            epub_cfi=payload.epub_cfi,
+            chapter_label=payload.chapter_label,
+            visibility=payload.visibility,
         )
         return {"status": "success", "note": note}
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -2023,14 +2179,49 @@ async def modify_note(note_id: str, payload: NoteUpdatePayload, request: Request
     """Atualiza uma nota do usuário autenticado."""
     user = require_user(request)
     try:
+        if book_id is not None:
+            get_book(book_id, user_id=user["id"])
         updated = update_note(
             note_id=note_id,
             content=payload.content,
             color=payload.color,
             user_id=user["id"],
+            visibility=payload.visibility,
+            chapter_label=payload.chapter_label,
+            book_id=book_id,
         )
         return {"status": "success", "note": updated}
-    except AnnotationNotFoundError as e:
+    except (SecurityError, AnnotationPermissionError) as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except (BookNotFoundError, AnnotationNotFoundError) as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.patch("/api/books/{book_id}/notes/{note_id}/visibility")
+@app.patch("/api/notes/{note_id}/visibility")
+async def patch_note_visibility(
+    note_id: str,
+    payload: AnnotationVisibilityPayload,
+    request: Request,
+    book_id: Optional[str] = None,
+):
+    """Altera explicitamente a visibilidade ('private' | 'public') de uma nota do próprio usuário."""
+    user = require_user(request)
+    try:
+        if book_id is not None:
+            get_book(book_id, user_id=user["id"])
+        updated = set_note_visibility(
+            note_id=note_id,
+            visibility=payload.visibility,
+            user_id=user["id"],
+            book_id=book_id,
+        )
+        return {"status": "success", "note": updated}
+    except (SecurityError, AnnotationPermissionError) as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except (BookNotFoundError, AnnotationNotFoundError) as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -2041,41 +2232,98 @@ async def modify_note(note_id: str, payload: NoteUpdatePayload, request: Request
 async def remove_note(note_id: str, request: Request, book_id: Optional[str] = None):
     """Exclui uma nota do usuário autenticado."""
     user = require_user(request)
-    deleted = delete_note(note_id, user_id=user["id"])
+    try:
+        if book_id is not None:
+            get_book(book_id, user_id=user["id"])
+        deleted = delete_note(note_id, user_id=user["id"], book_id=book_id)
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nota não encontrada.")
     return {"status": "success", "message": "Nota removida com sucesso."}
 
 
 @app.get("/api/books/{book_id}/pages/{page}/drawing")
-async def get_drawing_endpoint(book_id: str, page: int, request: Request):
-    """Recupera os traços vetoriais da página para o usuário autenticado."""
+async def get_drawing_endpoint(
+    book_id: str,
+    page: int,
+    request: Request,
+    response: Response,
+    scope: Literal["mine", "public", "all_visible"] = Query(default="all_visible"),
+):
+    """Recupera os traços vetoriais da página (próprios e públicos de outros leitores)."""
     user = require_user(request)
+    if page < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Número de página inválido.")
+    response.headers["Cache-Control"] = "private, no-store"
     try:
         get_book(book_id, user_id=user["id"])
+        bundle = get_page_drawings_bundle(book_id=book_id, page=page, user_id=user["id"])
     except SecurityError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except BookNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    drawing = get_page_drawing(book_id=book_id, page=page, user_id=user["id"])
-    return drawing
+    own = bundle["own_drawing"]
+    pub = bundle["public_drawings"] if scope in ("public", "all_visible") else []
+    return {
+        **own,
+        "own_drawing": own,
+        "public_drawings": pub,
+    }
 
 
 @app.put("/api/books/{book_id}/pages/{page}/drawing")
 async def update_page_drawing(book_id: str, page: int, payload: DrawingSavePayload, request: Request):
     """Salva os traços vetoriais da página para o usuário autenticado."""
     user = require_user(request)
+    if page < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Número de página inválido.")
     try:
         get_book(book_id, user_id=user["id"])
+        result = save_page_drawing(
+            book_id=book_id,
+            page=page,
+            strokes=payload.strokes,
+            user_id=user["id"],
+            visibility=payload.visibility,
+        )
+        return result
     except SecurityError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except BookNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+
+@app.patch("/api/books/{book_id}/pages/{page}/drawing/visibility")
+async def patch_page_drawing_visibility(
+    book_id: str,
+    page: int,
+    payload: AnnotationVisibilityPayload,
+    request: Request,
+):
+    """Altera explicitamente a visibilidade ('private' | 'public') do desenho da página do usuário."""
+    user = require_user(request)
+    if page < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Número de página inválido.")
     try:
-        result = save_page_drawing(book_id=book_id, page=page, strokes=payload.strokes, user_id=user["id"])
-        return result
+        get_book(book_id, user_id=user["id"])
+        updated = set_page_drawing_visibility(
+            book_id=book_id,
+            page=page,
+            visibility=payload.visibility,
+            user_id=user["id"],
+        )
+        return {"status": "success", "drawing": updated}
+    except (SecurityError, AnnotationPermissionError) as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except (BookNotFoundError, AnnotationNotFoundError) as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -2084,6 +2332,8 @@ async def update_page_drawing(book_id: str, page: int, payload: DrawingSavePaylo
 async def clear_page_drawing(book_id: str, page: int, request: Request):
     """Limpa todos os traços de desenho da página para o usuário autenticado."""
     user = require_user(request)
+    if page < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Número de página inválido.")
     try:
         get_book(book_id, user_id=user["id"])
     except SecurityError as e:
@@ -2093,6 +2343,77 @@ async def clear_page_drawing(book_id: str, page: int, request: Request):
 
     deleted = delete_page_drawing(book_id=book_id, page=page, user_id=user["id"])
     return {"status": "success", "cleared": deleted}
+
+
+@app.get("/api/books/{book_id}/bookmarks")
+async def get_book_bookmarks_endpoint(
+    book_id: str,
+    request: Request,
+    response: Response,
+    limit: Optional[int] = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """Lista os marcadores pessoais (sempre privados) do usuário autenticado para o livro."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        get_book(book_id, user_id=user["id"])
+        bookmarks = list_bookmarks(book_id=book_id, user_id=user["id"], limit=limit, offset=offset)
+        return {"book_id": book_id, "bookmarks": bookmarks, "count": len(bookmarks)}
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@app.post("/api/books/{book_id}/bookmarks", status_code=status.HTTP_201_CREATED)
+async def create_book_bookmark_endpoint(
+    book_id: str,
+    payload: BookmarkCreatePayload,
+    request: Request,
+):
+    """Cria ou atualiza um marcador pessoal de leitura para página PDF ou posição EPUB CFI."""
+    user = require_user(request)
+    try:
+        get_book(book_id, user_id=user["id"])
+        bookmark = create_bookmark(
+            book_id=book_id,
+            user_id=user["id"],
+            page=payload.page,
+            epub_cfi=payload.epub_cfi,
+            chapter_label=payload.chapter_label,
+            label=payload.label or "",
+        )
+        return {"status": "success", "bookmark": bookmark}
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.delete("/api/books/{book_id}/bookmarks/{bookmark_id}")
+@app.delete("/api/bookmarks/{bookmark_id}")
+async def delete_book_bookmark_endpoint(
+    bookmark_id: str,
+    request: Request,
+    book_id: Optional[str] = None,
+):
+    """Remove um marcador pessoal pertencente ao usuário autenticado."""
+    user = require_user(request)
+    try:
+        if book_id is not None:
+            get_book(book_id, user_id=user["id"])
+        deleted = delete_bookmark(bookmark_id=bookmark_id, user_id=user["id"], book_id=book_id)
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Marcador não encontrado.")
+    return {"status": "success", "message": "Marcador removido com sucesso."}
 
 
 # =========================================================================

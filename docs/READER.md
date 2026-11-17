@@ -90,3 +90,64 @@ Ao abrir o leitor via link gerado na Leitura Compartilhada ou biblioteca, a fun�
 - As mensagens de alerta e fallback utilizam um elemento flutuante independente `#reader-toast` com classes `.success` e `.error`.
 - Anunciado para leitores de tela com `role="status"` e `aria-live="polite"`.
 - Desaparece automaticamente após 4 segundos, sem congelar a leitura ou bloquear cliques nos controles do leitor.
+
+---
+
+## 6. Leitor PDF Colaborativo e Experiência de Leitura (v1.8.0 — Fase 3)
+
+### 6.1 Arquitetura em Camadas no Container da Página PDF (`.page-container`)
+Cada página PDF (no modo Página Única `#single-page-wrapper` e nos slots virtualizados `.page-slot` da Rolagem Contínua) empilha as seguintes camadas em ordem estrita de `z-index`:
+1. `<canvas>` (`PDF.js`): renderização do documento.
+2. `<div class="textLayer">`: camada de seleção de texto nativa.
+3. `<div class="highlights-layer">`: destaques próprios (`.highlight-box`) e destaques públicos de terceiros (`.highlight-box.highlight-public-other` com contorno tracejado).
+4. `<svg class="public-drawing-layer">`: desenhos públicos de outros leitores (`pointer-events: none`, imune à borracha e ao botão *Limpar Página*).
+5. `<svg class="drawing-layer">`: camada pessoal de desenho vetorial do usuário autenticado (editável no modo `Desenhar`).
+6. `<div class="page-note-pins-layer">`: indicadores discretos de notas na margem da página (`.page-note-pin`) e selo de autoria de desenhos públicos (`.page-public-drawings-badge`).
+
+### 6.2 Geometria Isotrópica e Escalabilidade dos Desenhos (`viewBox`)
+- Todas as coordenadas permanecem armazenadas no SQLite no intervalo normalizado `[0.0..1.0]` para preservar 100% de compatibilidade retroativa.
+- Na renderização SVG, `applySvgViewBox()` calcula a razão de aspecto real da página (`aspect = height / width`) e define `viewBox="0 0 1000 ${vbHeight}"` com `preserveAspectRatio="xMidYMid meet"`.
+- Como as unidades X e Y são isotrópicas, a espessura dos traços (`stroke-width`) é uniforme em todas as direções e escala proporcionalmente em hardware durante zoom (`0.4x–4.0x`), ajuste à largura (`w`), ajuste à página (`p`) e redimensionamento de viewport.
+
+### 6.3 Popovers Contextuais, Publicação Explícita e Controle de Camadas
+- **Popover de Destaque (`#highlight-popover`) e Nota (`#page-note-popover`)**: substituem o `window.confirm()` imediato ao clicar em um destaque, exibindo texto/conteúdo sanitizado (`textContent`), avatar e nome do autor, nota vinculada autorizada, estado de visibilidade e ações permitidas (apenas leitura para itens de terceiros).
+- **Publicação Explícita**: toda anotação e desenho nasce `private`. Ao publicar pela primeira vez na sessão, `confirmFirstPublicShare()` exibe um aviso claro informando que outros leitores autenticados com acesso ao livro verão o conteúdo e o nome de exibição do autor.
+- **Controle de Visualização (`#layer-view-mode-select`)**: alterna entre `all_visible` (*Minhas + Públicas*), `mine` (*Somente minhas*) e `hidden` (*Ocultar anotações*), persistindo a preferência localmente isolada por usuário (`lectoria_layer_view_mode_u{userId}`) sem alterar `visibility` no banco.
+- **Modo Marca-Texto Ativo (`#btn-tool-highlight`)**: destaca automaticamente o texto selecionado no PDF ao soltar o ponteiro (`mouseup`/`touchend`).
+- **Correção de `dockMargin` e Busca Textual**: `renderSlotPage()` aplica o mesmo `dockMargin = 72px` em tablets (`768px–1280px`) que `calculateScaleForPage()`, e `#reader-search-bar` (`Ctrl+F` / `/`) realiza busca incremental via `page.getTextContent()` com cache leve por página.
+
+---
+
+## 7. Leitor EPUB Colaborativo (v1.8.0 — Fase 4)
+
+### 7.1 Seleção Universal e Persistência por EPUB CFI
+- O listener `epubRendition.on("selected", (cfiRange, contents) => ...)` funciona em **qualquer livro EPUB**, independentemente de vínculo com clubes ou leituras coletivas.
+- A barra `#selection-toolbar` exibe as 5 cores de destaque, o botão **Nota** e (condicionalmente, apenas quando `eligibleCollectiveReads.length > 0`) o botão **Compartilhar na Leitura Coletiva**.
+- Destaques e notas são persistidos com `epub_cfi` (`epubcfi(...)`), `chapter_label` resolvido via TOC achatado (`flattenEpubToc`) e `rects: []` (sem conversão para coordenadas fixas PDF).
+
+### 7.2 Renderização via `epubRendition.annotations` e Tolerância a Reflow
+- `renderEpubHighlights()` limpa registros anteriores (`epubRendition.annotations.remove`) e registra os destaques visíveis conforme `layerViewMode` (`all_visible`, `mine`, `hidden`) usando `epubRendition.annotations.highlight(...)`.
+- Destaques públicos de terceiros recebem contorno tracejado (`.epub-hl-public-other`) e abrem `#highlight-popover` com coordenadas convertidas do iframe para a janela principal (`getEpubAnchorRectFromEvent()`).
+- Alterações de tamanho de fonte (`60%–220%`), família (`serif`/`sans-serif`), espaçamento entre linhas (`1.4`, `1.65`, `1.9`), margens (`compact`, `normal`, `wide`), tema (`dark`, `light`, `sepia`) e redimensionamento de viewport acionam `renderEpubHighlights()` para manter o alinhamento exato após o reflow.
+- `epubRendition.on("rendered")` e `epubRendition.on("relocated")` re-sincronizam destaques e pins de notas (`#epub-note-pins-layer`) sem duplicar listeners (`epubEventsBound`).
+
+### 7.3 Navegação Direta por CFI e Fallback Seguro
+- `navigateToEpubCfi(cfi, fallbackChapterLabel)` valida o formato `epubcfi(...)`, navega com `epubRendition.display(cfi)` e aplica destaque temporário de 1,8s na passagem localizada.
+- Em caso de CFI inválido ou incompatível, tenta fallback pelo capítulo correspondente no TOC sem sobrescrever o progresso atual, exibindo toast informativo.
+
+---
+
+## 8. Caderno de Estudos Colaborativo e Marcadores Pessoais (v1.8.0 — Fase 5)
+
+### 8.1 Escopos Independentes, Abas e Ordenação
+- O painel `#annotations-drawer` mantém `drawerState` independente do controle de camadas da página (`layerViewMode`):
+  - **Minhas** (`scope=mine`), **Públicas** (`scope=public`) e **Todas visíveis** (`scope=all_visible`).
+- **Abas**: `Todas`, `Destaques`, `Notas`, `Desenhos` e `Marcadores` (`bookmarks`). A aba `Marcadores` exibe exclusivamente marcadores pessoais e privados do usuário autenticado, sem opção de publicação.
+- **Ordenação**:
+  - `recent`: ordem cronológica decrescente (`created_at DESC` / `updated_at DESC`).
+  - `position`: agrupamento por página no PDF e ordenação numérica de segmentos CFI (`compareEpubCfi()`) no EPUB (evitando erro lexicográfico `"10" < "4"`).
+
+### 8.2 Pesquisa, Paginação Incremental e Marcador Rápido
+- Pesquisa com debounce de 280ms, `AbortController` e guarda `requestSeq` contra respostas antigas; busca segura em conteúdo, texto destacado, capítulo e nome público do autor.
+- Paginação incremental (`limit = 50`, botão **Carregar mais**) usando `has_more` e `total_counts` retornados pelo backend, com merge sem duplicatas por `id`.
+- Botão `#btn-toggle-bookmark` (atalho `k`) no cabeçalho do leitor e `#btn-mobile-sheet-bookmark` no mobile criam/removem marcadores na página PDF ou `epub_cfi` atual.

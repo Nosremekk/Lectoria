@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Generator, Optional
 import config
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -151,6 +151,10 @@ def init_db(db_path: Optional[Path] = None) -> None:
             if current_version < 11:
                 _apply_migration_v11(cursor)
                 cursor.execute("INSERT INTO schema_migrations (version) VALUES (11);")
+
+            if current_version < 12:
+                _apply_migration_v12(cursor)
+                cursor.execute("INSERT INTO schema_migrations (version) VALUES (12);")
 
             conn.commit()
         except Exception:
@@ -1419,6 +1423,179 @@ def _apply_migration_v11(cursor: sqlite3.Cursor) -> None:
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_col_quotes_book ON collective_shared_quotes(book_id);"
     )
+
+
+def _apply_migration_v12(cursor: sqlite3.Cursor) -> None:
+    """
+    Migração v12 — Anotações Colaborativas nos Leitores PDF/EPUB e Marcadores Pessoais (v1.8.0).
+    - Evolui `highlights`, `notes` e `page_drawings` com visibilidade explícita ('private' | 'public',
+      estritamente 'private' por padrão para todos os registros existentes e novos).
+    - Adiciona suporte a `epub_cfi` e `chapter_label` em `highlights` e `notes`.
+    - Cria a tabela `bookmarks` para marcadores pessoais de leitura (PDF e EPUB).
+    - Cria índices compostos para consultas eficientes por livro, visibilidade, usuário, página e CFI.
+    """
+    # 1. Evolução da tabela highlights (garante existência caso banco sintético de teste não tenha rodado v3/v4)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS highlights (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            page INTEGER NOT NULL,
+            color TEXT NOT NULL DEFAULT '#fef08a',
+            rects_json TEXT NOT NULL,
+            selected_text TEXT NOT NULL,
+            text_context TEXT,
+            user_id INTEGER NOT NULL DEFAULT 1,
+            visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public')),
+            epub_cfi TEXT,
+            chapter_label TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute("PRAGMA table_info(highlights);")
+    hl_cols = {r["name"] for r in cursor.fetchall()}
+    if "user_id" not in hl_cols:
+        cursor.execute("ALTER TABLE highlights ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;")
+    if "visibility" not in hl_cols:
+        cursor.execute(
+            """
+            ALTER TABLE highlights
+            ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'
+            CHECK (visibility IN ('private', 'public'));
+            """
+        )
+    if "epub_cfi" not in hl_cols:
+        cursor.execute("ALTER TABLE highlights ADD COLUMN epub_cfi TEXT;")
+    if "chapter_label" not in hl_cols:
+        cursor.execute("ALTER TABLE highlights ADD COLUMN chapter_label TEXT;")
+    if "updated_at" not in hl_cols:
+        cursor.execute("ALTER TABLE highlights ADD COLUMN updated_at TIMESTAMP;")
+        cursor.execute(
+            "UPDATE highlights SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL;"
+        )
+
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_highlights_book_vis_page ON highlights(book_id, visibility, page);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_highlights_book_user_page ON highlights(book_id, user_id, page);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_highlights_book_cfi ON highlights(book_id, epub_cfi);"
+    )
+
+    # 2. Evolução da tabela notes
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notes (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            page INTEGER NOT NULL,
+            highlight_id TEXT REFERENCES highlights(id) ON DELETE SET NULL,
+            content TEXT NOT NULL,
+            color TEXT DEFAULT '#fef08a',
+            user_id INTEGER NOT NULL DEFAULT 1,
+            visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public')),
+            epub_cfi TEXT,
+            chapter_label TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute("PRAGMA table_info(notes);")
+    note_cols = {r["name"] for r in cursor.fetchall()}
+    if "user_id" not in note_cols:
+        cursor.execute("ALTER TABLE notes ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;")
+    if "visibility" not in note_cols:
+        cursor.execute(
+            """
+            ALTER TABLE notes
+            ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'
+            CHECK (visibility IN ('private', 'public'));
+            """
+        )
+    if "epub_cfi" not in note_cols:
+        cursor.execute("ALTER TABLE notes ADD COLUMN epub_cfi TEXT;")
+    if "chapter_label" not in note_cols:
+        cursor.execute("ALTER TABLE notes ADD COLUMN chapter_label TEXT;")
+
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notes_book_vis_page ON notes(book_id, visibility, page);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notes_book_user_page ON notes(book_id, user_id, page);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notes_book_cfi ON notes(book_id, epub_cfi);"
+    )
+
+    # 3. Evolução da tabela page_drawings
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS page_drawings (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            page INTEGER NOT NULL,
+            strokes_json TEXT NOT NULL,
+            user_id INTEGER NOT NULL DEFAULT 1 REFERENCES users(id) ON DELETE CASCADE,
+            visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public')),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(book_id, page, user_id)
+        );
+        """
+    )
+    cursor.execute("PRAGMA table_info(page_drawings);")
+    draw_cols = {r["name"] for r in cursor.fetchall()}
+    if "user_id" not in draw_cols:
+        cursor.execute("ALTER TABLE page_drawings ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;")
+    if "visibility" not in draw_cols:
+        cursor.execute(
+            """
+            ALTER TABLE page_drawings
+            ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'
+            CHECK (visibility IN ('private', 'public'));
+            """
+        )
+    if "created_at" not in draw_cols:
+        cursor.execute("ALTER TABLE page_drawings ADD COLUMN created_at TIMESTAMP;")
+        cursor.execute(
+            "UPDATE page_drawings SET created_at = COALESCE(updated_at, CURRENT_TIMESTAMP) WHERE created_at IS NULL;"
+        )
+
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_drawings_book_vis_page ON page_drawings(book_id, visibility, page);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_drawings_book_user_page ON page_drawings(book_id, user_id, page);"
+    )
+
+    # 4. Tabela de Marcadores Pessoais de Leitura (Bookmarks)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bookmarks (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            page INTEGER NOT NULL DEFAULT 1 CHECK (page >= 1),
+            epub_cfi TEXT NULL,
+            chapter_label TEXT NULL,
+            label TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bookmarks_book_user_page ON bookmarks(book_id, user_id, page);"
+    )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_bookmarks_book_user_pos ON bookmarks(book_id, user_id, page, COALESCE(epub_cfi, ''));"
+    )
+
 
 
 

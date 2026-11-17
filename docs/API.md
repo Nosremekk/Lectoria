@@ -127,11 +127,57 @@ Grupo de 18 rotas REST introduzidas na v1.7.0 gerenciadas por `shared_reading_se
 
 ---
 
-## 6. Anotações Pessoais (`/api/books/{id}/*`)
+## 6. Anotações Colaborativas, Desenhos e Marcadores (`/api/books/{id}/*` — v1.8.0)
 
-- `GET /api/books/{id}/notes`: Lista notas privadas do usuário ativo na obra.
-- `POST /api/books/{id}/notes`: Criação de nota textual privada vinculada a página ou destaque.
-- `PUT /api/books/{id}/notes/{note_id}`: Edição de nota privada.
-- `DELETE /api/books/{id}/notes/{note_id}`: Exclusão física de nota privada.
-- `GET /api/books/{id}/highlights`: Lista marcações coloridas do usuário no leitor.
-- `POST /api/books/{id}/highlights`: Salva destaque com coordenadas normalizadas.
+Todas as rotas exigem sessão autenticada (`require_user`) e verificam o acesso autorizado ao livro (`books.id` canônico, `is_missing = 0`, fonte `is_active = 1`). Rotas de leitura incluem `Cache-Control: private, no-store` para garantir que revogações de visibilidade (`public -> private`) tenham efeito imediato. Rotas de escrita exigem cabeçalho `x-csrf-token` e utilizam modelos Pydantic v2 com `ConfigDict(extra="forbid")`.
+
+### 6.1 Resumo e Consulta por Página/Posição
+- **`GET /api/books/{book_id}/annotations`**
+  - Query params: `scope` (`mine` [default], `public`, `all_visible`), `search` (opcional, máx. 300 chars; busca em conteúdo, texto destacado, capítulo e nome público do autor), `sort` (`position` [default], `recent`), `epub_cfi` (opcional), `limit` (`1..500`), `offset` (`>= 0`).
+  - Retorna `{ "scope", "highlights", "notes", "drawing_pages", "bookmarks", "has_more", "total_counts", "counts" }`.
+- **`GET /api/books/{book_id}/pages/{page}/annotations`**
+  - Query params: `scope` (`mine` [default], `public`, `all_visible`), `epub_cfi`, `search`, `sort` (`position` | `recent`).
+  - Retorna `{ "page", "scope", "highlights", "notes", "drawing", "own_drawing", "public_drawings" }`.
+
+### 6.2 Destaques (`highlights` — PDF & EPUB CFI)
+- **`POST /api/books/{book_id}/highlights`** (`201 Created`)
+  - Payload (`HighlightCreatePayload`): `{ "page": int, "color": str, "rects": list[dict], "selected_text": str, "text_context": Optional[str], "epub_cfi": Optional[str], "chapter_label": Optional[str], "visibility": "private" | "public" }`.
+  - Privado por padrão (`visibility = "private"`). Exige `rects` para PDF ou `epub_cfi` válido (`epubcfi(...)`) para EPUB.
+- **`PATCH /api/books/{book_id}/highlights/{highlight_id}/visibility`** (e alias `PATCH /api/highlights/{highlight_id}/visibility`)
+  - Payload (`AnnotationVisibilityPayload`): `{ "visibility": "private" | "public" }`.
+  - Exclusivo ao autor do destaque (`403`/`404` para terceiros).
+- **`DELETE /api/books/{book_id}/highlights/{highlight_id}`** (e alias `DELETE /api/highlights/{highlight_id}`)
+  - Remove fisicamente um destaque pertencente ao usuário autenticado.
+
+### 6.3 Notas Textuais (`notes` — PDF & EPUB CFI)
+- **`POST /api/books/{book_id}/notes`** (`201 Created`)
+  - Payload (`NoteCreatePayload`): `{ "page": int, "content": str, "color": Optional[str], "highlight_id": Optional[str], "epub_cfi": Optional[str], "chapter_label": Optional[str], "visibility": "private" | "public" }`.
+  - Privada por padrão (`visibility = "private"`). Se `highlight_id` for informado, valida posse e mesmo livro, herdando `epub_cfi` e `chapter_label` caso omitidos.
+- **`PUT /api/books/{book_id}/notes/{note_id}`** (e alias `PUT /api/notes/{note_id}`)
+  - Payload (`NoteUpdatePayload`): `{ "content": str, "color": Optional[str], "visibility": Optional["private" | "public"], "chapter_label": Optional[str] }`.
+- **`PATCH /api/books/{book_id}/notes/{note_id}/visibility`** (e alias `PATCH /api/notes/{note_id}/visibility`)
+  - Payload (`AnnotationVisibilityPayload`): `{ "visibility": "private" | "public" }`.
+- **`DELETE /api/books/{book_id}/notes/{note_id}`** (e alias `DELETE /api/notes/{note_id}`)
+  - Exclui fisicamente uma nota pertencente ao usuário autenticado.
+
+### 6.4 Desenhos Vetoriais por Página (`page_drawings`)
+- **`GET /api/books/{book_id}/pages/{page}/drawing`**
+  - Query param: `scope` (`mine`, `public`, `all_visible` [default]).
+  - Retorna os campos do próprio desenho no nível raiz (compatibilidade retroativa) mais `"own_drawing"` (editável pelo autor) e `"public_drawings"` (lista somente-leitura de desenhos públicos de outros leitores na página).
+- **`PUT /api/books/{book_id}/pages/{page}/drawing`**
+  - Payload (`DrawingSavePayload`): `{ "strokes": list[dict], "visibility": Optional["private" | "public"] }`.
+  - Novos desenhos nascem como `private`; atualizações de traços preservam a visibilidade existente se `visibility` for omitido. Valida limite de traços, pontos, espessura (`0.5..64`) e coordenadas.
+- **`PATCH /api/books/{book_id}/pages/{page}/drawing/visibility`**
+  - Payload (`AnnotationVisibilityPayload`): `{ "visibility": "private" | "public" }`.
+- **`DELETE /api/books/{book_id}/pages/{page}/drawing`**
+  - Limpa apenas os traços pertencentes ao próprio usuário na página, preservando desenhos públicos de outros leitores.
+
+### 6.5 Marcadores Pessoais de Leitura (`bookmarks`)
+- **`GET /api/books/{book_id}/bookmarks`**
+  - Query params: `limit` (`1..500`), `offset` (`>= 0`).
+  - Retorna `{ "book_id", "bookmarks", "count" }` contendo exclusivamente os marcadores privados do usuário autenticado.
+- **`POST /api/books/{book_id}/bookmarks`** (`201 Created`)
+  - Payload (`BookmarkCreatePayload`): `{ "page": int, "epub_cfi": Optional[str], "chapter_label": Optional[str], "label": Optional[str] }`.
+  - Idempotente por `(book_id, user_id, page, COALESCE(epub_cfi, ''))`.
+- **`DELETE /api/books/{book_id}/bookmarks/{bookmark_id}`** (e alias `DELETE /api/bookmarks/{bookmark_id}`)
+  - Remove um marcador pessoal pertencente ao usuário autenticado.

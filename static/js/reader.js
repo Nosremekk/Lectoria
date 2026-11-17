@@ -74,6 +74,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   const btnToggleDrawer = document.getElementById("btn-toggle-drawer");
   const btnToggleThumbnails = document.getElementById("btn-toggle-thumbnails");
 
+  // Controles de Camadas e Busca no PDF (v1.8.0)
+  const layerViewModeSelect = document.getElementById("layer-view-mode-select");
+  const mobileLayerViewSelect = document.getElementById("mobile-layer-view-select");
+  const btnTogglePdfSearch = document.getElementById("btn-toggle-pdf-search");
+  const readerSearchBar = document.getElementById("reader-search-bar");
+  const pdfSearchInput = document.getElementById("pdf-search-input");
+  const pdfSearchStatus = document.getElementById("pdf-search-status");
+  const btnPdfSearchPrev = document.getElementById("btn-pdf-search-prev");
+  const btnPdfSearchNext = document.getElementById("btn-pdf-search-next");
+  const btnClosePdfSearch = document.getElementById("btn-close-pdf-search");
+
   // Barras Flutuantes e Modais
   const selectionToolbar = document.getElementById("selection-toolbar");
   const btnAddNoteFromSelection = document.getElementById("btn-add-note-from-selection");
@@ -81,16 +92,45 @@ document.addEventListener("DOMContentLoaded", async () => {
   const drawStrokeWidthSelect = document.getElementById("draw-stroke-width");
   const btnDrawEraser = document.getElementById("btn-draw-eraser");
   const btnDrawClear = document.getElementById("btn-draw-clear");
+  const btnDrawVisibility = document.getElementById("btn-draw-visibility");
+  const drawVisibilityIcon = document.getElementById("draw-visibility-icon");
+  const drawVisibilityLabel = document.getElementById("draw-visibility-label");
 
-  // Painel de Anotações (Estudos)
+  // Popovers Contextuais na Página (v1.8.0)
+  const highlightPopover = document.getElementById("highlight-popover");
+  const btnCloseHlPopover = document.getElementById("btn-close-hl-popover");
+  const hlPopAvatar = document.getElementById("hl-pop-avatar");
+  const hlPopAuthorName = document.getElementById("hl-pop-author-name");
+  const hlPopVisBadge = document.getElementById("hl-pop-vis-badge");
+  const hlPopQuote = document.getElementById("hl-pop-quote");
+  const hlPopNoteBox = document.getElementById("hl-pop-note-box");
+  const hlPopActions = document.getElementById("hl-pop-actions");
+
+  const pageNotePopover = document.getElementById("page-note-popover");
+  const btnCloseNotePopover = document.getElementById("btn-close-note-popover");
+  const notePopAvatar = document.getElementById("note-pop-avatar");
+  const notePopAuthorName = document.getElementById("note-pop-author-name");
+  const notePopVisBadge = document.getElementById("note-pop-vis-badge");
+  const notePopMeta = document.getElementById("note-pop-meta");
+  const notePopContent = document.getElementById("note-pop-content");
+  const notePopActions = document.getElementById("note-pop-actions");
+
+  // Painel de Anotações (Estudos) e Marcador Rápido (v1.8.0)
+  const btnToggleBookmark = document.getElementById("btn-toggle-bookmark");
+  const btnMobileSheetBookmark = document.getElementById("btn-mobile-sheet-bookmark");
   const annotationsDrawer = document.getElementById("annotations-drawer");
   const btnCloseDrawer = document.getElementById("btn-close-drawer");
   const drawerTabs = document.querySelectorAll(".drawer-tab");
+  const drawerScopeBtns = document.querySelectorAll(".drawer-scope-btn");
+  const drawerSortSelect = document.getElementById("drawer-sort-select");
   const drawerItemsList = document.getElementById("drawer-items-list");
+  const drawerLoadMoreContainer = document.getElementById("drawer-load-more-container");
+  const btnDrawerLoadMore = document.getElementById("btn-drawer-load-more");
   const countAllEl = document.getElementById("count-all-annotations");
   const countHighlightsEl = document.getElementById("count-highlights");
   const countNotesEl = document.getElementById("count-notes");
   const countDrawingsEl = document.getElementById("count-drawings");
+  const countBookmarksEl = document.getElementById("count-bookmarks");
   const btnNewPageNote = document.getElementById("btn-new-page-note");
 
   const drawerSearchInput = document.getElementById("drawer-search-input");
@@ -113,6 +153,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   const modalNoteQuoteBox = document.getElementById("modal-note-quote-box");
   const modalNoteQuoteText = document.getElementById("modal-note-quote-text");
   const noteContentInput = document.getElementById("note-content-input");
+  const noteVisibilitySelect = document.getElementById("note-visibility-select");
+  const noteVisibilityNotice = document.getElementById("note-visibility-notice");
   const btnCloseModalNote = document.getElementById("btn-close-modal-note");
   const btnCancelNote = document.getElementById("btn-cancel-note");
   const btnSaveNote = document.getElementById("btn-save-note");
@@ -136,17 +178,22 @@ document.addEventListener("DOMContentLoaded", async () => {
   const ctx = canvas.getContext("2d");
   const singleTextLayer = document.getElementById("single-text-layer");
   const singleHighlightsLayer = document.getElementById("single-highlights-layer");
+  const singlePublicDrawingLayer = document.getElementById("single-public-drawing-layer");
   const singleDrawingLayer = document.getElementById("single-drawing-layer");
+  const singleNotePinsLayer = document.getElementById("single-note-pins-layer");
 
   // Elementos do Leitor EPUB (Fase 4)
   const epubWrapper = document.getElementById("epub-wrapper");
   const epubViewer = document.getElementById("epub-viewer");
+  const epubNotePinsLayer = document.getElementById("epub-note-pins-layer");
   const epubHeaderTools = document.getElementById("epub-header-tools");
   const btnEpubToc = document.getElementById("btn-epub-toc");
   const btnEpubFontSmaller = document.getElementById("btn-epub-font-smaller");
   const btnEpubFontLarger = document.getElementById("btn-epub-font-larger");
   const epubFontSizeLabel = document.getElementById("epub-font-size-label");
   const btnEpubFontFamily = document.getElementById("btn-epub-font-family");
+  const btnEpubLineHeight = document.getElementById("btn-epub-line-height");
+  const btnEpubMargin = document.getElementById("btn-epub-margin");
   const btnEpubThemeSepia = document.getElementById("btn-epub-theme-sepia");
   const tocDrawer = document.getElementById("toc-drawer");
   const btnCloseToc = document.getElementById("btn-close-toc");
@@ -156,6 +203,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   const btnMobileEpubSmaller = document.getElementById("btn-mobile-epub-smaller");
   const btnMobileEpubLarger = document.getElementById("btn-mobile-epub-larger");
   const btnMobileEpubFont = document.getElementById("btn-mobile-epub-font");
+  const btnMobileEpubLineHeight = document.getElementById("btn-mobile-epub-line-height");
+  const btnMobileEpubMargin = document.getElementById("btn-mobile-epub-margin");
   const btnMobileEpubSepia = document.getElementById("btn-mobile-epub-sepia");
 
   // Barra Acoplável para Tablets (Fase 2)
@@ -186,6 +235,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   let epubCfi = null;
   let epubFontSize = 100;
   let epubFontFamily = "serif";
+  let epubLineHeight = "1.65";
+  let epubMargin = "normal"; // 'compact' | 'normal' | 'wide'
+  let epubTocFlat = [];
+  let epubCurrentChapterLabel = "";
+  const renderedEpubHighlightCfis = new Set();
+  let epubEventsBound = false;
   let currentPage = 1;
   let totalPages = 1;
   let currentScale = 1.0;
@@ -203,11 +258,21 @@ document.addEventListener("DOMContentLoaded", async () => {
   let basePageWidth = 600;
   let basePageHeight = 800;
 
-  // Estado das Anotações e Desenhos
-  let bookAnnotations = { highlights: [], notes: [], drawing_pages: [] };
+  // Estado das Anotações e Desenhos (v1.8.0 Colaborativo)
+  let currentUserId = null;
+  let layerViewMode = "all_visible"; // 'mine', 'all_visible', 'hidden'
+  let bookAnnotations = { highlights: [], notes: [], drawing_pages: [], bookmarks: [] };
   let currentSelectionData = null; // { page, text, rects, context }
+  let currentHighlightColor = "#fef08a";
   let editingNoteId = null;
   let editingNoteHighlightId = null;
+  let editingNoteEpubCfi = null;
+  let editingNoteChapterLabel = null;
+  const pageDrawingsBundleCache = new Map(); // pageNum -> { own_drawing, public_drawings }
+  const hiddenPublicDrawingAuthors = new Set();
+  const pdfPageTextCache = new Map(); // pageNum -> lowercase text
+  let pdfSearchMatches = []; // [{ page, count }]
+  let pdfSearchMatchIdx = -1;
   let eligibleCollectiveReads = [];
   let currentBookTitle = "";
   let shareQuoteContext = null;
@@ -428,9 +493,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   let thumbnailObserver = null;
 
   function updateReadingProgressBar() {
-    if (!readingProgressFill) return;
-    const pct = totalPages > 0 ? (currentPage / totalPages) * 100 : 0;
-    readingProgressFill.style.width = `${pct}%`;
+    if (readingProgressFill) {
+      const pct = totalPages > 0 ? (currentPage / totalPages) * 100 : 0;
+      readingProgressFill.style.width = `${pct}%`;
+    }
+    if (typeof updateBookmarkButtonState === "function") {
+      updateBookmarkButtonState();
+    }
   }
 
   function updateLastVisitedPageButton() {
@@ -567,15 +636,65 @@ document.addEventListener("DOMContentLoaded", async () => {
     return currentScale;
   }
 
-  // --- Carregamento de Anotações do Servidor ---
-  async function reloadBookAnnotations() {
+  function getLayerViewStorageKey() {
+    return `lectoria_layer_view_mode_u${currentUserId || "anon"}`;
+  }
+
+  function applyLayerViewMode(mode, persist = true) {
+    const valid = ["mine", "all_visible", "hidden"].includes(mode) ? mode : "all_visible";
+    layerViewMode = valid;
+    if (persist) {
+      try {
+        localStorage.setItem(getLayerViewStorageKey(), valid);
+      } catch (_) {}
+    }
+    if (layerViewModeSelect) layerViewModeSelect.value = valid;
+    if (mobileLayerViewSelect) mobileLayerViewSelect.value = valid;
+    viewportEl.classList.toggle("layers-hidden", valid === "hidden");
+
+    reloadBookAnnotations().then(() => {
+      refreshAllDrawingLayersFromCache();
+    });
+  }
+
+  function confirmFirstPublicShare(itemLabel = "anotação") {
+    const key = `lectoria_publish_notice_seen_u${currentUserId || "anon"}`;
     try {
-      const res = await fetch(`/api/books/${bookId}/annotations`);
+      if (sessionStorage.getItem(key) === "1") return true;
+    } catch (_) {}
+    const ok = window.confirm(
+      `Ao tornar esta ${itemLabel} pública, outros usuários autenticados com acesso a este livro poderão visualizar o conteúdo e o seu nome de exibição.\n\nDeseja publicar agora?`
+    );
+    if (ok) {
+      try { sessionStorage.setItem(key, "1"); } catch (_) {}
+    }
+    return ok;
+  }
+
+  if (layerViewModeSelect) {
+    layerViewModeSelect.addEventListener("change", () => {
+      applyLayerViewMode(layerViewModeSelect.value, true);
+    });
+  }
+  if (mobileLayerViewSelect) {
+    mobileLayerViewSelect.addEventListener("change", () => {
+      applyLayerViewMode(mobileLayerViewSelect.value, true);
+    });
+  }
+
+  // --- Carregamento de Anotações do Servidor (Camadas da Página) ---
+  async function reloadBookAnnotations() {
+    const fetchScope = layerViewMode === "mine" ? "mine" : "all_visible";
+    try {
+      const res = await fetch(`/api/books/${bookId}/annotations?scope=${encodeURIComponent(fetchScope)}`);
       if (res.ok) {
         bookAnnotations = await res.json();
-        updateDrawerCounts();
-        renderDrawerList();
+        updateBookmarkButtonState();
         renderHighlightsOnActivePages();
+        renderNotePinsOnActivePages();
+        if (typeof loadDrawerAnnotations === "function") {
+          await loadDrawerAnnotations({ append: false });
+        }
       }
     } catch (e) {
       console.warn("Erro ao carregar anotações:", e);
@@ -643,9 +762,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         viewportEl.scrollTop = 0;
       }
 
-      // Renderiza Marcações e Desenhos
+      // Renderiza Marcações, Pins de Notas e Desenhos (Camada Pública + Camada Pessoal)
       renderHighlightsForPage(num, singleHighlightsLayer);
-      await setupDrawingLayerForPage(num, singleDrawingLayer);
+      await setupDrawingLayerForPage(num, singleDrawingLayer, singlePublicDrawingLayer);
+      renderNotePinsForPage(num, singleNotePinsLayer);
 
       pageNumInput.value = num;
       btnPrevPage.disabled = num <= 1;
@@ -748,8 +868,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       let scale = currentScale;
       if (zoomMode === "width") {
         const isMobile = window.innerWidth <= 768;
+        const isTablet = window.innerWidth > 768 && window.innerWidth <= 1280;
+        const dockMargin = isTablet ? 72 : 0;
         const hPadding = isMobile ? 8 : 48;
-        scale = Math.max(viewportEl.clientWidth - hPadding, 100) / unscaledViewport.width;
+        scale = Math.max(viewportEl.clientWidth - (hPadding + dockMargin), 100) / unscaledViewport.width;
       }
 
       const pixelRatio = window.devicePixelRatio || 1;
@@ -788,9 +910,18 @@ document.addEventListener("DOMContentLoaded", async () => {
       hLayer.className = "highlights-layer";
       slotElement.appendChild(hLayer);
 
+      const pubDLayer = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      pubDLayer.setAttribute("class", "public-drawing-layer");
+      pubDLayer.setAttribute("aria-hidden", "true");
+      slotElement.appendChild(pubDLayer);
+
       const dLayer = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       dLayer.setAttribute("class", "drawing-layer");
       slotElement.appendChild(dLayer);
+
+      const pinsLayer = document.createElement("div");
+      pinsLayer.className = "page-note-pins-layer";
+      slotElement.appendChild(pinsLayer);
 
       const renderTask = page.render({ canvasContext: c.getContext("2d"), viewport: viewport });
       renderedSlots.set(pageNum, { canvas: c, renderTask });
@@ -805,7 +936,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
 
       renderHighlightsForPage(pageNum, hLayer);
-      await setupDrawingLayerForPage(pageNum, dLayer);
+      await setupDrawingLayerForPage(pageNum, dLayer, pubDLayer);
+      renderNotePinsForPage(pageNum, pinsLayer);
     } catch (e) {
       if (e.name !== "RenderingCancelledException") {
         console.warn(`Erro no slot ${pageNum}:`, e);
@@ -864,27 +996,255 @@ document.addEventListener("DOMContentLoaded", async () => {
     }, 120);
   });
 
+  function closeHighlightPopover() {
+    if (highlightPopover) highlightPopover.style.display = "none";
+  }
+
+  function closePageNotePopover() {
+    if (pageNotePopover) pageNotePopover.style.display = "none";
+  }
+
+  if (btnCloseHlPopover) btnCloseHlPopover.addEventListener("click", closeHighlightPopover);
+  if (btnCloseNotePopover) btnCloseNotePopover.addEventListener("click", closePageNotePopover);
+
+  function positionAnnotationPopover(popoverEl, anchorRect) {
+    if (!popoverEl || !anchorRect) return;
+    popoverEl.style.display = "block";
+    const popW = Math.min(popoverEl.offsetWidth || 320, window.innerWidth - 24);
+    const popH = popoverEl.offsetHeight || 220;
+    const left = Math.min(Math.max(12, anchorRect.left), Math.max(12, window.innerWidth - popW - 12));
+    let top = anchorRect.bottom + 8;
+    if (top + popH > window.innerHeight - 12) {
+      top = Math.max(56, anchorRect.top - popH - 8);
+    }
+    popoverEl.style.left = `${left}px`;
+    popoverEl.style.top = `${top}px`;
+  }
+
+  function openHighlightPopover(h, anchorEl) {
+    if (!highlightPopover) return;
+    closePageNotePopover();
+
+    const isOwn = h.is_own !== false;
+    const isPublic = h.visibility === "public";
+
+    if (hlPopAvatar) {
+      hlPopAvatar.style.backgroundColor = h.author_avatar_color || "#d4a853";
+    }
+    if (hlPopAuthorName) {
+      hlPopAuthorName.textContent = isOwn ? "Você" : (h.author_display_name || "Leitor");
+    }
+    if (hlPopVisBadge) {
+      hlPopVisBadge.textContent = isPublic ? "🌐 Público" : "🔒 Privado";
+      hlPopVisBadge.classList.toggle("is-public", isPublic);
+    }
+    if (hlPopQuote) {
+      hlPopQuote.textContent = `"${h.selected_text || ""}"`;
+      hlPopQuote.style.borderLeftColor = h.color || "#fef08a";
+    }
+
+    const linkedNote = (bookAnnotations.notes || []).find(
+      n => n.highlight_id && String(n.highlight_id) === String(h.id)
+    );
+    if (hlPopNoteBox) {
+      if (linkedNote && (linkedNote.is_own !== false || linkedNote.visibility === "public")) {
+        const noteAuthor = linkedNote.is_own !== false ? "Sua nota" : `Nota de ${linkedNote.author_display_name || "Leitor"}`;
+        hlPopNoteBox.textContent = `${noteAuthor}: ${linkedNote.content}`;
+        hlPopNoteBox.style.display = "block";
+      } else {
+        hlPopNoteBox.textContent = "";
+        hlPopNoteBox.style.display = "none";
+      }
+    }
+
+    if (hlPopActions) {
+      hlPopActions.innerHTML = "";
+      if (isOwn) {
+        const btnVis = document.createElement("button");
+        btnVis.type = "button";
+        btnVis.className = "btn btn-sm btn-outline";
+        btnVis.textContent = isPublic ? "Tornar Privado" : "Tornar Público";
+        btnVis.addEventListener("click", async () => {
+          const nextVis = isPublic ? "private" : "public";
+          if (nextVis === "public" && !confirmFirstPublicShare("marcação")) return;
+          await toggleHighlightVisibility(h.id, nextVis);
+          closeHighlightPopover();
+        });
+        hlPopActions.appendChild(btnVis);
+
+        const btnNote = document.createElement("button");
+        btnNote.type = "button";
+        btnNote.className = "btn btn-sm btn-primary";
+        btnNote.textContent = linkedNote && linkedNote.is_own !== false ? "Editar Nota" : "Adicionar Nota";
+        btnNote.addEventListener("click", () => {
+          closeHighlightPopover();
+          if (linkedNote && linkedNote.is_own !== false) {
+            openNoteEditorModal({
+              title: "Editar Anotação",
+              page: linkedNote.page,
+              existingNoteId: linkedNote.id,
+              initialContent: linkedNote.content,
+              initialVisibility: linkedNote.visibility || "private",
+            });
+          } else {
+            openNoteEditorModal({
+              title: "Nova Nota no Destaque",
+              page: h.page,
+              highlightId: h.id,
+              quote: h.selected_text,
+            });
+          }
+        });
+        hlPopActions.appendChild(btnNote);
+
+        let confirmDeletePending = false;
+        const btnDel = document.createElement("button");
+        btnDel.type = "button";
+        btnDel.className = "btn btn-sm btn-danger";
+        btnDel.textContent = "Excluir";
+        btnDel.addEventListener("click", async () => {
+          if (!confirmDeletePending) {
+            confirmDeletePending = true;
+            btnDel.textContent = "Confirmar Exclusão";
+            return;
+          }
+          await deleteHighlight(h.id);
+          closeHighlightPopover();
+        });
+        hlPopActions.appendChild(btnDel);
+      } else {
+        const readonlySpan = document.createElement("span");
+        readonlySpan.style.fontSize = "0.74rem";
+        readonlySpan.style.color = "var(--text-muted)";
+        readonlySpan.textContent = "Destaque público somente leitura";
+        hlPopActions.appendChild(readonlySpan);
+      }
+    }
+
+    positionAnnotationPopover(highlightPopover, anchorEl.getBoundingClientRect());
+  }
+
+  function openPageNotePopover(n, anchorEl) {
+    if (!pageNotePopover) return;
+    closeHighlightPopover();
+
+    const isOwn = n.is_own !== false;
+    const isPublic = n.visibility === "public";
+
+    if (notePopAvatar) {
+      notePopAvatar.style.backgroundColor = n.author_avatar_color || "#d4a853";
+    }
+    if (notePopAuthorName) {
+      notePopAuthorName.textContent = isOwn ? "Você" : (n.author_display_name || "Leitor");
+    }
+    if (notePopVisBadge) {
+      notePopVisBadge.textContent = isPublic ? "🌐 Pública" : "🔒 Privada";
+      notePopVisBadge.classList.toggle("is-public", isPublic);
+    }
+    if (notePopMeta) {
+      const dateStr = formatTimestamp(n.updated_at || n.created_at);
+      if (n.epub_cfi) {
+        const chapPart = n.chapter_label ? `${n.chapter_label}` : "Posição EPUB";
+        notePopMeta.textContent = `${chapPart}${dateStr ? ` · ${dateStr}` : ""}`;
+      } else {
+        notePopMeta.textContent = `Página ${n.page}${dateStr ? ` · ${dateStr}` : ""}`;
+      }
+    }
+    if (notePopContent) {
+      notePopContent.textContent = n.content || "";
+    }
+
+    if (notePopActions) {
+      notePopActions.innerHTML = "";
+      if (isOwn) {
+        const btnVis = document.createElement("button");
+        btnVis.type = "button";
+        btnVis.className = "btn btn-sm btn-outline";
+        btnVis.textContent = isPublic ? "Tornar Privada" : "Tornar Pública";
+        btnVis.addEventListener("click", async () => {
+          const nextVis = isPublic ? "private" : "public";
+          if (nextVis === "public" && !confirmFirstPublicShare("anotação")) return;
+          await toggleNoteVisibility(n.id, nextVis);
+          closePageNotePopover();
+        });
+        notePopActions.appendChild(btnVis);
+
+        const btnEdit = document.createElement("button");
+        btnEdit.type = "button";
+        btnEdit.className = "btn btn-sm btn-primary";
+        btnEdit.textContent = "Editar";
+        btnEdit.addEventListener("click", () => {
+          closePageNotePopover();
+          openNoteEditorModal({
+            title: "Editar Anotação",
+            page: n.page,
+            existingNoteId: n.id,
+            initialContent: n.content,
+            initialVisibility: n.visibility || "private",
+          });
+        });
+        notePopActions.appendChild(btnEdit);
+
+        let confirmDeletePending = false;
+        const btnDel = document.createElement("button");
+        btnDel.type = "button";
+        btnDel.className = "btn btn-sm btn-danger";
+        btnDel.textContent = "Excluir";
+        btnDel.addEventListener("click", async () => {
+          if (!confirmDeletePending) {
+            confirmDeletePending = true;
+            btnDel.textContent = "Confirmar Exclusão";
+            return;
+          }
+          await deleteNoteById(n.id);
+          closePageNotePopover();
+        });
+        notePopActions.appendChild(btnDel);
+      } else {
+        const readonlySpan = document.createElement("span");
+        readonlySpan.style.fontSize = "0.74rem";
+        readonlySpan.style.color = "var(--text-muted)";
+        readonlySpan.textContent = "Anotação pública somente leitura";
+        notePopActions.appendChild(readonlySpan);
+      }
+    }
+
+    positionAnnotationPopover(pageNotePopover, anchorEl.getBoundingClientRect());
+  }
+
   // --- Renderização de Destaques (Highlights) ---
   function renderHighlightsForPage(pageNum, container) {
+    if (!container) return;
     container.innerHTML = "";
-    const pageHighlights = (bookAnnotations.highlights || []).filter(h => h.page === pageNum);
+    if (layerViewMode === "hidden") return;
+
+    const pageHighlights = (bookAnnotations.highlights || []).filter(h => {
+      if (h.page !== pageNum) return false;
+      if (layerViewMode === "mine") return h.is_own !== false;
+      return true;
+    });
 
     pageHighlights.forEach(h => {
+      const isOwn = h.is_own !== false;
       (h.rects || []).forEach(r => {
         const box = document.createElement("div");
-        box.className = "highlight-box";
+        box.className = isOwn ? "highlight-box" : "highlight-box highlight-public-other";
+        box.setAttribute("data-highlight-id", h.id);
+        box.setAttribute("data-is-own", isOwn ? "true" : "false");
+        if (!isOwn && h.author_display_name) {
+          box.setAttribute("data-author-name", h.author_display_name);
+        }
         box.style.left = `${r.x * 100}%`;
         box.style.top = `${r.y * 100}%`;
         box.style.width = `${r.w * 100}%`;
         box.style.height = `${r.h * 100}%`;
         box.style.backgroundColor = h.color || "#fef08a";
-        box.title = `Destaque: "${h.selected_text}" (Clique para excluir ou anotar)`;
+        const authorLabel = isOwn ? "Você" : (h.author_display_name || "Leitor");
+        box.title = `${authorLabel}: "${(h.selected_text || "").slice(0, 80)}"`;
 
         box.addEventListener("click", (e) => {
           e.stopPropagation();
-          if (confirm(`Deseja remover este destaque?\n\n"${h.selected_text.substring(0, 80)}..."`)) {
-            deleteHighlight(h.id);
-          }
+          openHighlightPopover(h, box);
         });
 
         container.appendChild(box);
@@ -893,6 +1253,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function renderHighlightsOnActivePages() {
+    if (bookFormat === "epub") {
+      renderEpubHighlights();
+      return;
+    }
     if (viewMode === "single") {
       renderHighlightsForPage(currentPage, singleHighlightsLayer);
     } else {
@@ -901,6 +1265,156 @@ document.addEventListener("DOMContentLoaded", async () => {
         const hLayer = slot.querySelector(".highlights-layer");
         if (hLayer) renderHighlightsForPage(p, hLayer);
       });
+    }
+  }
+
+  // --- Renderização de Pins de Notas e Selo de Desenhos Públicos na Página ---
+  function renderNotePinsForPage(pageNum, container) {
+    if (!container) return;
+    container.innerHTML = "";
+    if (layerViewMode === "hidden") return;
+
+    const stack = document.createElement("div");
+    stack.className = "page-note-pins-stack";
+
+    // 1. Selo discreto de desenhos públicos de outros autores (quando visível)
+    if (layerViewMode === "all_visible") {
+      const bundle = pageDrawingsBundleCache.get(pageNum);
+      const pubDrawings = (bundle && Array.isArray(bundle.public_drawings)) ? bundle.public_drawings : [];
+      const activePubDrawings = pubDrawings.filter(d => !d.is_own && Array.isArray(d.strokes) && d.strokes.length > 0);
+      if (activePubDrawings.length > 0) {
+        const badge = document.createElement("button");
+        badge.type = "button";
+        badge.className = "page-public-drawings-badge";
+        const names = activePubDrawings.map(d => d.author_display_name || "Leitor");
+        const anyHidden = activePubDrawings.some(d => hiddenPublicDrawingAuthors.has(String(d.author_user_id || d.user_id || "")));
+        const dot = document.createElement("span");
+        dot.className = "author-avatar-dot";
+        dot.style.backgroundColor = activePubDrawings[0].author_avatar_color || "#38bdf8";
+        const label = document.createElement("span");
+        label.textContent = anyHidden
+          ? `Desenhos ocultos (${names.join(", ")})`
+          : `Desenhos: ${names.join(", ")}`;
+        badge.title = "Clique para ocultar ou mostrar desenhos públicos desta página nesta sessão";
+        badge.appendChild(dot);
+        badge.appendChild(label);
+        badge.addEventListener("click", (e) => {
+          e.stopPropagation();
+          activePubDrawings.forEach(d => {
+            const uidKey = String(d.author_user_id || d.user_id || "");
+            if (!uidKey) return;
+            if (anyHidden) hiddenPublicDrawingAuthors.delete(uidKey);
+            else hiddenPublicDrawingAuthors.add(uidKey);
+          });
+          refreshAllDrawingLayersFromCache();
+          renderNotePinsOnActivePages();
+        });
+        stack.appendChild(badge);
+      }
+    }
+
+    // 2. Pins de notas da página (próprias e públicas conforme layerViewMode)
+    const pageNotes = (bookAnnotations.notes || []).filter(n => {
+      if (n.page !== pageNum) return false;
+      if (layerViewMode === "mine") return n.is_own !== false;
+      return true;
+    });
+
+    pageNotes.forEach(n => {
+      const isOwn = n.is_own !== false;
+      const pin = document.createElement("button");
+      pin.type = "button";
+      pin.className = isOwn ? "page-note-pin" : "page-note-pin is-public-other";
+      pin.setAttribute("data-note-id", n.id);
+      pin.setAttribute("data-is-own", isOwn ? "true" : "false");
+
+      const dot = document.createElement("span");
+      dot.className = "author-avatar-dot";
+      dot.style.backgroundColor = isOwn ? "#d4a853" : (n.author_avatar_color || "#38bdf8");
+
+      const textSpan = document.createElement("span");
+      textSpan.className = "page-note-pin-text";
+      const prefix = isOwn ? (n.visibility === "public" ? "🌐 " : "📝 ") : `${n.author_display_name || "Leitor"}: `;
+      textSpan.textContent = `${prefix}${(n.content || "").slice(0, 28)}`;
+
+      pin.title = `${isOwn ? "Sua nota" : (n.author_display_name || "Leitor")}: ${n.content || ""}`;
+      pin.appendChild(dot);
+      pin.appendChild(textSpan);
+
+      pin.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openPageNotePopover(n, pin);
+      });
+
+      stack.appendChild(pin);
+    });
+
+    if (stack.childElementCount > 0) {
+      container.appendChild(stack);
+    }
+  }
+
+  function renderNotePinsOnActivePages() {
+    if (bookFormat === "epub") {
+      renderEpubNotePins();
+      return;
+    }
+    if (viewMode === "single") {
+      renderNotePinsForPage(currentPage, singleNotePinsLayer);
+    } else {
+      document.querySelectorAll(".page-slot").forEach(slot => {
+        const p = parseInt(slot.getAttribute("data-page-num"), 10);
+        const pinsLayer = slot.querySelector(".page-note-pins-layer");
+        if (pinsLayer) renderNotePinsForPage(p, pinsLayer);
+      });
+    }
+  }
+
+  async function toggleHighlightVisibility(highlightId, visibility) {
+    try {
+      const res = await fetch(`/api/books/${bookId}/highlights/${highlightId}/visibility`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visibility }),
+      });
+      if (res.ok) {
+        showReaderToast(visibility === "public" ? "Destaque publicado no livro." : "Destaque tornado privado.", "info");
+        await reloadBookAnnotations();
+      } else {
+        showReaderToast("Não foi possível alterar a visibilidade do destaque.", "error");
+      }
+    } catch {
+      showReaderToast("Erro ao alterar visibilidade do destaque.", "error");
+    }
+  }
+
+  async function toggleNoteVisibility(noteId, visibility) {
+    try {
+      const res = await fetch(`/api/books/${bookId}/notes/${noteId}/visibility`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visibility }),
+      });
+      if (res.ok) {
+        showReaderToast(visibility === "public" ? "Anotação publicada no livro." : "Anotação tornada privada.", "info");
+        await reloadBookAnnotations();
+      } else {
+        showReaderToast("Não foi possível alterar a visibilidade da anotação.", "error");
+      }
+    } catch {
+      showReaderToast("Erro ao alterar visibilidade da anotação.", "error");
+    }
+  }
+
+  async function deleteNoteById(noteId) {
+    try {
+      const res = await fetch(`/api/books/${bookId}/notes/${noteId}`, { method: "DELETE" });
+      if (res.ok) {
+        showReaderToast("Anotação removida.", "info");
+        await reloadBookAnnotations();
+      }
+    } catch {
+      showReaderToast("Erro ao excluir anotação.", "error");
     }
   }
 
@@ -984,32 +1498,81 @@ document.addEventListener("DOMContentLoaded", async () => {
     currentSelectionData = null;
   }
 
+  function clearAllSelections() {
+    window.getSelection()?.removeAllRanges();
+    if (bookFormat === "epub" && epubRendition) {
+      try {
+        (epubRendition.getContents() || []).forEach(c => {
+          c.window?.getSelection()?.removeAllRanges();
+        });
+      } catch (_) {}
+    }
+  }
+
+  async function saveHighlightFromSelection(selData, color = currentHighlightColor) {
+    if (!selData) return null;
+    try {
+      const payload = {
+        page: Math.max(1, parseInt(selData.page, 10) || currentPage || 1),
+        color: color,
+        rects: Array.isArray(selData.rects) ? selData.rects : [],
+        selected_text: selData.text,
+        text_context: selData.context || null,
+      };
+      if (selData.epubCfi) {
+        payload.epub_cfi = selData.epubCfi;
+      }
+      if (selData.chapterLabel) {
+        payload.chapter_label = selData.chapterLabel;
+      }
+      const res = await fetch(`/api/books/${bookId}/highlights`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        clearAllSelections();
+        hideSelectionToolbar();
+        await reloadBookAnnotations();
+        return data.highlight;
+      }
+    } catch (e) {
+      showReaderToast("Erro ao salvar marcação.", "error");
+    }
+    return null;
+  }
+
+  // Modo Marca-Texto Ativo: ao soltar o ponteiro com texto selecionado, destaca automaticamente
+  async function handleHighlightToolRelease() {
+    if (currentTool !== "highlight" || bookFormat !== "pdf") return;
+    handleTextSelection();
+    if (!currentSelectionData) return;
+    const selCopy = { ...currentSelectionData };
+    const created = await saveHighlightFromSelection(selCopy, currentHighlightColor);
+    if (created) {
+      showReaderToast("Destaque aplicado (clique nele para anotar ou publicar).", "info");
+    }
+  }
+
+  viewportEl.addEventListener("mouseup", () => {
+    if (currentTool === "highlight") {
+      setTimeout(handleHighlightToolRelease, 15);
+    }
+  });
+  viewportEl.addEventListener("touchend", () => {
+    if (currentTool === "highlight") {
+      setTimeout(handleHighlightToolRelease, 60);
+    }
+  });
+
   // Ações de Cores de Destaque
   document.querySelectorAll(".highlight-color-btn").forEach(btn => {
     btn.addEventListener("click", async () => {
       if (!currentSelectionData) return;
       const color = btn.getAttribute("data-color");
-      try {
-        const res = await fetch(`/api/books/${bookId}/highlights`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            page: currentSelectionData.page,
-            color: color,
-            rects: currentSelectionData.rects,
-            selected_text: currentSelectionData.text,
-            text_context: currentSelectionData.context,
-          }),
-        });
-
-        if (res.ok) {
-          window.getSelection()?.removeAllRanges();
-          hideSelectionToolbar();
-          await reloadBookAnnotations();
-        }
-      } catch (e) {
-        alert("Erro ao salvar marcação.");
-      }
+      currentHighlightColor = color;
+      await saveHighlightFromSelection(currentSelectionData, color);
     });
   });
 
@@ -1017,21 +1580,25 @@ document.addEventListener("DOMContentLoaded", async () => {
   btnAddNoteFromSelection.addEventListener("click", async () => {
     if (!currentSelectionData) return;
     const selData = { ...currentSelectionData };
-    window.getSelection()?.removeAllRanges();
+    clearAllSelections();
     hideSelectionToolbar();
 
     // Cria o destaque primeiro e abre o modal de anotação vinculado
     try {
+      const hlPayload = {
+        page: Math.max(1, parseInt(selData.page, 10) || currentPage || 1),
+        color: "#fef08a",
+        rects: Array.isArray(selData.rects) ? selData.rects : [],
+        selected_text: selData.text,
+        text_context: selData.context || null,
+      };
+      if (selData.epubCfi) hlPayload.epub_cfi = selData.epubCfi;
+      if (selData.chapterLabel) hlPayload.chapter_label = selData.chapterLabel;
+
       const res = await fetch(`/api/books/${bookId}/highlights`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          page: selData.page,
-          color: "#fef08a",
-          rects: selData.rects,
-          selected_text: selData.text,
-          text_context: selData.context,
-        }),
+        body: JSON.stringify(hlPayload),
       });
 
       if (res.ok) {
@@ -1039,9 +1606,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         await reloadBookAnnotations();
         openNoteEditorModal({
           title: "Adicionar Anotação ao Trecho",
-          page: selData.page,
+          page: hlPayload.page,
           highlightId: createdH.id,
           quote: selData.text,
+          epubCfi: selData.epubCfi || null,
+          chapterLabel: selData.chapterLabel || null,
         });
       }
     } catch (e) {
@@ -1050,11 +1619,26 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   // --- Modal de Editor de Anotação ---
-  function openNoteEditorModal({ title, page, highlightId = null, quote = null, existingNoteId = null, initialContent = "" }) {
+  function updateNoteVisibilityNotice() {
+    if (!noteVisibilitySelect || !noteVisibilityNotice) return;
+    noteVisibilityNotice.style.display = noteVisibilitySelect.value === "public" ? "block" : "none";
+  }
+
+  if (noteVisibilitySelect) {
+    noteVisibilitySelect.addEventListener("change", updateNoteVisibilityNotice);
+  }
+
+  function openNoteEditorModal({ title, page, highlightId = null, quote = null, existingNoteId = null, initialContent = "", initialVisibility = "private", epubCfi: noteCfi = null, chapterLabel = null }) {
     editingNoteId = existingNoteId;
     editingNoteHighlightId = highlightId;
+    editingNoteEpubCfi = noteCfi;
+    editingNoteChapterLabel = chapterLabel;
     modalNoteTitle.textContent = title || "Anotação";
     noteContentInput.value = initialContent;
+    if (noteVisibilitySelect) {
+      noteVisibilitySelect.value = initialVisibility === "public" ? "public" : "private";
+      updateNoteVisibilityNotice();
+    }
 
     if (quote) {
       modalNoteQuoteText.textContent = `"${quote}"`;
@@ -1072,7 +1656,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     modalNoteEditor.classList.remove("active");
     editingNoteId = null;
     editingNoteHighlightId = null;
+    editingNoteEpubCfi = null;
+    editingNoteChapterLabel = null;
     noteContentInput.value = "";
+    if (noteVisibilitySelect) {
+      noteVisibilitySelect.value = "private";
+      updateNoteVisibilityNotice();
+    }
   }
 
   btnCloseModalNote.addEventListener("click", closeNoteEditorModal);
@@ -1086,6 +1676,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     const targetPage = parseInt(modalNoteEditor.getAttribute("data-target-page"), 10) || currentPage;
+    const selectedVisibility = noteVisibilitySelect ? noteVisibilitySelect.value : "private";
 
     try {
       if (editingNoteId) {
@@ -1093,19 +1684,27 @@ document.addEventListener("DOMContentLoaded", async () => {
         const res = await fetch(`/api/books/${bookId}/notes/${editingNoteId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify({ content, visibility: selectedVisibility }),
         });
         if (!res.ok) throw new Error();
       } else {
-        // Cria nova nota
+        // Cria nova nota (privada por padrão)
+        const notePayload = {
+          page: Math.max(1, targetPage),
+          content,
+          highlight_id: editingNoteHighlightId,
+          visibility: selectedVisibility,
+        };
+        if (bookFormat === "epub") {
+          const finalCfi = editingNoteEpubCfi || epubCfi || null;
+          if (finalCfi) notePayload.epub_cfi = finalCfi;
+          const finalChap = editingNoteChapterLabel || epubCurrentChapterLabel || null;
+          if (finalChap) notePayload.chapter_label = finalChap;
+        }
         const res = await fetch(`/api/books/${bookId}/notes`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            page: targetPage,
-            content,
-            highlight_id: editingNoteHighlightId,
-          }),
+          body: JSON.stringify(notePayload),
         });
         if (!res.ok) throw new Error();
       }
@@ -1118,6 +1717,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   btnNewPageNote.addEventListener("click", () => {
+    if (bookFormat === "epub") {
+      openNoteEditorModal({
+        title: `Nova Anotação${epubCurrentChapterLabel ? ` (${epubCurrentChapterLabel})` : ""}`,
+        page: Math.max(1, currentPage || 1),
+        highlightId: null,
+        quote: null,
+        epubCfi: epubCfi || null,
+        chapterLabel: epubCurrentChapterLabel || null,
+      });
+      return;
+    }
     openNoteEditorModal({
       title: `Nova Anotação (Página ${currentPage})`,
       page: currentPage,
@@ -1143,34 +1753,250 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  // --- Painel Lateral de Anotações (Drawer) ---
-  let activeDrawerFilter = "all";
+  // --- Painel Lateral de Anotações Colaborativo (Drawer) e Marcadores (Fase 5) ---
+  const drawerState = {
+    scope: "all_visible",
+    filter: "all",
+    sort: "position",
+    search: "",
+    limit: 50,
+    offset: 0,
+    hasMore: false,
+    loading: false,
+    error: null,
+    requestSeq: 0,
+    abortController: null,
+    data: { highlights: [], notes: [], drawing_pages: [], bookmarks: [] },
+    totalCounts: { highlights: 0, notes: 0, drawings: 0, bookmarks: 0 },
+  };
+  let drawerSearchDebounceTimer = null;
+
+  function mergeUniqueById(existingList, newList) {
+    const map = new Map();
+    (existingList || []).forEach(item => map.set(String(item.id), item));
+    (newList || []).forEach(item => map.set(String(item.id), item));
+    return Array.from(map.values());
+  }
+
+  function compareEpubCfi(cfiA, cfiB) {
+    if (!cfiA && !cfiB) return 0;
+    if (!cfiA) return 1;
+    if (!cfiB) return -1;
+    try {
+      if (window.ePub && ePub.CFI && typeof ePub.CFI.prototype.compare === "function") {
+        return new ePub.CFI().compare(cfiA, cfiB);
+      }
+    } catch (_) {}
+    const cleanA = String(cfiA).replace(/\[[^\]]*\]/g, "");
+    const cleanB = String(cfiB).replace(/\[[^\]]*\]/g, "");
+    const numsA = cleanA.match(/\d+/g)?.map(Number) || [];
+    const numsB = cleanB.match(/\d+/g)?.map(Number) || [];
+    const len = Math.max(numsA.length, numsB.length);
+    for (let i = 0; i < len; i++) {
+      const a = numsA[i] ?? -1;
+      const b = numsB[i] ?? -1;
+      if (a !== b) return a - b;
+    }
+    return String(cfiA).localeCompare(String(cfiB));
+  }
+
+  async function loadDrawerAnnotations({ append = false } = {}) {
+    if (drawerState.abortController) {
+      try { drawerState.abortController.abort(); } catch (_) {}
+    }
+    const controller = new AbortController();
+    drawerState.abortController = controller;
+    const seq = ++drawerState.requestSeq;
+    const nextOffset = append ? (drawerState.offset + drawerState.limit) : 0;
+
+    drawerState.loading = true;
+    drawerState.error = null;
+    if (btnDrawerLoadMore) {
+      btnDrawerLoadMore.disabled = true;
+      btnDrawerLoadMore.textContent = "Carregando...";
+    }
+    if (!append && drawerItemsList && annotationsDrawer?.classList.contains("active") && (
+      drawerState.data.highlights.length === 0 &&
+      drawerState.data.notes.length === 0 &&
+      drawerState.data.drawing_pages.length === 0 &&
+      drawerState.data.bookmarks.length === 0
+    )) {
+      drawerItemsList.innerHTML = `<div style="text-align:center;color:var(--text-muted);padding:2rem 1rem;font-size:0.84rem;">Carregando anotações...</div>`;
+    }
+
+    try {
+      const params = new URLSearchParams({
+        scope: drawerState.scope,
+        sort: drawerState.sort,
+        limit: String(drawerState.limit),
+        offset: String(nextOffset),
+      });
+      if (drawerState.search) {
+        params.set("search", drawerState.search);
+      }
+      const res = await fetch(`/api/books/${bookId}/annotations?${params.toString()}`, {
+        signal: controller.signal,
+      });
+      if (seq !== drawerState.requestSeq) return;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = await res.json();
+      if (seq !== drawerState.requestSeq) return;
+
+      drawerState.offset = nextOffset;
+      drawerState.hasMore = Boolean(payload.has_more);
+      drawerState.totalCounts = payload.total_counts || payload.counts || {
+        highlights: (payload.highlights || []).length,
+        notes: (payload.notes || []).length,
+        drawings: (payload.drawing_pages || []).length,
+        bookmarks: (payload.bookmarks || []).length,
+      };
+
+      if (append) {
+        drawerState.data = {
+          highlights: mergeUniqueById(drawerState.data.highlights, payload.highlights),
+          notes: mergeUniqueById(drawerState.data.notes, payload.notes),
+          drawing_pages: mergeUniqueById(drawerState.data.drawing_pages, payload.drawing_pages),
+          bookmarks: mergeUniqueById(drawerState.data.bookmarks, payload.bookmarks),
+        };
+      } else {
+        drawerState.data = {
+          highlights: payload.highlights || [],
+          notes: payload.notes || [],
+          drawing_pages: payload.drawing_pages || [],
+          bookmarks: payload.bookmarks || [],
+        };
+      }
+    } catch (err) {
+      if (err && err.name === "AbortError") return;
+      if (seq !== drawerState.requestSeq) return;
+      drawerState.error = "Não foi possível carregar as anotações.";
+    } finally {
+      if (seq === drawerState.requestSeq) {
+        drawerState.loading = false;
+        if (btnDrawerLoadMore) {
+          btnDrawerLoadMore.disabled = false;
+          btnDrawerLoadMore.textContent = "Carregar mais";
+        }
+        updateDrawerCounts();
+        renderDrawerList();
+      }
+    }
+  }
+
+  function findBookmarkForCurrentPosition() {
+    const bookmarks = (bookAnnotations && bookAnnotations.bookmarks) || drawerState.data.bookmarks || [];
+    if (bookFormat === "epub") {
+      if (epubCfi) {
+        return bookmarks.find(b => b.epub_cfi && String(b.epub_cfi) === String(epubCfi)) || null;
+      }
+      return bookmarks.find(b => b.page === currentPage && !b.epub_cfi) || null;
+    }
+    return bookmarks.find(b => b.page === currentPage && !b.epub_cfi) || null;
+  }
+
+  function updateBookmarkButtonState() {
+    const match = findBookmarkForCurrentPosition();
+    const active = Boolean(match);
+    if (btnToggleBookmark) {
+      btnToggleBookmark.classList.toggle("is-bookmarked", active);
+      btnToggleBookmark.setAttribute("aria-pressed", active ? "true" : "false");
+      btnToggleBookmark.title = active
+        ? "Remover marcador desta posição (k)"
+        : "Adicionar marcador nesta posição (k)";
+    }
+  }
+
+  async function toggleCurrentPositionBookmark() {
+    const existing = findBookmarkForCurrentPosition();
+    try {
+      if (existing) {
+        const res = await fetch(`/api/books/${bookId}/bookmarks/${encodeURIComponent(existing.id)}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) throw new Error();
+        showReaderToast("Marcador removido.", "info");
+      } else {
+        const payload = {
+          page: Math.max(1, parseInt(currentPage, 10) || 1),
+          label: bookFormat === "epub"
+            ? (epubCurrentChapterLabel || `Posição ${currentPage}%`)
+            : `Página ${currentPage}`,
+        };
+        if (bookFormat === "epub") {
+          if (epubCfi) payload.epub_cfi = epubCfi;
+          if (epubCurrentChapterLabel) payload.chapter_label = epubCurrentChapterLabel;
+        }
+        const res = await fetch(`/api/books/${bookId}/bookmarks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error();
+        showReaderToast("Marcador pessoal salvo.", "info");
+      }
+      await reloadBookAnnotations();
+    } catch {
+      showReaderToast("Erro ao atualizar marcador.", "error");
+    }
+  }
+
+  if (btnToggleBookmark) {
+    btnToggleBookmark.addEventListener("click", toggleCurrentPositionBookmark);
+  }
+  if (btnMobileSheetBookmark) {
+    btnMobileSheetBookmark.addEventListener("click", () => {
+      closeMobileSheet();
+      toggleCurrentPositionBookmark();
+    });
+  }
 
   btnToggleDrawer.addEventListener("click", () => {
     annotationsDrawer.classList.toggle("active");
     if (annotationsDrawer.classList.contains("active")) {
       closeThumbnailsDrawer();
-      reloadBookAnnotations();
+      loadDrawerAnnotations({ append: false });
     }
   });
   btnCloseDrawer.addEventListener("click", () => annotationsDrawer.classList.remove("active"));
 
+  drawerScopeBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      const nextScope = btn.getAttribute("data-drawer-scope");
+      if (!nextScope || nextScope === drawerState.scope) return;
+      drawerScopeBtns.forEach(b => b.classList.toggle("active", b === btn));
+      drawerState.scope = nextScope;
+      loadDrawerAnnotations({ append: false });
+    });
+  });
+
+  if (drawerSortSelect) {
+    drawerSortSelect.addEventListener("change", () => {
+      drawerState.sort = drawerSortSelect.value === "recent" ? "recent" : "position";
+      loadDrawerAnnotations({ append: false });
+    });
+  }
+
   if (drawerSearchInput) {
     drawerSearchInput.addEventListener("input", (e) => {
-      drawerSearchTerm = e.target.value.toLowerCase().trim();
+      const val = e.target.value.trim();
+      drawerState.search = val;
       if (btnClearDrawerSearch) {
-        btnClearDrawerSearch.style.display = drawerSearchTerm ? "inline-block" : "none";
+        btnClearDrawerSearch.style.display = val ? "inline-block" : "none";
       }
-      renderDrawerList();
+      clearTimeout(drawerSearchDebounceTimer);
+      drawerSearchDebounceTimer = setTimeout(() => {
+        loadDrawerAnnotations({ append: false });
+      }, 280);
     });
   }
 
   if (btnClearDrawerSearch) {
     btnClearDrawerSearch.addEventListener("click", () => {
       drawerSearchInput.value = "";
-      drawerSearchTerm = "";
+      drawerState.search = "";
       btnClearDrawerSearch.style.display = "none";
-      renderDrawerList();
+      clearTimeout(drawerSearchDebounceTimer);
+      loadDrawerAnnotations({ append: false });
     });
   }
 
@@ -1178,167 +2004,379 @@ document.addEventListener("DOMContentLoaded", async () => {
     tab.addEventListener("click", () => {
       drawerTabs.forEach(t => t.classList.remove("active"));
       tab.classList.add("active");
-      activeDrawerFilter = tab.getAttribute("data-drawer-filter");
+      drawerState.filter = tab.getAttribute("data-drawer-filter");
       renderDrawerList();
     });
   });
 
+  if (btnDrawerLoadMore) {
+    btnDrawerLoadMore.addEventListener("click", () => {
+      if (!drawerState.loading && drawerState.hasMore) {
+        loadDrawerAnnotations({ append: true });
+      }
+    });
+  }
+
   function updateDrawerCounts() {
-    const hCount = (bookAnnotations.highlights || []).length;
-    const nCount = (bookAnnotations.notes || []).length;
-    const dCount = (bookAnnotations.drawing_pages || []).length;
+    const tc = drawerState.totalCounts || {};
+    const hCount = tc.highlights ?? (drawerState.data.highlights || []).length;
+    const nCount = tc.notes ?? (drawerState.data.notes || []).length;
+    const dCount = tc.drawings ?? (drawerState.data.drawing_pages || []).length;
+    const bCount = tc.bookmarks ?? (drawerState.data.bookmarks || []).length;
     countHighlightsEl.textContent = hCount;
     countNotesEl.textContent = nCount;
     if (countDrawingsEl) countDrawingsEl.textContent = dCount;
+    if (countBookmarksEl) countBookmarksEl.textContent = bCount;
     countAllEl.textContent = hCount + nCount + dCount;
   }
 
+  function renderDrawerItemCard(item) {
+    if (item.type === "highlight") {
+      const h = item.data;
+      const isOwn = h.is_own !== false;
+      const isPublic = h.visibility === "public";
+      const authorText = isOwn ? "Você" : escapeHtml(h.author_display_name || "Leitor");
+      const visBadge = `<span class="visibility-pill ${isPublic ? "is-public" : ""}">${isPublic ? "🌐 Público" : "🔒 Privado"}</span>`;
+      const dateFormatted = formatTimestamp(h.created_at);
+      const cfiAttr = h.epub_cfi ? `data-epub-cfi="${escapeHtml(h.epub_cfi)}"` : "";
+      const chapAttr = h.chapter_label ? `data-chapter-label="${escapeHtml(h.chapter_label)}"` : "";
+      return `
+        <div class="annotation-item" data-goto-page="${h.page}" data-item-type="highlight" data-item-id="${escapeHtml(h.id)}" ${cfiAttr} ${chapAttr} data-is-own="${isOwn ? "true" : "false"}">
+          <div class="annotation-item-header">
+            <span class="annotation-badge badge-highlight">Destaque</span>
+            <div style="display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;">
+              <span style="font-size: 0.72rem; color: var(--text-muted);">${authorText}</span>
+              ${visBadge}
+              <span class="annotation-date">${dateFormatted}</span>
+              <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background-color: ${escapeHtml(h.color || "#fef08a")}; border: 1px solid rgba(0,0,0,0.2);"></span>
+            </div>
+          </div>
+          <div class="annotation-quote" style="border-left-color: ${escapeHtml(h.color || "#fef08a")};">
+            "${escapeHtml(h.selected_text)}"
+          </div>
+          <div class="annotation-item-actions">
+            ${isOwn ? `
+              <button class="btn-item-action btn-toggle-vis-h" data-h-id="${escapeHtml(h.id)}" data-next-vis="${isPublic ? "private" : "public"}">${isPublic ? "Tornar Privado" : "Tornar Público"}</button>
+              <button class="btn-item-action btn-add-note-to-h" data-h-id="${escapeHtml(h.id)}" data-page="${h.page}" data-quote="${escapeHtml(h.selected_text)}" ${cfiAttr} ${chapAttr}>Adicionar Nota</button>
+              <button class="btn-item-action danger btn-del-highlight" data-h-id="${escapeHtml(h.id)}">Excluir</button>
+            ` : `<button class="btn-item-action btn-goto-annotation" data-goto-page="${h.page}" data-item-type="highlight" data-item-id="${escapeHtml(h.id)}" ${cfiAttr} ${chapAttr}>${bookFormat === "epub" ? "Ir para a Posição" : "Ir para a Página"}</button>`}
+          </div>
+        </div>
+      `;
+    }
+    if (item.type === "note") {
+      const n = item.data;
+      const isOwn = n.is_own !== false;
+      const isPublic = n.visibility === "public";
+      const authorText = isOwn ? "Você" : escapeHtml(n.author_display_name || "Leitor");
+      const visBadge = `<span class="visibility-pill ${isPublic ? "is-public" : ""}">${isPublic ? "🌐 Pública" : "🔒 Privada"}</span>`;
+      const dateFormatted = formatTimestamp(n.updated_at || n.created_at);
+      const cfiAttr = n.epub_cfi ? `data-epub-cfi="${escapeHtml(n.epub_cfi)}"` : "";
+      const chapAttr = n.chapter_label ? `data-chapter-label="${escapeHtml(n.chapter_label)}"` : "";
+      return `
+        <div class="annotation-item" data-goto-page="${n.page}" data-item-type="note" data-item-id="${escapeHtml(n.id)}" ${cfiAttr} ${chapAttr} data-is-own="${isOwn ? "true" : "false"}">
+          <div class="annotation-item-header">
+            <span class="annotation-badge badge-note">Nota</span>
+            <div style="display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;">
+              <span style="font-size: 0.72rem; color: var(--text-muted);">${authorText}</span>
+              ${visBadge}
+              <span class="annotation-date">${dateFormatted}</span>
+            </div>
+          </div>
+          ${n.highlight_text ? `<div class="annotation-quote">"${escapeHtml(n.highlight_text)}"</div>` : ""}
+          <div class="annotation-note-text">${escapeHtml(n.content)}</div>
+          <div class="annotation-item-actions">
+            ${isOwn ? `
+              <button class="btn-item-action btn-toggle-vis-n" data-note-id="${escapeHtml(n.id)}" data-next-vis="${isPublic ? "private" : "public"}">${isPublic ? "Tornar Privada" : "Tornar Pública"}</button>
+              ${eligibleCollectiveReads.length > 0 ? `<button class="btn-item-action btn-share-note-club" data-note-id="${escapeHtml(n.id)}">Compartilhar</button>` : ""}
+              <button class="btn-item-action btn-edit-note" data-note-id="${escapeHtml(n.id)}" data-page="${n.page}" data-content="${escapeHtml(n.content)}" data-visibility="${isPublic ? "public" : "private"}">Editar</button>
+              <button class="btn-item-action danger btn-del-note" data-note-id="${escapeHtml(n.id)}">Excluir</button>
+            ` : `<button class="btn-item-action btn-goto-annotation" data-goto-page="${n.page}" data-item-type="note" data-item-id="${escapeHtml(n.id)}" ${cfiAttr} ${chapAttr}>${bookFormat === "epub" ? "Ir para a Posição" : "Ir para a Página"}</button>`}
+          </div>
+        </div>
+      `;
+    }
+    if (item.type === "drawing") {
+      const d = item.data;
+      const isOwn = d.is_own !== false;
+      const isPublic = d.visibility === "public";
+      const authorText = isOwn ? "Você" : escapeHtml(d.author_display_name || "Leitor");
+      const visBadge = `<span class="visibility-pill ${isPublic ? "is-public" : ""}">${isPublic ? "🌐 Público" : "🔒 Privado"}</span>`;
+      const dateFormatted = formatTimestamp(d.updated_at);
+      return `
+        <div class="annotation-item" data-goto-page="${d.page}" data-item-type="drawing" data-is-own="${isOwn ? "true" : "false"}">
+          <div class="annotation-item-header">
+            <span class="annotation-badge badge-drawing">Desenho Livre</span>
+            <div style="display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;">
+              <span style="font-size: 0.72rem; color: var(--text-muted);">${authorText}</span>
+              ${visBadge}
+              <span class="annotation-date">${dateFormatted}</span>
+            </div>
+          </div>
+          <div style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">
+            ${isOwn ? "Seus traços vetoriais nesta página." : `Traços vetoriais públicos de ${authorText}.`}
+          </div>
+          <div class="annotation-item-actions">
+            <button class="btn-item-action btn-goto-annotation" data-goto-page="${d.page}">Ir para a Página</button>
+            ${isOwn ? `
+              <button class="btn-item-action btn-toggle-vis-d" data-page="${d.page}" data-next-vis="${isPublic ? "private" : "public"}">${isPublic ? "Tornar Privado" : "Tornar Público"}</button>
+              <button class="btn-item-action danger btn-del-drawing" data-page="${d.page}">Excluir</button>
+            ` : ""}
+          </div>
+        </div>
+      `;
+    }
+    if (item.type === "bookmark") {
+      const b = item.data;
+      const dateFormatted = formatTimestamp(b.created_at || b.updated_at);
+      const cfiAttr = b.epub_cfi ? `data-epub-cfi="${escapeHtml(b.epub_cfi)}"` : "";
+      const chapAttr = b.chapter_label ? `data-chapter-label="${escapeHtml(b.chapter_label)}"` : "";
+      const locLabel = b.epub_cfi
+        ? (b.chapter_label ? escapeHtml(b.chapter_label) : `Posição ${b.page}%`)
+        : `Página ${b.page}`;
+      return `
+        <div class="annotation-item" data-goto-page="${b.page}" data-item-type="bookmark" ${cfiAttr} ${chapAttr} data-is-own="true">
+          <div class="annotation-item-header">
+            <span class="annotation-badge badge-bookmark">Marcador</span>
+            <div style="display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;">
+              <span class="visibility-pill">🔒 Privado</span>
+              <span class="annotation-date">${dateFormatted}</span>
+            </div>
+          </div>
+          <div class="annotation-note-text" style="font-weight: 500;">${escapeHtml(b.label || locLabel)}</div>
+          <div style="font-size: 0.74rem; color: var(--text-muted); margin-top: 0.15rem;">${locLabel}</div>
+          <div class="annotation-item-actions">
+            <button class="btn-item-action btn-goto-annotation" data-goto-page="${b.page}" ${cfiAttr} ${chapAttr}>${bookFormat === "epub" ? "Ir para a Posição" : "Ir para a Página"}</button>
+            <button class="btn-item-action danger btn-del-bookmark" data-bm-id="${escapeHtml(b.id)}">Excluir</button>
+          </div>
+        </div>
+      `;
+    }
+    return "";
+  }
+
   function renderDrawerList() {
-    const highlights = bookAnnotations.highlights || [];
-    const notes = bookAnnotations.notes || [];
-    const drawingPages = bookAnnotations.drawing_pages || [];
+    if (drawerLoadMoreContainer) {
+      drawerLoadMoreContainer.style.display = (drawerState.hasMore && drawerState.filter !== "bookmarks") ? "block" : "none";
+    }
+
+    if (drawerState.error) {
+      drawerItemsList.innerHTML = `
+        <div style="text-align: center; color: var(--text-faint); padding: 2.5rem 1rem;">
+          <p>${escapeHtml(drawerState.error)}</p>
+          <button id="btn-retry-drawer-load" type="button" class="btn btn-sm btn-outline" style="margin-top: 0.6rem;">Tentar novamente</button>
+        </div>
+      `;
+      const retryBtn = document.getElementById("btn-retry-drawer-load");
+      if (retryBtn) retryBtn.addEventListener("click", () => loadDrawerAnnotations({ append: false }));
+      return;
+    }
+
+    const highlights = drawerState.data.highlights || [];
+    const notes = drawerState.data.notes || [];
+    const drawingPages = drawerState.data.drawing_pages || [];
+    const bookmarks = drawerState.data.bookmarks || [];
 
     let items = [];
 
-    if (activeDrawerFilter === "all" || activeDrawerFilter === "highlights") {
-      highlights.forEach(h => {
-        if (!drawerSearchTerm || h.selected_text.toLowerCase().includes(drawerSearchTerm)) {
-          items.push({ type: "highlight", data: h, page: h.page, date: h.created_at });
-        }
+    if (drawerState.filter === "bookmarks") {
+      bookmarks.forEach(b => {
+        items.push({ type: "bookmark", data: b, page: b.page, cfi: b.epub_cfi || "", date: b.created_at || b.updated_at });
       });
-    }
-
-    if (activeDrawerFilter === "all" || activeDrawerFilter === "notes") {
-      notes.forEach(n => {
-        const textMatch = n.content.toLowerCase().includes(drawerSearchTerm) ||
-          (n.highlight_text && n.highlight_text.toLowerCase().includes(drawerSearchTerm));
-        if (!drawerSearchTerm || textMatch) {
-          items.push({ type: "note", data: n, page: n.page, date: n.updated_at || n.created_at });
-        }
-      });
-    }
-
-    if (activeDrawerFilter === "all" || activeDrawerFilter === "drawings") {
-      drawingPages.forEach(d => {
-        const searchMatch = !drawerSearchTerm ||
-          `desenho pág página ${d.page}`.toLowerCase().includes(drawerSearchTerm);
-        if (searchMatch) {
-          items.push({ type: "drawing", data: d, page: d.page, date: d.updated_at });
-        }
-      });
+    } else {
+      if (drawerState.filter === "all" || drawerState.filter === "highlights") {
+        highlights.forEach(h => {
+          items.push({ type: "highlight", data: h, page: h.page, cfi: h.epub_cfi || "", date: h.created_at });
+        });
+      }
+      if (drawerState.filter === "all" || drawerState.filter === "notes") {
+        notes.forEach(n => {
+          items.push({ type: "note", data: n, page: n.page, cfi: n.epub_cfi || "", date: n.updated_at || n.created_at });
+        });
+      }
+      if (drawerState.filter === "all" || drawerState.filter === "drawings") {
+        drawingPages.forEach(d => {
+          items.push({ type: "drawing", data: d, page: d.page, cfi: "", date: d.updated_at });
+        });
+      }
     }
 
     if (items.length === 0) {
       drawerItemsList.innerHTML = `
         <div style="text-align: center; color: var(--text-faint); padding: 3rem 1rem;">
-          <p>${drawerSearchTerm ? "Nenhum resultado encontrado para a busca." : "Nenhuma anotação nesta categoria."}</p>
+          <p>${drawerState.search ? "Nenhum resultado encontrado para a busca." : "Nenhum item encontrado neste filtro."}</p>
           <p style="font-size: 0.8rem; margin-top: 0.4rem;">
-            ${drawerSearchTerm ? "Tente buscar por outras palavras-chave." : "Selecione trechos no livro para destacar, adicionar notas ou desenhe livremente."}
+            ${drawerState.search ? "Tente buscar por outras palavras-chave ou autor." : "Selecione trechos no livro para destacar, adicionar notas, desenhar ou criar marcadores."}
           </p>
         </div>
       `;
       return;
     }
 
-    // Agrupa por página
-    const pageMap = new Map();
-    items.forEach(item => {
-      if (!pageMap.has(item.page)) {
-        pageMap.set(item.page, []);
-      }
-      pageMap.get(item.page).push(item);
-    });
-
-    const sortedPages = Array.from(pageMap.keys()).sort((a, b) => a - b);
-
     let html = "";
-    sortedPages.forEach(pageNum => {
-      const pageItems = pageMap.get(pageNum);
-      pageItems.sort((a, b) => new Date(a.date) - new Date(b.date));
-
-      html += `
-        <div class="drawer-page-group">
-          <div class="drawer-page-header">
-            <span>Página ${pageNum}</span>
-            <span style="font-size: 0.72rem; color: var(--text-faint);">${pageItems.length} item(s)</span>
-          </div>
-      `;
-
-      pageItems.forEach(item => {
-        if (item.type === "highlight") {
-          const h = item.data;
-          const dateFormatted = formatTimestamp(h.created_at);
-          html += `
-            <div class="annotation-item" data-goto-page="${h.page}">
-              <div class="annotation-item-header">
-                <span class="annotation-badge badge-highlight">Destaque</span>
-                <div style="display: flex; align-items: center; gap: 0.4rem;">
-                  <span class="annotation-date">${dateFormatted}</span>
-                  <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background-color: ${h.color}; border: 1px solid rgba(0,0,0,0.2);"></span>
-                </div>
-              </div>
-              <div class="annotation-quote" style="border-left-color: ${h.color};">
-                "${escapeHtml(h.selected_text)}"
-              </div>
-              <div class="annotation-item-actions">
-                <button class="btn-item-action btn-add-note-to-h" data-h-id="${h.id}" data-page="${h.page}" data-quote="${escapeHtml(h.selected_text)}">Adicionar Nota</button>
-                <button class="btn-item-action danger btn-del-highlight" data-h-id="${h.id}">Excluir</button>
-              </div>
-            </div>
-          `;
-        } else if (item.type === "note") {
-          const n = item.data;
-          const dateFormatted = formatTimestamp(n.updated_at || n.created_at);
-          html += `
-            <div class="annotation-item" data-goto-page="${n.page}">
-              <div class="annotation-item-header">
-                <span class="annotation-badge badge-note">Nota</span>
-                <span class="annotation-date">${dateFormatted}</span>
-              </div>
-              ${n.highlight_text ? `<div class="annotation-quote">"${escapeHtml(n.highlight_text)}"</div>` : ""}
-              <div class="annotation-note-text">${escapeHtml(n.content)}</div>
-              <div class="annotation-item-actions">
-                ${eligibleCollectiveReads.length > 0 ? `<button class="btn-item-action btn-share-note-club" data-note-id="${escapeHtml(n.id)}">Compartilhar</button>` : ""}
-                <button class="btn-item-action btn-edit-note" data-note-id="${n.id}" data-page="${n.page}" data-content="${escapeHtml(n.content)}">Editar</button>
-                <button class="btn-item-action danger btn-del-note" data-note-id="${n.id}">Excluir</button>
-              </div>
-            </div>
-          `;
-        } else if (item.type === "drawing") {
-          const d = item.data;
-          const dateFormatted = formatTimestamp(d.updated_at);
-          html += `
-            <div class="annotation-item" data-goto-page="${d.page}">
-              <div class="annotation-item-header">
-                <span class="annotation-badge badge-drawing">Desenho Livre</span>
-                <span class="annotation-date">${dateFormatted}</span>
-              </div>
-              <div style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">
-                Contém traços vetoriais e ilustrações desenhadas à mão.
-              </div>
-              <div class="annotation-item-actions">
-                <button class="btn-item-action" data-goto-page="${d.page}">Ir para a Página</button>
-              </div>
-            </div>
-          `;
-        }
+    if (drawerState.sort === "recent") {
+      items.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+      items.forEach(item => {
+        html += renderDrawerItemCard(item);
       });
-
-      html += `</div>`;
-    });
+    } else if (bookFormat === "epub") {
+      items.sort((a, b) => {
+        const cmp = compareEpubCfi(a.cfi, b.cfi);
+        if (cmp !== 0) return cmp;
+        if (a.page !== b.page) return a.page - b.page;
+        return new Date(a.date || 0) - new Date(b.date || 0);
+      });
+      items.forEach(item => {
+        html += renderDrawerItemCard(item);
+      });
+    } else {
+      // Agrupa por página no PDF
+      const pageMap = new Map();
+      items.forEach(item => {
+        if (!pageMap.has(item.page)) pageMap.set(item.page, []);
+        pageMap.get(item.page).push(item);
+      });
+      const sortedPages = Array.from(pageMap.keys()).sort((a, b) => a - b);
+      sortedPages.forEach(pageNum => {
+        const pageItems = pageMap.get(pageNum);
+        pageItems.sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+        html += `
+          <div class="drawer-page-group">
+            <div class="drawer-page-header">
+              <span>Página ${pageNum}</span>
+              <span style="font-size: 0.72rem; color: var(--text-faint);">${pageItems.length} item(s)</span>
+            </div>
+        `;
+        pageItems.forEach(item => {
+          html += renderDrawerItemCard(item);
+        });
+        html += `</div>`;
+      });
+    }
 
     drawerItemsList.innerHTML = html;
 
-    // Navegação ao clicar no item do painel
+    // Navegação ao clicar no item do painel ou no botão "Ir para a Posição/Página"
+    function handleDrawerItemNavigation(el) {
+      if (bookFormat === "epub") {
+        const cfi = el.getAttribute("data-epub-cfi");
+        const chap = el.getAttribute("data-chapter-label");
+        navigateToEpubCfi(cfi, chap);
+        return;
+      }
+      const targetPage = parseInt(el.getAttribute("data-goto-page"), 10);
+      const itemType = el.getAttribute("data-item-type");
+      const itemId = el.getAttribute("data-item-id");
+      if (targetPage) {
+        goToPage(targetPage);
+        if (itemId && (itemType === "highlight" || itemType === "note")) {
+          setTimeout(() => {
+            const selector = itemType === "highlight"
+              ? `.highlight-box[data-highlight-id="${CSS.escape(itemId)}"]`
+              : `.page-note-pin[data-note-id="${CSS.escape(itemId)}"]`;
+            const targetEl = document.querySelector(selector);
+            if (targetEl) {
+              targetEl.style.outline = "2px solid #38bdf8";
+              targetEl.style.outlineOffset = "2px";
+              setTimeout(() => {
+                targetEl.style.outline = "";
+                targetEl.style.outlineOffset = "";
+              }, 1800);
+            }
+          }, 350);
+        }
+      }
+    }
+
     drawerItemsList.querySelectorAll(".annotation-item").forEach(el => {
       el.addEventListener("click", (e) => {
         if (e.target.closest("button")) return;
-        const targetPage = parseInt(el.getAttribute("data-goto-page"), 10);
-        goToPage(targetPage);
+        handleDrawerItemNavigation(el);
       });
     });
 
-    // Ações dos itens
+    drawerItemsList.querySelectorAll(".btn-goto-annotation").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        handleDrawerItemNavigation(btn);
+      });
+    });
+
+    drawerItemsList.querySelectorAll(".btn-toggle-vis-h").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const nextVis = btn.getAttribute("data-next-vis");
+        if (nextVis === "public" && !confirmFirstPublicShare("marcação")) return;
+        await toggleHighlightVisibility(btn.getAttribute("data-h-id"), nextVis);
+      });
+    });
+
+    drawerItemsList.querySelectorAll(".btn-toggle-vis-n").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const nextVis = btn.getAttribute("data-next-vis");
+        if (nextVis === "public" && !confirmFirstPublicShare("anotação")) return;
+        await toggleNoteVisibility(btn.getAttribute("data-note-id"), nextVis);
+      });
+    });
+
+    drawerItemsList.querySelectorAll(".btn-toggle-vis-d").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const p = parseInt(btn.getAttribute("data-page"), 10);
+        const nextVis = btn.getAttribute("data-next-vis");
+        if (nextVis === "public" && !confirmFirstPublicShare("desenho")) return;
+        try {
+          const res = await fetch(`/api/books/${bookId}/pages/${p}/drawing/visibility`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ visibility: nextVis }),
+          });
+          if (!res.ok) throw new Error();
+          pageDrawingsBundleCache.delete(p);
+          if (p === currentPage) updateDrawVisibilityButton(p);
+          await reloadBookAnnotations();
+          refreshAllDrawingLayersFromCache();
+        } catch {
+          showReaderToast("Erro ao alterar visibilidade do desenho.", "error");
+        }
+      });
+    });
+
+    drawerItemsList.querySelectorAll(".btn-del-drawing").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const p = parseInt(btn.getAttribute("data-page"), 10);
+        if (confirm(`Deseja excluir seu desenho da Página ${p}?`)) {
+          try {
+            const res = await fetch(`/api/books/${bookId}/pages/${p}/drawing`, { method: "DELETE" });
+            if (!res.ok) throw new Error();
+            pageStrokesMap.set(p, []);
+            pageDrawingsBundleCache.delete(p);
+            await reloadBookAnnotations();
+            refreshAllDrawingLayersFromCache();
+          } catch {
+            showReaderToast("Erro ao excluir desenho.", "error");
+          }
+        }
+      });
+    });
+
+    drawerItemsList.querySelectorAll(".btn-del-bookmark").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const bmId = btn.getAttribute("data-bm-id");
+        try {
+          const res = await fetch(`/api/books/${bookId}/bookmarks/${encodeURIComponent(bmId)}`, { method: "DELETE" });
+          if (!res.ok) throw new Error();
+          showReaderToast("Marcador removido.", "info");
+          await reloadBookAnnotations();
+        } catch {
+          showReaderToast("Erro ao remover marcador.", "error");
+        }
+      });
+    });
+
     drawerItemsList.querySelectorAll(".btn-del-highlight").forEach(btn => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -1354,6 +2392,8 @@ document.addEventListener("DOMContentLoaded", async () => {
           page: parseInt(btn.getAttribute("data-page"), 10),
           highlightId: btn.getAttribute("data-h-id"),
           quote: btn.getAttribute("data-quote"),
+          epubCfi: btn.getAttribute("data-epub-cfi") || null,
+          chapterLabel: btn.getAttribute("data-chapter-label") || null,
         });
       });
     });
@@ -1362,7 +2402,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         const nid = btn.getAttribute("data-note-id");
-        const noteObj = (bookAnnotations.notes || []).find(item => String(item.id) === String(nid));
+        const noteObj = (drawerState.data.notes || bookAnnotations.notes || []).find(item => String(item.id) === String(nid));
         if (!noteObj) return;
         const baseQuote = noteObj.highlight_text || noteObj.content || "";
         const baseComment = noteObj.highlight_text ? (noteObj.content || "") : "";
@@ -1384,6 +2424,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           page: parseInt(btn.getAttribute("data-page"), 10),
           existingNoteId: btn.getAttribute("data-note-id"),
           initialContent: btn.getAttribute("data-content"),
+          initialVisibility: btn.getAttribute("data-visibility") || "private",
         });
       });
     });
@@ -1784,31 +2825,147 @@ document.addEventListener("DOMContentLoaded", async () => {
     return false;
   }
 
-  async function loadStrokesForPage(pageNum) {
-    if (pageStrokesMap.has(pageNum)) return pageStrokesMap.get(pageNum);
+  function getSvgViewBoxDimensions(svgElement) {
+    const rect = svgElement ? svgElement.getBoundingClientRect() : null;
+    const aspect = (rect && rect.width > 0 && rect.height > 0)
+      ? (rect.height / rect.width)
+      : (basePageHeight > 0 && basePageWidth > 0 ? basePageHeight / basePageWidth : 1.3333);
+    const vbWidth = 1000;
+    const vbHeight = Math.max(100, Math.round(vbWidth * aspect));
+    return { vbWidth, vbHeight };
+  }
+
+  function applySvgViewBox(svgElement) {
+    if (!svgElement) return { vbWidth: 1000, vbHeight: 1333 };
+    const dims = getSvgViewBoxDimensions(svgElement);
+    svgElement.setAttribute("viewBox", `0 0 ${dims.vbWidth} ${dims.vbHeight}`);
+    svgElement.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    return dims;
+  }
+
+  async function loadDrawingBundleForPage(pageNum, forceRefresh = false) {
+    if (!forceRefresh && pageDrawingsBundleCache.has(pageNum)) {
+      const cached = pageDrawingsBundleCache.get(pageNum);
+      pageStrokesMap.set(pageNum, (cached.own_drawing && cached.own_drawing.strokes) || []);
+      return cached;
+    }
     try {
       const res = await fetch(`/api/books/${bookId}/pages/${pageNum}/drawing`);
       if (res.ok) {
         const data = await res.json();
-        const strokes = data.strokes || [];
-        pageStrokesMap.set(pageNum, strokes);
-        return strokes;
+        const own = data.own_drawing || {
+          page: pageNum,
+          strokes: data.strokes || [],
+          visibility: data.visibility || "private",
+          is_own: true,
+        };
+        const pub = Array.isArray(data.public_drawings) ? data.public_drawings : [];
+        const bundle = { own_drawing: own, public_drawings: pub };
+        pageDrawingsBundleCache.set(pageNum, bundle);
+        pageStrokesMap.set(pageNum, own.strokes || []);
+        return bundle;
       }
     } catch {
       // Retorna vazio
     }
-    return [];
+    const emptyBundle = {
+      own_drawing: { page: pageNum, strokes: [], visibility: "private", is_own: true },
+      public_drawings: [],
+    };
+    return emptyBundle;
   }
 
-  async function setupDrawingLayerForPage(pageNum, svgElement) {
+  function updateDrawVisibilityButton(pageNum = currentPage) {
+    if (!btnDrawVisibility) return;
+    const bundle = pageDrawingsBundleCache.get(pageNum);
+    const vis = (bundle && bundle.own_drawing && bundle.own_drawing.visibility) || "private";
+    const isPublic = vis === "public";
+    btnDrawVisibility.setAttribute("data-visibility", vis);
+    btnDrawVisibility.classList.toggle("is-public", isPublic);
+    if (drawVisibilityIcon) drawVisibilityIcon.textContent = isPublic ? "🌐" : "🔒";
+    if (drawVisibilityLabel) drawVisibilityLabel.textContent = isPublic ? "Público" : "Privado";
+  }
+
+  function renderPublicDrawingsLayer(pageNum, publicSvgElement) {
+    if (!publicSvgElement) return;
+    publicSvgElement.innerHTML = "";
+    if (layerViewMode !== "all_visible") return;
+
+    const bundle = pageDrawingsBundleCache.get(pageNum);
+    const pubDrawings = (bundle && Array.isArray(bundle.public_drawings)) ? bundle.public_drawings : [];
+    const visibleDrawings = pubDrawings.filter(d => {
+      if (d.is_own) return false;
+      const uidKey = String(d.author_user_id || d.user_id || "");
+      return !hiddenPublicDrawingAuthors.has(uidKey);
+    });
+    if (visibleDrawings.length === 0) return;
+
+    const { vbWidth, vbHeight } = applySvgViewBox(publicSvgElement);
+    visibleDrawings.forEach(d => {
+      (d.strokes || []).forEach((s, idx) => {
+        if (!s.points || s.points.length < 2) return;
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("class", "drawing-stroke public-drawing-stroke");
+        path.setAttribute("data-author", d.author_display_name || "Leitor");
+        path.setAttribute("data-stroke-index", idx);
+        path.setAttribute("stroke", s.color || "#3d7cf4");
+        path.setAttribute("stroke-width", String((s.width || 4) * 1.4));
+        path.setAttribute("stroke-opacity", "0.78");
+        let dAttr = `M ${s.points[0].x * vbWidth} ${s.points[0].y * vbHeight}`;
+        for (let i = 1; i < s.points.length; i++) {
+          dAttr += ` L ${s.points[i].x * vbWidth} ${s.points[i].y * vbHeight}`;
+        }
+        path.setAttribute("d", dAttr);
+        publicSvgElement.appendChild(path);
+      });
+    });
+  }
+
+  function refreshAllDrawingLayersFromCache() {
+    if (viewMode === "single") {
+      const bundle = pageDrawingsBundleCache.get(currentPage);
+      const ownStrokes = (bundle && bundle.own_drawing && bundle.own_drawing.strokes) || pageStrokesMap.get(currentPage) || [];
+      renderSvgStrokes(singleDrawingLayer, ownStrokes);
+      renderPublicDrawingsLayer(currentPage, singlePublicDrawingLayer);
+      renderNotePinsForPage(currentPage, singleNotePinsLayer);
+      updateDrawVisibilityButton(currentPage);
+    } else {
+      document.querySelectorAll(".page-slot").forEach(slot => {
+        const p = parseInt(slot.getAttribute("data-page-num"), 10);
+        const ownSvg = slot.querySelector(".drawing-layer");
+        const pubSvg = slot.querySelector(".public-drawing-layer");
+        const pinsLayer = slot.querySelector(".page-note-pins-layer");
+        if (ownSvg) {
+          const ownStrokes = pageStrokesMap.get(p) || [];
+          renderSvgStrokes(ownSvg, ownStrokes);
+        }
+        if (pubSvg) renderPublicDrawingsLayer(p, pubSvg);
+        if (pinsLayer) renderNotePinsForPage(p, pinsLayer);
+      });
+      updateDrawVisibilityButton(currentPage);
+    }
+  }
+
+  async function setupDrawingLayerForPage(pageNum, svgElement, publicSvgElement = null) {
     svgElement.innerHTML = "";
     svgElement.setAttribute("data-page-num", pageNum);
     updateDrawingLayerInteractivity(svgElement);
+    if (publicSvgElement) {
+      publicSvgElement.innerHTML = "";
+      publicSvgElement.setAttribute("data-page-num", pageNum);
+    }
 
-    const strokes = await loadStrokesForPage(pageNum);
-    renderSvgStrokes(svgElement, strokes);
+    const bundle = await loadDrawingBundleForPage(pageNum);
+    const ownStrokes = (bundle.own_drawing && bundle.own_drawing.strokes) || [];
+    renderSvgStrokes(svgElement, ownStrokes);
+    if (publicSvgElement) {
+      renderPublicDrawingsLayer(pageNum, publicSvgElement);
+    }
+    if (pageNum === currentPage) {
+      updateDrawVisibilityButton(pageNum);
+    }
 
-    // Eventos de desenho e borracha
+    // Eventos de desenho e borracha atuam apenas sobre a camada pessoal
     svgElement.onpointerdown = (e) => handleDrawPointerDown(e, pageNum, svgElement);
     svgElement.onpointermove = (e) => handleDrawPointerMove(e, pageNum, svgElement);
     svgElement.onpointerup = (e) => handleDrawPointerUp(e, pageNum, svgElement);
@@ -1816,11 +2973,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function renderSvgStrokes(svgElement, strokes) {
+    if (!svgElement) return;
     svgElement.innerHTML = "";
-    const rect = svgElement.getBoundingClientRect();
-    const w = rect.width;
-    const h = rect.height;
-    if (w <= 0 || h <= 0) return;
+    if (layerViewMode === "hidden") return;
+    const { vbWidth, vbHeight } = applySvgViewBox(svgElement);
 
     strokes.forEach((s, idx) => {
       if (!s.points || s.points.length < 2) return;
@@ -1828,11 +2984,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       path.setAttribute("class", "drawing-stroke");
       path.setAttribute("data-stroke-index", idx);
       path.setAttribute("stroke", s.color || "#3d7cf4");
-      path.setAttribute("stroke-width", s.width || 4);
+      path.setAttribute("stroke-width", String((s.width || 4) * 1.4));
 
-      let d = `M ${s.points[0].x * w} ${s.points[0].y * h}`;
+      let d = `M ${s.points[0].x * vbWidth} ${s.points[0].y * vbHeight}`;
       for (let i = 1; i < s.points.length; i++) {
-        d += ` L ${s.points[i].x * w} ${s.points[i].y * h}`;
+        d += ` L ${s.points[i].x * vbWidth} ${s.points[i].y * vbHeight}`;
       }
       path.setAttribute("d", d);
       svgElement.appendChild(path);
@@ -1857,6 +3013,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     } catch (_) {}
 
     const rect = svgElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const { vbWidth, vbHeight } = applySvgViewBox(svgElement);
     const nx = (e.clientX - rect.left) / rect.width;
     const ny = (e.clientY - rect.top) / rect.height;
 
@@ -1870,8 +3028,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("class", "drawing-stroke current-drawing-path");
     path.setAttribute("stroke", currentDrawColor);
-    path.setAttribute("stroke-width", currentDrawWidth);
-    path.setAttribute("d", `M ${nx * rect.width} ${ny * rect.height}`);
+    path.setAttribute("stroke-width", String(currentDrawWidth * 1.4));
+    path.setAttribute("d", `M ${nx * vbWidth} ${ny * vbHeight}`);
     svgElement.appendChild(path);
   }
 
@@ -1889,6 +3047,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!isDrawing || !currentStroke) return;
 
     const rect = svgElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const { vbWidth, vbHeight } = getSvgViewBoxDimensions(svgElement);
     const nx = (e.clientX - rect.left) / rect.width;
     const ny = (e.clientY - rect.top) / rect.height;
     currentStroke.points.push({ x: nx, y: ny });
@@ -1896,9 +3056,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     const currentPath = svgElement.querySelector(".current-drawing-path");
     if (currentPath) {
       const pts = currentStroke.points;
-      let d = `M ${pts[0].x * rect.width} ${pts[0].y * rect.height}`;
+      let d = `M ${pts[0].x * vbWidth} ${pts[0].y * vbHeight}`;
       for (let i = 1; i < pts.length; i++) {
-        d += ` L ${pts[i].x * rect.width} ${pts[i].y * rect.height}`;
+        d += ` L ${pts[i].x * vbWidth} ${pts[i].y * vbHeight}`;
       }
       currentPath.setAttribute("d", d);
     }
@@ -1930,28 +3090,93 @@ document.addEventListener("DOMContentLoaded", async () => {
     currentStroke = null;
   }
 
+  async function saveDrawingNow(pageNum) {
+    const strokes = pageStrokesMap.get(pageNum) || [];
+    const res = await fetch(`/api/books/${bookId}/pages/${pageNum}/drawing`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ strokes }),
+    });
+    if (res.ok) {
+      const saved = await res.json();
+      const existing = pageDrawingsBundleCache.get(pageNum) || { own_drawing: {}, public_drawings: [] };
+      existing.own_drawing = {
+        ...(existing.own_drawing || {}),
+        page: pageNum,
+        strokes: [...strokes],
+        visibility: saved.visibility || (existing.own_drawing && existing.own_drawing.visibility) || "private",
+        is_own: true,
+      };
+      pageDrawingsBundleCache.set(pageNum, existing);
+      if (pageNum === currentPage) updateDrawVisibilityButton(pageNum);
+      showSavedIndicator();
+    }
+  }
+
   function queueSaveDrawing(pageNum) {
     clearTimeout(saveDrawingTimeout);
     saveDrawingTimeout = setTimeout(async () => {
-      const strokes = pageStrokesMap.get(pageNum) || [];
       try {
-        await fetch(`/api/books/${bookId}/pages/${pageNum}/drawing`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ strokes }),
-        });
-        showSavedIndicator();
+        await saveDrawingNow(pageNum);
       } catch (e) {
         console.warn("Erro ao salvar desenho:", e);
       }
-    }, 1000);
+    }, 600);
+  }
+
+  if (btnDrawVisibility) {
+    btnDrawVisibility.addEventListener("click", async () => {
+      const targetPage = currentPage;
+      const bundle = await loadDrawingBundleForPage(targetPage);
+      const currentVis = (bundle.own_drawing && bundle.own_drawing.visibility) || "private";
+      const nextVis = currentVis === "public" ? "private" : "public";
+      const strokes = pageStrokesMap.get(targetPage) || [];
+
+      if (strokes.length === 0) {
+        showReaderToast("Desenhe algum traço na página antes de publicá-lo.", "info");
+        return;
+      }
+      if (nextVis === "public" && !confirmFirstPublicShare("desenho")) {
+        return;
+      }
+
+      try {
+        clearTimeout(saveDrawingTimeout);
+        await saveDrawingNow(targetPage);
+        const res = await fetch(`/api/books/${bookId}/pages/${targetPage}/drawing/visibility`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ visibility: nextVis }),
+        });
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        const cached = pageDrawingsBundleCache.get(targetPage) || { own_drawing: {}, public_drawings: [] };
+        cached.own_drawing = data.drawing || { ...(cached.own_drawing || {}), visibility: nextVis };
+        pageDrawingsBundleCache.set(targetPage, cached);
+        updateDrawVisibilityButton(targetPage);
+        showReaderToast(
+          nextVis === "public" ? "Desenho da página publicado." : "Desenho da página tornado privado.",
+          "info"
+        );
+        await reloadBookAnnotations();
+      } catch {
+        showReaderToast("Erro ao alterar visibilidade do desenho.", "error");
+      }
+    });
   }
 
   btnDrawClear.addEventListener("click", async () => {
-    if (confirm(`Deseja limpar todos os desenhos da Página ${currentPage}?`)) {
+    if (confirm(`Deseja limpar apenas os seus desenhos da Página ${currentPage}?`)) {
       try {
+        clearTimeout(saveDrawingTimeout);
         await fetch(`/api/books/${bookId}/pages/${currentPage}/drawing`, { method: "DELETE" });
         pageStrokesMap.set(currentPage, []);
+        const cached = pageDrawingsBundleCache.get(currentPage);
+        if (cached && cached.own_drawing) {
+          cached.own_drawing.strokes = [];
+          cached.own_drawing.visibility = "private";
+        }
+        updateDrawVisibilityButton(currentPage);
         if (viewMode === "single") {
           singleDrawingLayer.innerHTML = "";
         } else {
@@ -1961,6 +3186,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             if (svg) svg.innerHTML = "";
           }
         }
+        await reloadBookAnnotations();
       } catch {
         alert("Erro ao limpar desenhos.");
       }
@@ -2222,8 +3448,108 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // --- Busca Textual Interna no PDF (v1.8.0) ---
+  function openPdfSearchBar() {
+    if (!readerSearchBar || bookFormat === "epub") return;
+    readerSearchBar.style.display = "flex";
+    if (pdfSearchInput) {
+      pdfSearchInput.focus();
+      pdfSearchInput.select();
+    }
+  }
+
+  function closePdfSearchBar() {
+    if (readerSearchBar) readerSearchBar.style.display = "none";
+  }
+
+  async function runPdfSearch(queryText) {
+    if (!pdfDoc) return;
+    const term = String(queryText || "").trim().toLowerCase();
+    pdfSearchMatches = [];
+    pdfSearchMatchIdx = -1;
+
+    if (!term) {
+      if (pdfSearchStatus) pdfSearchStatus.textContent = "";
+      return;
+    }
+
+    if (pdfSearchStatus) pdfSearchStatus.textContent = "Buscando...";
+    for (let p = 1; p <= totalPages; p++) {
+      let pageText = pdfPageTextCache.get(p);
+      if (pageText === undefined) {
+        try {
+          const page = await pdfDoc.getPage(p);
+          const tc = await page.getTextContent();
+          pageText = (tc.items || []).map(it => it.str || "").join(" ").toLowerCase();
+          pdfPageTextCache.set(p, pageText);
+        } catch {
+          pageText = "";
+        }
+      }
+      if (pageText.includes(term)) {
+        pdfSearchMatches.push({ page: p });
+      }
+    }
+
+    if (pdfSearchMatches.length === 0) {
+      if (pdfSearchStatus) pdfSearchStatus.textContent = "0/0";
+      return;
+    }
+
+    const exactIdx = pdfSearchMatches.findIndex(m => m.page >= currentPage);
+    pdfSearchMatchIdx = exactIdx >= 0 ? exactIdx : 0;
+    if (pdfSearchStatus) pdfSearchStatus.textContent = `${pdfSearchMatchIdx + 1}/${pdfSearchMatches.length}`;
+    goToPage(pdfSearchMatches[pdfSearchMatchIdx].page);
+  }
+
+  function stepPdfSearchMatch(delta) {
+    if (pdfSearchMatches.length === 0) return;
+    pdfSearchMatchIdx = (pdfSearchMatchIdx + delta + pdfSearchMatches.length) % pdfSearchMatches.length;
+    if (pdfSearchStatus) pdfSearchStatus.textContent = `${pdfSearchMatchIdx + 1}/${pdfSearchMatches.length}`;
+    goToPage(pdfSearchMatches[pdfSearchMatchIdx].page);
+  }
+
+  if (btnTogglePdfSearch) btnTogglePdfSearch.addEventListener("click", openPdfSearchBar);
+  if (btnClosePdfSearch) btnClosePdfSearch.addEventListener("click", closePdfSearchBar);
+  if (btnPdfSearchNext) btnPdfSearchNext.addEventListener("click", () => stepPdfSearchMatch(1));
+  if (btnPdfSearchPrev) btnPdfSearchPrev.addEventListener("click", () => stepPdfSearchMatch(-1));
+  if (pdfSearchInput) {
+    pdfSearchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (pdfSearchMatches.length > 0 && pdfSearchInput.dataset.lastQuery === pdfSearchInput.value.trim()) {
+          stepPdfSearchMatch(e.shiftKey ? -1 : 1);
+        } else {
+          pdfSearchInput.dataset.lastQuery = pdfSearchInput.value.trim();
+          runPdfSearch(pdfSearchInput.value);
+        }
+      } else if (e.key === "Escape") {
+        closePdfSearchBar();
+      }
+    });
+  }
+
+  // Fecha popovers contextuais ao clicar fora deles
+  document.addEventListener("click", (e) => {
+    if (highlightPopover && highlightPopover.style.display !== "none") {
+      if (!highlightPopover.contains(e.target) && !e.target.closest(".highlight-box")) {
+        closeHighlightPopover();
+      }
+    }
+    if (pageNotePopover && pageNotePopover.style.display !== "none") {
+      if (!pageNotePopover.contains(e.target) && !e.target.closest(".page-note-pin")) {
+        closePageNotePopover();
+      }
+    }
+  });
+
   // --- Atalhos de Teclado Globais ---
   window.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f" && bookFormat === "pdf") {
+      e.preventDefault();
+      openPdfSearchBar();
+      return;
+    }
     if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
 
     if (e.key === "ArrowLeft" || e.key === "PageUp") {
@@ -2252,12 +3578,24 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (btnToggleThumbnails) btnToggleThumbnails.click();
     } else if (e.key.toLowerCase() === "s") {
       setViewMode(viewMode === "single" ? "continuous" : "single");
+    } else if (e.key.toLowerCase() === "v") {
+      const order = ["all_visible", "mine", "hidden"];
+      const next = order[(order.indexOf(layerViewMode) + 1) % order.length];
+      applyLayerViewMode(next, true);
+    } else if (e.key.toLowerCase() === "k") {
+      toggleCurrentPositionBookmark();
+    } else if (e.key === "/" && bookFormat === "pdf") {
+      e.preventDefault();
+      openPdfSearchBar();
     } else if (e.key.toLowerCase() === "t") {
       cycleTheme();
     } else if (e.key === "?") {
       if (modalShortcutsHelp) modalShortcutsHelp.classList.add("active");
     } else if (e.key === "Escape") {
       hideSelectionToolbar();
+      closeHighlightPopover();
+      closePageNotePopover();
+      closePdfSearchBar();
       closeNoteEditorModal();
       if (modalImportPreview) modalImportPreview.classList.remove("active");
       if (modalShortcutsHelp) modalShortcutsHelp.classList.remove("active");
@@ -2290,7 +3628,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(() => {
       if (bookFormat === "epub") {
-        if (epubRendition) epubRendition.resize();
+        if (epubRendition) {
+          epubRendition.resize();
+          setTimeout(() => renderEpubHighlights(), 180);
+        }
         return;
       }
       isProgrammaticScroll = true;
@@ -2426,7 +3767,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(() => {
       if (bookFormat === "epub") {
-        if (epubRendition) epubRendition.resize();
+        if (epubRendition) {
+          epubRendition.resize();
+          setTimeout(() => renderEpubHighlights(), 180);
+        }
         return;
       }
       isProgrammaticScroll = true;
@@ -2748,22 +4092,60 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (btnTabletToc) btnTabletToc.addEventListener("click", () => openTocDrawer());
 
   // =========================================
-  // SUPORTE NATIVO A EPUB (Fase 4)
+  // SUPORTE NATIVO A EPUB COLABORATIVO (Fase 4)
   // =========================================
+  const EPUB_MARGIN_MAP = {
+    compact: "0 0.5rem",
+    normal: "0 1.25rem",
+    wide: "0 2.75rem",
+  };
+  const EPUB_MARGIN_LABELS = {
+    compact: "M:C",
+    normal: "M:N",
+    wide: "M:A",
+  };
+
+  function applyEpubTypography() {
+    if (!epubRendition) return;
+    const marginVal = EPUB_MARGIN_MAP[epubMargin] || EPUB_MARGIN_MAP.normal;
+    epubRendition.themes.default({
+      "body": {
+        "padding": `${marginVal} !important`,
+        "font-family": `${epubFontFamily}, Georgia, serif !important`,
+        "font-size": `${epubFontSize}% !important`,
+        "line-height": `${epubLineHeight} !important`,
+      },
+    });
+    epubRendition.themes.fontSize(`${epubFontSize}%`);
+    epubRendition.themes.font(epubFontFamily);
+    if (btnEpubLineHeight) {
+      const sp = btnEpubLineHeight.querySelector("span");
+      if (sp) sp.textContent = epubLineHeight;
+    }
+    if (btnMobileEpubLineHeight) {
+      const sp = btnMobileEpubLineHeight.querySelector("span");
+      if (sp) sp.textContent = epubLineHeight;
+    }
+    if (btnEpubMargin) {
+      const sp = btnEpubMargin.querySelector("span");
+      if (sp) sp.textContent = EPUB_MARGIN_LABELS[epubMargin] || "M:N";
+    }
+    if (btnMobileEpubMargin) {
+      const sp = btnMobileEpubMargin.querySelector("span");
+      if (sp) sp.textContent = EPUB_MARGIN_LABELS[epubMargin] || "M:N";
+    }
+    setTimeout(() => renderEpubHighlights(), 120);
+  }
+
   function changeEpubFontSize(delta) {
     epubFontSize = Math.min(Math.max(epubFontSize + delta, 60), 220);
     if (epubFontSizeLabel) epubFontSizeLabel.textContent = `${epubFontSize}%`;
-    if (epubRendition) {
-      epubRendition.themes.fontSize(`${epubFontSize}%`);
-    }
     localStorage.setItem("lectoria_epub_font_size", epubFontSize);
+    applyEpubTypography();
   }
 
   function toggleEpubFontFamily() {
     epubFontFamily = epubFontFamily === "serif" ? "sans-serif" : "serif";
-    if (epubRendition) {
-      epubRendition.themes.font(epubFontFamily);
-    }
     if (btnEpubFontFamily) {
       const sp = btnEpubFontFamily.querySelector("span");
       if (sp) sp.style.fontFamily = epubFontFamily;
@@ -2773,6 +4155,218 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (sp) sp.style.fontFamily = epubFontFamily;
     }
     localStorage.setItem("lectoria_epub_font_family", epubFontFamily);
+    applyEpubTypography();
+  }
+
+  function cycleEpubLineHeight() {
+    const options = ["1.4", "1.65", "1.9"];
+    epubLineHeight = options[(options.indexOf(String(epubLineHeight)) + 1) % options.length];
+    localStorage.setItem("lectoria_epub_line_height", epubLineHeight);
+    applyEpubTypography();
+  }
+
+  function cycleEpubMargin() {
+    const options = ["compact", "normal", "wide"];
+    epubMargin = options[(options.indexOf(epubMargin) + 1) % options.length];
+    localStorage.setItem("lectoria_epub_margin", epubMargin);
+    applyEpubTypography();
+  }
+
+  function flattenEpubToc(toc, list = []) {
+    if (!Array.isArray(toc)) return list;
+    toc.forEach(item => {
+      list.push({
+        label: item.label ? item.label.trim() : "",
+        href: item.href || "",
+      });
+      if (Array.isArray(item.subitems) && item.subitems.length > 0) {
+        flattenEpubToc(item.subitems, list);
+      }
+    });
+    return list;
+  }
+
+  function resolveCurrentEpubChapterLabel(location) {
+    try {
+      const href = location && location.start && location.start.href ? location.start.href : "";
+      if (!href || epubTocFlat.length === 0) return "";
+      const baseHref = href.split("#")[0];
+      const match = epubTocFlat.find(it => it.href && (it.href.split("#")[0] === baseHref || baseHref.endsWith(it.href.split("#")[0])));
+      return match && match.label ? match.label : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function getEpubAnchorRectFromEvent(e) {
+    const epubBox = document.getElementById("epub-viewer");
+    const boxRect = epubBox ? epubBox.getBoundingClientRect() : { left: 40, top: 100, width: 300, height: 300 };
+    try {
+      const target = e && e.target;
+      const iframe = epubViewer ? epubViewer.querySelector("iframe") : null;
+      if (target && typeof target.getBoundingClientRect === "function" && iframe) {
+        const tRect = target.getBoundingClientRect();
+        const fRect = iframe.getBoundingClientRect();
+        return {
+          left: fRect.left + tRect.left,
+          top: fRect.top + tRect.top,
+          right: fRect.left + tRect.right,
+          bottom: fRect.top + tRect.bottom,
+          width: tRect.width,
+          height: tRect.height,
+        };
+      }
+    } catch (_) {}
+    return {
+      left: boxRect.left + 32,
+      top: boxRect.top + 48,
+      right: boxRect.left + 200,
+      bottom: boxRect.top + 80,
+      width: 168,
+      height: 32,
+    };
+  }
+
+  function renderEpubHighlights() {
+    if (!epubRendition || !epubRendition.annotations) return;
+    // Remove registros anteriores sem quebrar se o capítulo mudou
+    renderedEpubHighlightCfis.forEach(cfi => {
+      try {
+        epubRendition.annotations.remove(cfi, "highlight");
+      } catch (_) {}
+    });
+    renderedEpubHighlightCfis.clear();
+
+    if (layerViewMode === "hidden") return;
+
+    const highlights = (bookAnnotations.highlights || []).filter(h => {
+      if (!h.epub_cfi || !/^epubcfi\(.+\)$/i.test(String(h.epub_cfi).trim())) return false;
+      if (layerViewMode === "mine") return h.is_own !== false;
+      return true;
+    });
+
+    highlights.forEach(h => {
+      const isOwn = h.is_own !== false;
+      const cfi = String(h.epub_cfi).trim();
+      const cls = isOwn ? "epub-hl-own" : "epub-hl-public-other";
+      const styles = isOwn
+        ? { fill: h.color || "#fef08a", "fill-opacity": "0.38", "mix-blend-mode": "multiply" }
+        : {
+            fill: h.color || "#fef08a",
+            "fill-opacity": "0.28",
+            stroke: "#334155",
+            "stroke-dasharray": "3,2",
+            "stroke-width": "1",
+          };
+      try {
+        epubRendition.annotations.highlight(
+          cfi,
+          { id: h.id, isOwn },
+          (e) => {
+            if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+            const virtualAnchor = { getBoundingClientRect: () => getEpubAnchorRectFromEvent(e) };
+            openHighlightPopover(h, virtualAnchor);
+          },
+          cls,
+          styles
+        );
+        renderedEpubHighlightCfis.add(cfi);
+      } catch (err) {
+        // Tratamento defensivo para CFI inválido ou fora do capítulo atual
+      }
+    });
+  }
+
+  function renderEpubNotePins() {
+    if (!epubNotePinsLayer) return;
+    epubNotePinsLayer.innerHTML = "";
+    if (layerViewMode === "hidden") return;
+
+    const notes = (bookAnnotations.notes || []).filter(n => {
+      if (layerViewMode === "mine") return n.is_own !== false;
+      return true;
+    });
+    if (notes.length === 0) return;
+
+    const stack = document.createElement("div");
+    stack.className = "page-note-pins-stack";
+
+    notes.slice(0, 6).forEach(n => {
+      const isOwn = n.is_own !== false;
+      const pin = document.createElement("button");
+      pin.type = "button";
+      pin.className = isOwn ? "page-note-pin" : "page-note-pin is-public-other";
+      pin.setAttribute("data-note-id", n.id);
+      pin.setAttribute("data-is-own", isOwn ? "true" : "false");
+
+      const dot = document.createElement("span");
+      dot.className = "author-avatar-dot";
+      dot.style.backgroundColor = isOwn ? "#d4a853" : (n.author_avatar_color || "#38bdf8");
+
+      const textSpan = document.createElement("span");
+      textSpan.className = "page-note-pin-text";
+      const prefix = isOwn ? (n.visibility === "public" ? "🌐 " : "📝 ") : `${n.author_display_name || "Leitor"}: `;
+      textSpan.textContent = `${prefix}${(n.content || "").slice(0, 28)}`;
+
+      pin.title = `${isOwn ? "Sua nota" : (n.author_display_name || "Leitor")}: ${n.content || ""}`;
+      pin.appendChild(dot);
+      pin.appendChild(textSpan);
+
+      pin.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openPageNotePopover(n, pin);
+      });
+
+      stack.appendChild(pin);
+    });
+
+    epubNotePinsLayer.appendChild(stack);
+  }
+
+  async function navigateToEpubCfi(cfi, fallbackChapterLabel = null) {
+    if (!epubRendition) return;
+    const cleanCfi = String(cfi || "").trim();
+    const isValidCfi = /^epubcfi\(.+\)$/i.test(cleanCfi);
+
+    if (isValidCfi) {
+      try {
+        await epubRendition.display(cleanCfi);
+        renderEpubHighlights();
+        // Destaque temporário suave na localização navegada
+        try {
+          epubRendition.annotations.highlight(
+            cleanCfi,
+            { tempFlash: true },
+            null,
+            "epub-hl-flash",
+            { fill: "#38bdf8", "fill-opacity": "0.45" }
+          );
+          setTimeout(() => {
+            try { epubRendition.annotations.remove(cleanCfi, "highlight"); } catch (_) {}
+            renderEpubHighlights();
+          }, 1800);
+        } catch (_) {}
+        return;
+      } catch (err) {
+        // Segue para fallback controlado abaixo
+      }
+    }
+
+    // Fallback seguro para o capítulo associado sem sobrescrever o progresso atual
+    if (fallbackChapterLabel && epubTocFlat.length > 0) {
+      const chap = epubTocFlat.find(
+        it => it.label && it.label.toLowerCase() === String(fallbackChapterLabel).trim().toLowerCase() && it.href
+      );
+      if (chap) {
+        try {
+          await epubRendition.display(chap.href);
+          showReaderToast(`CFI indisponível; exibindo capítulo "${chap.label}".`, "info");
+          return;
+        } catch (_) {}
+      }
+    }
+
+    showReaderToast("Posição EPUB (CFI) inválida ou incompatível; mantendo posição atual.", "error");
   }
 
   function openTocDrawer() {
@@ -2879,28 +4473,37 @@ document.addEventListener("DOMContentLoaded", async () => {
     const labelDl = document.getElementById("label-download-format");
     if (labelDl) labelDl.textContent = "Baixar Arquivo EPUB Original";
 
-    // Configurações salvas de tamanho de fonte e tipografia
+    // Configurações salvas de tamanho de fonte, tipografia, espaçamento e margens
     epubFontSize = parseInt(localStorage.getItem("lectoria_epub_font_size"), 10) || 100;
     epubFontFamily = localStorage.getItem("lectoria_epub_font_family") || "serif";
+    epubLineHeight = localStorage.getItem("lectoria_epub_line_height") || "1.65";
+    epubMargin = localStorage.getItem("lectoria_epub_margin") || "normal";
     if (epubFontSizeLabel) epubFontSizeLabel.textContent = `${epubFontSize}%`;
     if (btnEpubFontFamily) {
       const sp = btnEpubFontFamily.querySelector("span");
       if (sp) sp.style.fontFamily = epubFontFamily;
     }
 
-    if (btnEpubFontSmaller) btnEpubFontSmaller.addEventListener("click", () => changeEpubFontSize(-10));
-    if (btnEpubFontLarger) btnEpubFontLarger.addEventListener("click", () => changeEpubFontSize(10));
-    if (btnEpubFontFamily) btnEpubFontFamily.addEventListener("click", toggleEpubFontFamily);
-    if (btnEpubThemeSepia) btnEpubThemeSepia.addEventListener("click", () => applyTheme("sepia"));
+    if (!epubEventsBound) {
+      epubEventsBound = true;
+      if (btnEpubFontSmaller) btnEpubFontSmaller.addEventListener("click", () => changeEpubFontSize(-10));
+      if (btnEpubFontLarger) btnEpubFontLarger.addEventListener("click", () => changeEpubFontSize(10));
+      if (btnEpubFontFamily) btnEpubFontFamily.addEventListener("click", toggleEpubFontFamily);
+      if (btnEpubLineHeight) btnEpubLineHeight.addEventListener("click", cycleEpubLineHeight);
+      if (btnEpubMargin) btnEpubMargin.addEventListener("click", cycleEpubMargin);
+      if (btnEpubThemeSepia) btnEpubThemeSepia.addEventListener("click", () => applyTheme("sepia"));
 
-    if (btnMobileEpubSmaller) btnMobileEpubSmaller.addEventListener("click", () => changeEpubFontSize(-10));
-    if (btnMobileEpubLarger) btnMobileEpubLarger.addEventListener("click", () => changeEpubFontSize(10));
-    if (btnMobileEpubFont) btnMobileEpubFont.addEventListener("click", toggleEpubFontFamily);
-    if (btnMobileEpubSepia) btnMobileEpubSepia.addEventListener("click", () => applyTheme("sepia"));
+      if (btnMobileEpubSmaller) btnMobileEpubSmaller.addEventListener("click", () => changeEpubFontSize(-10));
+      if (btnMobileEpubLarger) btnMobileEpubLarger.addEventListener("click", () => changeEpubFontSize(10));
+      if (btnMobileEpubFont) btnMobileEpubFont.addEventListener("click", toggleEpubFontFamily);
+      if (btnMobileEpubLineHeight) btnMobileEpubLineHeight.addEventListener("click", cycleEpubLineHeight);
+      if (btnMobileEpubMargin) btnMobileEpubMargin.addEventListener("click", cycleEpubMargin);
+      if (btnMobileEpubSepia) btnMobileEpubSepia.addEventListener("click", () => applyTheme("sepia"));
 
-    if (btnTabletFontSmaller) btnTabletFontSmaller.addEventListener("click", () => changeEpubFontSize(-10));
-    if (btnTabletFontLarger) btnTabletFontLarger.addEventListener("click", () => changeEpubFontSize(10));
-    if (btnTabletFontFamily) btnTabletFontFamily.addEventListener("click", toggleEpubFontFamily);
+      if (btnTabletFontSmaller) btnTabletFontSmaller.addEventListener("click", () => changeEpubFontSize(-10));
+      if (btnTabletFontLarger) btnTabletFontLarger.addEventListener("click", () => changeEpubFontSize(10));
+      if (btnTabletFontFamily) btnTabletFontFamily.addEventListener("click", toggleEpubFontFamily);
+    }
 
     // Carrega sob demanda as bibliotecas do EPUB (sem sobrecarregar leitura de PDFs)
     await ensureEpubScriptsLoaded();
@@ -2953,21 +4556,15 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
     });
 
-    epubRendition.themes.default({
-      "body": {
-        "padding": "0 1.25rem !important",
-        "font-family": `${epubFontFamily}, Georgia, serif !important`,
-        "font-size": `${epubFontSize}% !important`,
-        "line-height": "1.65 !important",
-      }
-    });
-
+    applyEpubTypography();
     applyEpubTheme(currentTheme);
 
-    // Carrega sumário (TOC)
+    // Carrega sumário (TOC) e anotações colaborativas do livro
     epubBook.loaded.navigation.then(nav => {
+      epubTocFlat = flattenEpubToc(nav.toc);
       renderEpubToc(nav.toc);
     });
+    const epubAnnotationsPromise = reloadBookAnnotations();
 
     // Gera localizações em segundo plano
     epubBook.ready.then(() => {
@@ -2984,9 +4581,15 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     });
 
-    // Atualização de localização e salvamento de progresso
+    // Atualização de localização, renderização de destaques CFI e salvamento de progresso
+    epubRendition.on("rendered", () => {
+      renderEpubHighlights();
+      renderEpubNotePins();
+    });
+
     epubRendition.on("relocated", (location) => {
       epubCfi = location.start.cfi;
+      epubCurrentChapterLabel = resolveCurrentEpubChapterLabel(location) || epubCurrentChapterLabel;
       let pct = 0;
       if (epubBook.locations && epubBook.locations.length() > 0) {
         pct = Math.round(epubBook.locations.percentageFromCfi(epubCfi) * 100);
@@ -3001,6 +4604,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       updateReadingProgressBar();
       updateMobilePageControls();
       updateTabletControls();
+      renderEpubHighlights();
+      renderEpubNotePins();
 
       queueSaveProgress(epubCfi);
       isRestoringProgress = false;
@@ -3028,20 +4633,28 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
 
     epubRendition.on("selected", (cfiRange, contents) => {
-      if (eligibleCollectiveReads.length === 0) return;
       try {
         const sel = contents && contents.window ? contents.window.getSelection() : null;
         const text = sel ? sel.toString().trim() : "";
         if (!text) return;
-        currentSelectionData = { page: null, epubCfi: cfiRange, text };
+        currentSelectionData = {
+          page: Math.max(1, currentPage || 1),
+          epubCfi: cfiRange,
+          chapterLabel: epubCurrentChapterLabel || null,
+          text,
+          rects: [],
+          context: text.slice(0, 150),
+        };
         if (selectionToolbar) {
           selectionToolbar.querySelectorAll(".highlight-color-btn, #btn-add-note-from-selection").forEach(b => {
-            b.style.display = "none";
+            b.style.display = "inline-flex";
           });
-          if (btnShareSelectionClub) btnShareSelectionClub.style.display = "inline-flex";
+          if (btnShareSelectionClub) {
+            btnShareSelectionClub.style.display = eligibleCollectiveReads.length > 0 ? "inline-flex" : "none";
+          }
           const epubBox = document.getElementById("epub-viewer");
           const boxRect = epubBox ? epubBox.getBoundingClientRect() : { left: 20, top: 80, width: window.innerWidth };
-          const tbWidth = Math.min(selectionToolbar.offsetWidth || 240, window.innerWidth - 20);
+          const tbWidth = Math.min(selectionToolbar.offsetWidth || 280, window.innerWidth - 20);
           const maxLeft = Math.max(10, window.innerWidth - tbWidth - 10);
           selectionToolbar.style.left = `${Math.min(maxLeft, Math.max(10, boxRect.left + boxRect.width / 2 - tbWidth / 2))}px`;
           selectionToolbar.style.top = `${Math.max(64, boxRect.top + 12)}px`;
@@ -3069,6 +4682,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       await epubRendition.display();
     }
 
+    await epubAnnotationsPromise.catch(() => {});
+    renderEpubHighlights();
+    renderEpubNotePins();
     updateTabletControls();
   }
 
@@ -3079,16 +4695,35 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // --- Carregamento Inicial do Documento ---
   try {
-    // Paraleliza a busca de metadados da obra e do progresso salvo para acelerar a renderização
-    const [bookRes, progRes] = await Promise.all([
+    // Paraleliza a busca de metadados da obra, progresso salvo e sessão atual (isolamento de preferência por usuário)
+    const [bookRes, progRes, meRes] = await Promise.all([
       fetch(`/api/books/${bookId}`),
       fetch(`/api/books/${bookId}/progress`).catch(() => null),
+      fetch(`/api/auth/me`).catch(() => null),
     ]);
     if (bookRes.status === 401) {
       window.location.href = `/?login=1`;
       return;
     }
     if (!bookRes.ok) throw new Error("Livro não encontrado.");
+    if (meRes && meRes.ok) {
+      try {
+        const meData = await meRes.json();
+        if (meData && meData.user && meData.user.id) {
+          currentUserId = meData.user.id;
+        }
+      } catch (_) {}
+    }
+    try {
+      const savedViewMode = localStorage.getItem(getLayerViewStorageKey());
+      if (["mine", "all_visible", "hidden"].includes(savedViewMode)) {
+        layerViewMode = savedViewMode;
+      }
+    } catch (_) {}
+    if (layerViewModeSelect) layerViewModeSelect.value = layerViewMode;
+    if (mobileLayerViewSelect) mobileLayerViewSelect.value = layerViewMode;
+    viewportEl.classList.toggle("layers-hidden", layerViewMode === "hidden");
+
     const bookData = await bookRes.json();
     currentBookTitle = bookData.title || "";
     bookTitleEl.textContent = bookData.title;
