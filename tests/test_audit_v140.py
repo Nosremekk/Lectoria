@@ -43,14 +43,50 @@ from main import app, SESSION_COOKIE_NAME
 # 1. TESTES DE APIS EXTERNAS, RATE LIMIT E COOLDOWN 429
 # ==============================================================================
 
-def test_api_rate_limiting_and_cached_lookup(test_env):
-    """Valida respeito ao intervalo de 1s na Open Library e sub-milissegundo em cache."""
+def test_api_rate_limiting_and_cached_lookup(test_env, monkeypatch):
+    """Valida respeito ao intervalo de 1s na Open Library e sub-milissegundo em cache (sem rede externa)."""
+    import io
+    import json
+    import urllib.request
+    import metadata_service
+
     test_isbn = "9780140449136"
+    # Limpa eventual cache prévio desse ISBN no banco da sessão
+    with metadata_service.get_db() as conn:
+        conn.execute("DELETE FROM metadata_api_cache WHERE cache_key LIKE ?", (f"%{test_isbn}%",))
+
+    http_calls = {"count": 0}
+
+    class _FakeHttpResponse:
+        def __init__(self, payload: dict):
+            self.status = 200
+            self._body = json.dumps(payload).encode("utf-8")
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_urlopen(req, timeout=8.0):
+        http_calls["count"] += 1
+        return _FakeHttpResponse({
+            "title": "The Odyssey",
+            "publishers": ["Penguin Classics"],
+            "publish_date": "1996",
+            "isbn_13": [test_isbn],
+        })
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
     t0 = time.time()
     res1 = OpenLibraryClient.lookup_isbn(test_isbn)
     t1 = time.time()
 
-    # Segundo lookup DEVE vir do cache instantaneamente (< 0.05s)
+    # Segundo lookup DEVE vir do cache instantaneamente (< 0.05s) e sem nova chamada HTTP
     t2 = time.time()
     res2 = OpenLibraryClient.lookup_isbn(test_isbn)
     t3 = time.time()
@@ -58,6 +94,7 @@ def test_api_rate_limiting_and_cached_lookup(test_env):
     assert res1 is not None
     assert res2 is not None
     assert res1["title"] == res2["title"]
+    assert http_calls["count"] == 1
     assert (t3 - t2) < 0.05, f"Consulta em cache demorou excessivamente: {t3 - t2:.4f}s"
 
 
@@ -76,20 +113,40 @@ def test_google_books_429_cooldown():
         metadata_service._GOOGLE_BOOKS_COOLDOWN_UNTIL = 0.0
 
 
-def test_nonexistent_isbn_negative_caching(test_env):
-    """Valida que ISBN inexistente não gera requisições repetidas via cache negativo."""
+def test_nonexistent_isbn_negative_caching(test_env, monkeypatch):
+    """Valida que ISBN inexistente (HTTP 404) não gera requisições repetidas via cache negativo."""
+    import io
+    import urllib.error
+    import urllib.request
+    import metadata_service
+
     unassigned_isbn = "9798999999993"
     assert validate_isbn13(unassigned_isbn) is True
 
-    # Primeira consulta registra no cache como not_found
+    with metadata_service.get_db() as conn:
+        conn.execute("DELETE FROM metadata_api_cache WHERE cache_key LIKE ?", (f"%{unassigned_isbn}%",))
+
+    http_calls = {"count": 0}
+
+    def fake_urlopen_404(req, timeout=8.0):
+        http_calls["count"] += 1
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        raise urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO(b""))
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen_404)
+
+    # Primeira consulta registra no cache como not_found (HTTP 404)
     res1 = OpenLibraryClient.lookup_isbn(unassigned_isbn)
     assert res1 is None
+    calls_after_first = http_calls["count"]
+    assert calls_after_first >= 1
 
     t0 = time.time()
     res2 = OpenLibraryClient.lookup_isbn(unassigned_isbn)
     elapsed = time.time() - t0
 
     assert res2 is None
+    assert http_calls["count"] == calls_after_first
     assert elapsed < 0.05, f"Cache negativo falhou em responder rápido: {elapsed:.4f}s"
 
 

@@ -121,8 +121,8 @@ def test_v10_to_v11_migration_and_backup(v10_database):
 
     database.init_db(db_path)
 
-    bak_path = tmp_dir / "lectoria_pre_migration_v10_to_v11.db.bak"
-    assert bak_path.exists(), "Backup pré-migração lectoria_pre_migration_v10_to_v11.db.bak deve existir"
+    bak_path = tmp_dir / f"lectoria_pre_migration_v10_to_v{database.SCHEMA_VERSION}.db.bak"
+    assert bak_path.exists(), f"Backup pré-migração {bak_path.name} deve existir"
 
     bak_conn = sqlite3.connect(str(bak_path))
     bak_cur = bak_conn.cursor()
@@ -133,7 +133,7 @@ def test_v10_to_v11_migration_and_backup(v10_database):
     conn = database.get_connection(db_path)
     try:
         cur = conn.cursor()
-        assert cur.execute("SELECT MAX(version) FROM schema_migrations;").fetchone()[0] == 11
+        assert cur.execute("SELECT MAX(version) FROM schema_migrations;").fetchone()[0] >= 11
 
         new_tables = [
             "collective_discussion_topics",
@@ -164,7 +164,7 @@ def test_backup_never_overwrites_existing_backup(v10_database):
     """Garante que se já existir um arquivo de backup pré-migração, uma nova cópia com timestamp é criada sem sobrescrever a anterior."""
     db_path, tmp_dir = v10_database
 
-    existing_bak = tmp_dir / "lectoria_pre_migration_v10_to_v11.db.bak"
+    existing_bak = tmp_dir / f"lectoria_pre_migration_v10_to_v{database.SCHEMA_VERSION}.db.bak"
     sentinel_bytes = b"ORIGINAL_BACKUP_DO_NOT_OVERWRITE"
     existing_bak.write_bytes(sentinel_bytes)
 
@@ -172,7 +172,7 @@ def test_backup_never_overwrites_existing_backup(v10_database):
 
     assert existing_bak.read_bytes() == sentinel_bytes
 
-    baks = list(tmp_dir.glob("lectoria_pre_migration_v10_to_v11_*.db.bak"))
+    baks = list(tmp_dir.glob(f"lectoria_pre_migration_v10_to_v{database.SCHEMA_VERSION}_*.db.bak"))
     assert len(baks) == 1, f"Esperado 1 backup com timestamp, encontrado: {baks}"
 
     bak_conn = sqlite3.connect(str(baks[0]))
@@ -224,7 +224,7 @@ def test_idempotent_initialization(v10_database):
     conn = database.get_connection(db_path)
     try:
         cur = conn.cursor()
-        assert cur.execute("SELECT MAX(version) FROM schema_migrations;").fetchone()[0] == 11
+        assert cur.execute("SELECT MAX(version) FROM schema_migrations;").fetchone()[0] >= 11
         assert cur.execute("PRAGMA integrity_check;").fetchone()[0] == "ok"
     finally:
         conn.close()

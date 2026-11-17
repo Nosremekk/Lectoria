@@ -11,8 +11,8 @@ Antes de propor ou aplicar qualquer modificação, consulte os documentos técni
 O **Lectoria** é uma aplicação *self-hosted* de biblioteca digital e leitura colaborativa para documentos **PDF** e livros digitais **EPUB**.
 - **Foco Arquitetural**: Sobriedade estética editorial, velocidade, baixo consumo de memória RAM, CPU e I/O de disco, permitindo convivência pacífica com servidores de mídia (como Jellyfin) em hardware doméstico modesto (ex: Intel Celeron 847).
 - **Licença**: Código aberto sob licença MIT.
-- **Versão Atual**: `1.7.0` (base estável anterior: `1.6.3`).
-- **Schema SQLite**: Versão 11.
+- **Versão Atual**: `1.8.0` (base estável anterior: `1.7.0`).
+- **Schema SQLite**: Versão 12.
 
 ---
 

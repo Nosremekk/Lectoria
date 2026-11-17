@@ -7,6 +7,36 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.8.0] - 2026-11-17
+
+### Adicionado (`Added`)
+- **Persistência e Migração SQLite v11 → v12 (`database.py`)**:
+  - Colunas `visibility` (`'private' | 'public'`, default `'private'`), `epub_cfi`, `chapter_label` e `updated_at` em `highlights` e `notes`; `visibility` e `created_at` em `page_drawings`.
+  - Nova tabela `bookmarks` para marcadores pessoais (sempre privados) com índice único `uq_bookmarks_book_user_pos` e 10 índices compostos para consultas por livro, página, visibilidade e EPUB CFI.
+  - Backup pré-migração automático (`lectoria_pre_migration_v11_to_v12.db.bak`) com sufixo único, preservação integral de registros legados como `'private'` e rollback transacional em falhas.
+- **Serviços e API REST Colaborativa (`annotations_service.py`, `export_service.py`, `main.py`)**:
+  - Escopos `mine`, `public` e `all_visible` (sem duplicações), ordenação `position` / `recent`, busca segura por conteúdo, capítulo e nome público do autor, paginação (`limit`, `offset`, `has_more`, `total_counts`) e cabeçalho `Cache-Control: private, no-store`.
+  - Novos endpoints `PATCH .../visibility` para destaques, notas e desenhos; `GET /api/books/{id}/pages/{page}/drawing` retornando `own_drawing` + `public_drawings`; CRUD completo `/api/books/{id}/bookmarks`.
+  - Validação Pydantic v2 (`ConfigDict(extra="forbid")`), proteção CSRF, anti-IDOR e importação JSON segura (forçando `visibility = 'private'` sob o usuário autenticado).
+- **Leitor PDF Colaborativo (`reader.html`, `reader.js`, `style.css`)**:
+  - Camada pública de desenhos somente-leitura (`.public-drawing-layer`) separada da camada editável (`.drawing-layer`), com `viewBox` isotrópico imune a zoom e redimensionamento.
+  - Popovers contextuais `#highlight-popover` e `#page-note-popover` com autoria, visibilidade e ações restritas ao autor; controle de visualização de camadas (`all_visible`, `mine`, `hidden`) isolado por usuário; modo marca-texto ativo (`#btn-tool-highlight`); busca textual no PDF (`Ctrl+F` / `/`) e correção de `dockMargin` em tablets no modo contínuo.
+- **Leitor EPUB Colaborativo (`reader.html`, `reader.js`, `style.css`)**:
+  - Seleção de texto e anotações habilitadas para todos os livros EPUB independentemente de clubes, com renderização por `epubRendition.annotations.highlight()` via `epub_cfi`, tolerância a reflow, navegação direta por CFI com fallback seguro e controles de espaçamento entre linhas e margens.
+- **Caderno de Estudos Colaborativo e Marcadores (`reader.html`, `reader.js`, `style.css`)**:
+  - Seletor de escopo independente do leitor, aba `Marcadores`, botão de Marcador Rápido (`k`), ordenação por posição/CFI numérico (`compareEpubCfi()`) ou mais recentes, paginação incremental (*Carregar mais*) e exclusão/visibilidade de desenhos próprios.
+
+### Corrigido (`Fixed`)
+- **Testes de API Externa Determinísticos (`tests/test_audit_v140.py`)**:
+  - Substituídas chamadas reais dependentes de internet para `openlibrary.org` em `test_api_rate_limiting_and_cached_lookup` e `test_nonexistent_isbn_negative_caching` por mocks HTTP controlados via `monkeypatch`, mantendo execução real de rate limit e cache SQLite.
+- **Responsividade do Cabeçalho do Leitor (`static/css/style.css`)**:
+  - Ajuste de largura e compactação até `1440px` eliminando overflow horizontal em `1366x768`.
+
+### Alterado (`Changed`)
+- Atualização coordenada da versão da aplicação e cache-busting para `1.8.0` (`config.APP_VERSION`, `static/index.html`, `static/reader.html`, `static/js/app.js`).
+
+---
+
 ## [1.7.0] - 2026-11-14
 
 ### Adicionado (`Added`)

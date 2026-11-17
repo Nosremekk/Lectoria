@@ -131,3 +131,13 @@ O Lectoria oferece 3 temas visuais ativados via atributo `data-theme` na tag `<h
 - **Tema Padrão / Escuro (Obsidiana Editorial)**: Fundo escuro quente (`#141311`), superfícies secundárias (`#1C1B18`), texto em pergaminho suave (`#EAE5DC`) e acentos terracota.
 - **Tema Claro (Papel Marfim)**: `data-theme="light"` com fundo marfim (`#F6F3EC`), texto carvão (`#1C1B18`) e bordas neutras suaves.
 - **Tema Sépia (Conforto Noturno)**: `data-theme="sepia"` com tons quentes de pergaminho envelhecido, ideal para leitura prolongada.
+
+---
+
+## 7. Segurança e Isolamento no Leitor Colaborativo (v1.8.0 — Fase 3)
+
+- **Sanitização Estrita**: Todo conteúdo textual de notas, citações e `author_display_name` inserido nos popovers (`#highlight-popover`, `#page-note-popover`), pins de página e selos de autoria usa `textContent` ou `escapeHtml()` antes da inserção no DOM, prevenindo XSS.
+- **Autoridade no Backend**: As flags `is_own`, `can_edit`, `can_delete` e `can_toggle_visibility` controlam apenas a apresentação de botões na interface; todas as operações mutáveis (`PUT`, `PATCH`, `DELETE`) continuam validadas pelo backend e protegidas por `X-CSRF-Token`.
+- **Isolamento de Preferências por Usuário**: O modo de visualização de camadas (`all_visible`, `mine`, `hidden`) é salvo em `localStorage` sob chave prefixada pelo ID do usuário autenticado (`lectoria_layer_view_mode_u${currentUserId}`), evitando vazamento de preferências entre sessões distintas.
+- **EPUB Seguro (`allowScriptedContent: false`)**: O iframe do EPUB.js mantém execução de scripts desativada e links `javascript:` / `data:` / `vbscript:` neutralizados; a seleção de texto não executa scripts embutidos e toda renderização de notas/citações públicas no DOM utiliza `textContent` ou `escapeHtml()`.
+- **Caderno de Estudos Assíncrono (`drawerState`)**: Utiliza `AbortController` + `requestSeq` para descartar respostas obsoletas durante digitação ou troca rápida de escopo/ordenação, e `mergeUniqueById` na paginação incremental.

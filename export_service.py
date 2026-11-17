@@ -12,7 +12,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from database import get_db
 from library import get_book, BookNotFoundError
-from annotations_service import get_highlights, get_notes
+from annotations_service import (
+    get_highlights,
+    get_notes,
+    list_bookmarks,
+    MAX_EPUB_CFI_LEN,
+    MAX_CHAPTER_LABEL_LEN,
+    MAX_BOOKMARK_LABEL_LEN,
+)
 
 
 class ImportError(Exception):
@@ -27,11 +34,12 @@ class ImportError(Exception):
 def export_book_annotations_markdown(book_id: str, user_id: int = 1) -> str:
     """
     Gera um relatório completo de estudo em Markdown (.md) para o livro especificado e usuário.
-    Organizado por páginas, com destaques, notas vinculadas e notas avulsas.
+    Exporta exclusivamente as anotações próprias do usuário (`scope='mine'`).
+    Organizado por páginas/posições, com destaques, notas vinculadas e notas avulsas.
     """
     book = get_book(book_id, user_id=user_id)
-    highlights = get_highlights(book_id, user_id=user_id)
-    notes = get_notes(book_id, user_id=user_id)
+    highlights = get_highlights(book_id, user_id=user_id, scope="mine")
+    notes = get_notes(book_id, user_id=user_id, scope="mine")
 
     # Coleta páginas com desenhos do usuário
     with get_db() as conn:
@@ -139,18 +147,20 @@ def export_book_annotations_markdown(book_id: str, user_id: int = 1) -> str:
 
 def export_book_annotations_json(book_id: str, user_id: int = 1) -> Dict[str, Any]:
     """
-    Gera uma estrutura JSON completa preservando coordenadas, IDs, notas e traços vetoriais.
+    Gera uma estrutura JSON completa preservando coordenadas, EPUB CFI, IDs, notas,
+    traços vetoriais e marcadores pessoais exclusivamente do próprio usuário (`scope='mine'`).
     Permite backup pontual das anotações e migração segura entre instâncias do Lectoria.
     """
     book = get_book(book_id, user_id=user_id)
-    highlights = get_highlights(book_id, user_id=user_id)
-    notes = get_notes(book_id, user_id=user_id)
+    highlights = get_highlights(book_id, user_id=user_id, scope="mine")
+    notes = get_notes(book_id, user_id=user_id, scope="mine")
+    bookmarks = list_bookmarks(book_id, user_id=user_id)
 
-    # Coleta desenhos com seus traços completos do usuário
+    # Coleta desenhos com seus traços completos exclusivamente do usuário
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT id, page, strokes_json, updated_at FROM page_drawings WHERE book_id = ? AND user_id = ? ORDER BY page ASC",
+            "SELECT id, page, strokes_json, visibility, updated_at FROM page_drawings WHERE book_id = ? AND user_id = ? ORDER BY page ASC",
             (book_id, user_id),
         )
         drawings = []
@@ -177,6 +187,7 @@ def export_book_annotations_json(book_id: str, user_id: int = 1) -> Dict[str, An
         "highlights": highlights,
         "notes": notes,
         "drawings": drawings,
+        "bookmarks": bookmarks,
     }
 
 
@@ -187,12 +198,34 @@ def export_book_annotations_json(book_id: str, user_id: int = 1) -> Dict[str, An
 MAX_IMPORT_HIGHLIGHTS = 5000
 MAX_IMPORT_NOTES = 5000
 MAX_IMPORT_DRAWINGS = 1000
+MAX_IMPORT_BOOKMARKS = 2000
 MAX_STROKES_PER_DRAWING = 500
 MAX_POINTS_PER_STROKE = 5000
 MAX_TEXT_LENGTH = 10000
 MAX_NOTE_LENGTH = 20000
 MAX_RECTS_PER_HIGHLIGHT = 100
 MAX_JSON_DEPTH = 10
+
+
+def _validate_imported_cfi_and_chapter(item: Dict[str, Any], item_label: str) -> None:
+    """Valida campos opcionais `epub_cfi` e `chapter_label` em itens importados."""
+    cfi = item.get("epub_cfi")
+    if cfi is not None:
+        if not isinstance(cfi, str):
+            raise ImportError(f"EPUB CFI inválido em {item_label}.")
+        clean_cfi = cfi.strip()
+        if clean_cfi:
+            if len(clean_cfi) > MAX_EPUB_CFI_LEN:
+                raise ImportError(f"EPUB CFI excede o limite de {MAX_EPUB_CFI_LEN} caracteres em {item_label}.")
+            if not (clean_cfi.startswith("epubcfi(") and clean_cfi.endswith(")")) or "<" in clean_cfi or ">" in clean_cfi:
+                raise ImportError(f"Formato de EPUB CFI inválido em {item_label}.")
+
+    chapter = item.get("chapter_label")
+    if chapter is not None:
+        if not isinstance(chapter, str):
+            raise ImportError(f"Rótulo de capítulo inválido em {item_label}.")
+        if len(chapter.strip()) > MAX_CHAPTER_LABEL_LEN:
+            raise ImportError(f"Rótulo de capítulo excede o limite de {MAX_CHAPTER_LABEL_LEN} caracteres em {item_label}.")
 
 
 def _check_json_depth(obj: Any, current_depth: int = 1) -> None:
@@ -223,6 +256,7 @@ def validate_import_payload(data: Any) -> None:
     highlights = data.get("highlights", [])
     notes = data.get("notes", [])
     drawings = data.get("drawings", [])
+    bookmarks = data.get("bookmarks", [])
 
     if not isinstance(highlights, list):
         raise ImportError("O campo 'highlights' deve ser uma lista.")
@@ -230,6 +264,8 @@ def validate_import_payload(data: Any) -> None:
         raise ImportError("O campo 'notes' deve ser uma lista.")
     if not isinstance(drawings, list):
         raise ImportError("O campo 'drawings' deve ser uma lista.")
+    if not isinstance(bookmarks, list):
+        raise ImportError("O campo 'bookmarks' deve ser uma lista.")
 
     if len(highlights) > MAX_IMPORT_HIGHLIGHTS:
         raise ImportError(f"Quantidade de destaques excede o limite máximo permitido ({MAX_IMPORT_HIGHLIGHTS}).")
@@ -237,6 +273,8 @@ def validate_import_payload(data: Any) -> None:
         raise ImportError(f"Quantidade de notas excede o limite máximo permitido ({MAX_IMPORT_NOTES}).")
     if len(drawings) > MAX_IMPORT_DRAWINGS:
         raise ImportError(f"Quantidade de desenhos excede o limite máximo permitido ({MAX_IMPORT_DRAWINGS}).")
+    if len(bookmarks) > MAX_IMPORT_BOOKMARKS:
+        raise ImportError(f"Quantidade de marcadores excede o limite máximo permitido ({MAX_IMPORT_BOOKMARKS}).")
 
     # Validação detalhada de cada destaque
     for idx, h in enumerate(highlights):
@@ -250,6 +288,8 @@ def validate_import_payload(data: Any) -> None:
             raise ImportError(f"Texto selecionado ausente ou inválido no destaque {idx}.")
         if len(text) > MAX_TEXT_LENGTH:
             raise ImportError(f"Texto do destaque {idx} excede o tamanho máximo de {MAX_TEXT_LENGTH} caracteres.")
+
+        _validate_imported_cfi_and_chapter(h, f"destaque {idx}")
 
         rects = h.get("rects", [])
         if not isinstance(rects, list):
@@ -277,6 +317,19 @@ def validate_import_payload(data: Any) -> None:
             raise ImportError(f"Conteúdo ausente ou inválido na nota {idx}.")
         if len(content) > MAX_NOTE_LENGTH:
             raise ImportError(f"Conteúdo da nota {idx} excede o limite de {MAX_NOTE_LENGTH} caracteres.")
+        _validate_imported_cfi_and_chapter(n, f"nota {idx}")
+
+    # Validação detalhada de cada marcador (opcional)
+    for idx, bm in enumerate(bookmarks):
+        if not isinstance(bm, dict):
+            raise ImportError(f"Item de marcador inválido na posição {idx}.")
+        page = bm.get("page", 1)
+        if not isinstance(page, int) or isinstance(page, bool) or page < 1 or page > 100000:
+            raise ImportError(f"Número de página inválido no marcador {idx}: {page}")
+        label = bm.get("label", "")
+        if label is not None and (not isinstance(label, str) or len(label) > MAX_BOOKMARK_LABEL_LEN):
+            raise ImportError(f"Rótulo de marcador inválido na posição {idx}.")
+        _validate_imported_cfi_and_chapter(bm, f"marcador {idx}")
 
     # Validação detalhada de cada página de desenhos
     for idx, d in enumerate(drawings):
@@ -320,23 +373,23 @@ def preview_import_annotations(target_book_id: str, data: Dict[str, Any], user_i
     validate_import_payload(data)
     get_book(target_book_id, user_id=user_id)  # Valida que o livro de destino existe
 
-    existing_highlights = get_highlights(target_book_id, user_id=user_id)
-    existing_notes = get_notes(target_book_id, user_id=user_id)
+    existing_highlights = get_highlights(target_book_id, user_id=user_id, scope="mine")
+    existing_notes = get_notes(target_book_id, user_id=user_id, scope="mine")
 
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT page, strokes_json FROM page_drawings WHERE book_id = ? AND user_id = ?", (target_book_id, user_id))
         existing_drawings = {r["page"]: r["strokes_json"] for r in cursor.fetchall()}
 
-    # Conjuntos para detecção de duplicatas
+    # Conjuntos para detecção de duplicatas (restritos aos próprios itens do usuário)
     existing_hl_ids = {h["id"] for h in existing_highlights}
     existing_hl_tuples = {
-        (h["page"], h["selected_text"].strip()) for h in existing_highlights
+        (h["page"], (h.get("epub_cfi") or "").strip(), h["selected_text"].strip()) for h in existing_highlights
     }
 
     existing_note_ids = {n["id"] for n in existing_notes}
     existing_note_tuples = {
-        (n["page"], n["content"].strip()) for n in existing_notes
+        (n["page"], (n.get("epub_cfi") or "").strip(), n["content"].strip()) for n in existing_notes
     }
 
     incoming_highlights = data.get("highlights", [])
@@ -349,7 +402,8 @@ def preview_import_annotations(target_book_id: str, data: Dict[str, Any], user_i
         if not isinstance(h, dict) or "page" not in h or "selected_text" not in h:
             continue
         h_id = h.get("id")
-        h_tuple = (h["page"], str(h["selected_text"]).strip())
+        h_cfi = str(h.get("epub_cfi") or "").strip()
+        h_tuple = (h["page"], h_cfi, str(h["selected_text"]).strip())
         if (h_id and h_id in existing_hl_ids) or (h_tuple in existing_hl_tuples):
             dup_highlights += 1
         else:
@@ -361,7 +415,8 @@ def preview_import_annotations(target_book_id: str, data: Dict[str, Any], user_i
         if not isinstance(n, dict) or "page" not in n or "content" not in n:
             continue
         n_id = n.get("id")
-        n_tuple = (n["page"], str(n["content"]).strip())
+        n_cfi = str(n.get("epub_cfi") or "").strip()
+        n_tuple = (n["page"], n_cfi, str(n["content"]).strip())
         if (n_id and n_id in existing_note_ids) or (n_tuple in existing_note_tuples):
             dup_notes += 1
         else:
@@ -432,21 +487,27 @@ def apply_import_annotations(target_book_id: str, data: Dict[str, Any], user_id:
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # 1. Carrega dados já existentes do usuário para checagem rápida de duplicatas
-        cursor.execute("SELECT id, page, selected_text FROM highlights WHERE book_id = ? AND user_id = ?", (target_book_id, user_id))
+        # 1. Carrega dados já existentes exclusivamente do usuário para checagem rápida de duplicatas
+        cursor.execute(
+            "SELECT id, page, epub_cfi, selected_text FROM highlights WHERE book_id = ? AND user_id = ?",
+            (target_book_id, user_id),
+        )
         existing_hl_rows = cursor.fetchall()
         existing_hl_ids = {r["id"] for r in existing_hl_rows}
-        existing_hl_tuples = {(r["page"], r["selected_text"].strip()) for r in existing_hl_rows}
+        existing_hl_tuples = {(r["page"], (r["epub_cfi"] or "").strip(), r["selected_text"].strip()) for r in existing_hl_rows}
 
-        cursor.execute("SELECT id, page, content FROM notes WHERE book_id = ? AND user_id = ?", (target_book_id, user_id))
+        cursor.execute(
+            "SELECT id, page, epub_cfi, content FROM notes WHERE book_id = ? AND user_id = ?",
+            (target_book_id, user_id),
+        )
         existing_note_rows = cursor.fetchall()
         existing_note_ids = {r["id"] for r in existing_note_rows}
-        existing_note_tuples = {(r["page"], r["content"].strip()) for r in existing_note_rows}
+        existing_note_tuples = {(r["page"], (r["epub_cfi"] or "").strip(), r["content"].strip()) for r in existing_note_rows}
 
         cursor.execute("SELECT page, strokes_json FROM page_drawings WHERE book_id = ? AND user_id = ?", (target_book_id, user_id))
         existing_drawings = {r["page"]: r["strokes_json"] for r in cursor.fetchall()}
 
-        # 2. Inserção de Destaques
+        # 2. Inserção de Destaques (sempre forçando user_id autenticado e visibility = 'private')
         for h in incoming_highlights:
             if not isinstance(h, dict) or "page" not in h or "selected_text" not in h:
                 continue
@@ -455,15 +516,17 @@ def apply_import_annotations(target_book_id: str, data: Dict[str, Any], user_id:
             text = str(h["selected_text"]).strip()
             if not text:
                 continue
+            epub_cfi = str(h.get("epub_cfi") or "").strip() or None
+            chapter_label = str(h.get("chapter_label") or "").strip() or None
 
-            h_tuple = (page, text)
+            h_tuple = (page, epub_cfi or "", text)
             if (original_id and original_id in existing_hl_ids) or (h_tuple in existing_hl_tuples):
-                # Duplicata já existente; preserva o ID para mapeamento de notas
-                if original_id:
+                # Duplicata já existente do próprio usuário; preserva o ID para mapeamento de notas
+                if original_id and original_id in existing_hl_ids:
                     highlight_id_map[original_id] = original_id
                 continue
 
-            # Gera um novo ID para garantir unicidade
+            # Gera sempre um novo ID para garantir unicidade e impedir colisão com registros de terceiros
             new_hl_id = str(uuid.uuid4())
             if original_id:
                 highlight_id_map[original_id] = new_hl_id
@@ -475,16 +538,19 @@ def apply_import_annotations(target_book_id: str, data: Dict[str, Any], user_id:
 
             cursor.execute(
                 """
-                INSERT INTO highlights (id, book_id, page, color, rects_json, selected_text, text_context, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO highlights (
+                    id, book_id, page, color, rects_json, selected_text, text_context,
+                    user_id, visibility, epub_cfi, chapter_label, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'private', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
-                (new_hl_id, target_book_id, page, color, rects_json, text, context, user_id),
+                (new_hl_id, target_book_id, page, color, rects_json, text, context, user_id, epub_cfi, chapter_label),
             )
             existing_hl_ids.add(new_hl_id)
             existing_hl_tuples.add(h_tuple)
             imported_highlights_count += 1
 
-        # 3. Inserção de Notas
+        # 3. Inserção de Notas (sempre forçando user_id autenticado e visibility = 'private')
         for n in incoming_notes:
             if not isinstance(n, dict) or "page" not in n or "content" not in n:
                 continue
@@ -492,9 +558,11 @@ def apply_import_annotations(target_book_id: str, data: Dict[str, Any], user_id:
             content = str(n["content"]).strip()
             if not content:
                 continue
+            epub_cfi = str(n.get("epub_cfi") or "").strip() or None
+            chapter_label = str(n.get("chapter_label") or "").strip() or None
 
             original_id = n.get("id")
-            n_tuple = (page, content)
+            n_tuple = (page, epub_cfi or "", content)
             if (original_id and original_id in existing_note_ids) or (n_tuple in existing_note_tuples):
                 continue
 
@@ -503,7 +571,7 @@ def apply_import_annotations(target_book_id: str, data: Dict[str, Any], user_id:
             # Mapeia para o novo ID do destaque inserido, se houver
             target_hl_id = highlight_id_map.get(orig_hl_id, orig_hl_id) if orig_hl_id else None
 
-            # Valida se o destaque realmente existe na base
+            # Valida se o destaque realmente existe na base DO PRÓPRIO USUÁRIO (anti-IDOR)
             if target_hl_id and target_hl_id not in existing_hl_ids:
                 target_hl_id = None
 
@@ -511,16 +579,19 @@ def apply_import_annotations(target_book_id: str, data: Dict[str, Any], user_id:
 
             cursor.execute(
                 """
-                INSERT INTO notes (id, book_id, page, highlight_id, content, color, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO notes (
+                    id, book_id, page, highlight_id, content, color,
+                    user_id, visibility, epub_cfi, chapter_label, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'private', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
-                (new_note_id, target_book_id, page, target_hl_id, content, color, user_id),
+                (new_note_id, target_book_id, page, target_hl_id, content, color, user_id, epub_cfi, chapter_label),
             )
             existing_note_ids.add(new_note_id)
             existing_note_tuples.add(n_tuple)
             imported_notes_count += 1
 
-        # 4. Inserção / Mesclagem de Desenhos
+        # 4. Inserção / Mesclagem de Desenhos (restrita ao próprio usuário, sempre 'private' ao criar)
         for d in incoming_drawings:
             if not isinstance(d, dict) or "page" not in d:
                 continue
@@ -530,13 +601,12 @@ def apply_import_annotations(target_book_id: str, data: Dict[str, Any], user_id:
                 continue
 
             if page in existing_drawings:
-                # Se já há desenhos na página, mescla os traços evitando duplicatas exatas
+                # Se já há desenhos do próprio usuário na página, mescla os traços evitando duplicatas exatas
                 try:
                     curr_strokes = json.loads(existing_drawings[page])
                 except Exception:
                     curr_strokes = []
 
-                # Serializações simples para evitar traços duplicados
                 existing_stroke_hashes = {json.dumps(s.get("points", [])) for s in curr_strokes if isinstance(s, dict)}
                 added_strokes = [s for s in incoming_strokes if json.dumps(s.get("points", [])) not in existing_stroke_hashes]
 
@@ -555,13 +625,34 @@ def apply_import_annotations(target_book_id: str, data: Dict[str, Any], user_id:
                 drawing_id = str(uuid.uuid4())
                 cursor.execute(
                     """
-                    INSERT INTO page_drawings (id, book_id, page, strokes_json, user_id, updated_at)
-                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    INSERT INTO page_drawings (
+                        id, book_id, page, strokes_json, user_id, visibility, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, 'private', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     """,
                     (drawing_id, target_book_id, page, json.dumps(incoming_strokes), user_id),
                 )
                 existing_drawings[page] = json.dumps(incoming_strokes)
                 imported_drawings_count += 1
+
+        # 5. Inserção de Marcadores Pessoais (se presentes no arquivo importado)
+        incoming_bookmarks = data.get("bookmarks", [])
+        for bm in incoming_bookmarks:
+            if not isinstance(bm, dict):
+                continue
+            bm_page = int(bm.get("page", 1))
+            bm_cfi = str(bm.get("epub_cfi") or "").strip() or None
+            bm_chapter = str(bm.get("chapter_label") or "").strip() or None
+            bm_label = str(bm.get("label") or "").strip()[:MAX_BOOKMARK_LABEL_LEN]
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO bookmarks (
+                    id, book_id, user_id, page, epub_cfi, chapter_label, label, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (str(uuid.uuid4()), target_book_id, user_id, bm_page, bm_cfi, bm_chapter, bm_label),
+            )
 
     return {
         "status": "success",
