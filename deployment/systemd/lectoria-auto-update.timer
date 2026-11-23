@@ -1,0 +1,11 @@
+[Unit]
+Description=Verificação periódica opcional de atualizações do Lectoria (Docker/OCI)
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=15min
+Persistent=true
+Unit=lectoria-auto-update.service
+
+[Install]
+WantedBy=timers.target
