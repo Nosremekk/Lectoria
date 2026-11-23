@@ -229,8 +229,8 @@ def test_migration_v11_to_v12_backup_preservation_and_idempotency(v11_populated_
     database.init_db(db_path)
     database.init_db(db_path)  # Testa idempotência
 
-    bak_path = tmp_dir / "lectoria_pre_migration_v11_to_v12.db.bak"
-    assert bak_path.exists(), "Backup pré-migração v11 -> v12 deve ser criado automaticamente."
+    bak_path = tmp_dir / f"lectoria_pre_migration_v11_to_v{database.SCHEMA_VERSION}.db.bak"
+    assert bak_path.exists(), f"Backup pré-migração {bak_path.name} deve ser criado automaticamente."
 
     bak_conn = sqlite3.connect(str(bak_path))
     try:
@@ -242,7 +242,7 @@ def test_migration_v11_to_v12_backup_preservation_and_idempotency(v11_populated_
     conn = database.get_connection(db_path)
     try:
         cur = conn.cursor()
-        assert cur.execute("SELECT MAX(version) FROM schema_migrations;").fetchone()[0] == 12
+        assert cur.execute("SELECT MAX(version) FROM schema_migrations;").fetchone()[0] >= 12
         assert cur.execute("PRAGMA integrity_check;").fetchone()[0] == "ok"
         assert cur.execute("PRAGMA foreign_key_check;").fetchall() == []
 

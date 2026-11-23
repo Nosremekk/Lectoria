@@ -12,18 +12,20 @@ O Lectoria é estruturado em um padrão em camadas enxuto (*layered architecture
 flowchart TD
     subgraph Client ["Camada Cliente (Navegador Web)"]
         UI["Interface Principal (app.js)"]
+        AtlasUI["Atlas (knowledge.js / knowledge-api.js / book-knowledge.js)"]
         SR["Painel Leitura Coletiva (shared_reading.js)"]
-        Reader["Leitor Adaptativo (reader.js / PDF.js / EPUB.js)"]
+        Reader["Leitor Adaptativo (reader.js / reader-knowledge.js / PDF.js / EPUB.js)"]
     end
 
-    subgraph API ["Camada HTTP / API (FastAPI)"]
-        Router["Roteamento REST (main.py)"]
+    subgraph API ["Camada HTTP / API (FastAPI — Uvicorn --workers 1)"]
+        Router["Roteamento REST (main.py — def/threadpool + /api/health async)"]
         AuthMiddleware["Middleware CSRF & Injeção de Sessão"]
         Validation["Validação Pydantic (extra='forbid')"]
         StreamingHandler["Resolução e Streaming de Arquivos (Range 206)"]
     end
 
     subgraph Services ["Camada de Serviços e Negócio (Python)"]
+        KnowledgeService["knowledge_service.py / knowledge_export_service.py"]
         SRService["shared_reading_service.py"]
         ClubsService["clubs_service.py"]
         SocialService["social_service.py"]

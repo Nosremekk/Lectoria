@@ -31,15 +31,21 @@ def verify_sqlite_integrity(db_path: Path) -> bool:
     """
     if not db_path.exists():
         return False
+    conn: Optional[sqlite3.Connection] = None
     try:
         conn = sqlite3.connect(str(db_path), timeout=10.0)
         cursor = conn.cursor()
         cursor.execute("PRAGMA integrity_check;")
         result = cursor.fetchone()
-        conn.close()
         return bool(result and result[0] == "ok")
     except Exception:
         return False
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def create_backup(custom_name: Optional[str] = None) -> Dict[str, Any]:
@@ -64,18 +70,27 @@ def create_backup(custom_name: Optional[str] = None) -> Dict[str, Any]:
         target_path = config.BACKUPS_DIR / backup_filename
 
         # Executa a cópia de segurança usando a API nativa de backup do SQLite
+        source_conn: Optional[sqlite3.Connection] = None
+        target_conn: Optional[sqlite3.Connection] = None
         try:
             source_conn = sqlite3.connect(str(config.DB_PATH), timeout=30.0)
             target_conn = sqlite3.connect(str(target_path))
-
             source_conn.backup(target_conn)
-
-            target_conn.close()
-            source_conn.close()
         except Exception as e:
             if target_path.exists():
                 target_path.unlink()
             raise BackupError(f"Falha ao executar backup SQLite: {e}") from e
+        finally:
+            if target_conn is not None:
+                try:
+                    target_conn.close()
+                except Exception:
+                    pass
+            if source_conn is not None:
+                try:
+                    source_conn.close()
+                except Exception:
+                    pass
 
         # Verifica integridade da cópia gerada
         if not verify_sqlite_integrity(target_path):
@@ -156,14 +171,35 @@ def restore_backup(backup_filename: str) -> Dict[str, Any]:
         # 2. Garante diretório de destino
         config.DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-        # 3. Cria cópia de segurança do banco atual antes de tocar nos dados
+        # 3. Cria cópia de segurança consistente do banco atual antes de tocar nos dados (WAL-safe)
         safety_backup_path = config.DATA_DIR / "lectoria_pre_restore.db.bak"
         has_original_db = config.DB_PATH.exists() and config.DB_PATH.is_file()
         if has_original_db:
+            src_safety: Optional[sqlite3.Connection] = None
+            dst_safety: Optional[sqlite3.Connection] = None
             try:
-                shutil.copy2(config.DB_PATH, safety_backup_path)
-            except Exception as e:
-                raise BackupError(f"Não foi possível criar cópia de proteção do banco atual: {e}")
+                if safety_backup_path.exists():
+                    safety_backup_path.unlink()
+                src_safety = sqlite3.connect(str(config.DB_PATH), timeout=15.0)
+                dst_safety = sqlite3.connect(str(safety_backup_path))
+                src_safety.backup(dst_safety)
+            except Exception:
+                # Fallback para cópia física caso o banco atual esteja corrompido e não abra no SQLite
+                try:
+                    shutil.copy2(config.DB_PATH, safety_backup_path)
+                except Exception as e:
+                    raise BackupError(f"Não foi possível criar cópia de proteção do banco atual: {e}")
+            finally:
+                if dst_safety is not None:
+                    try:
+                        dst_safety.close()
+                    except Exception:
+                        pass
+                if src_safety is not None:
+                    try:
+                        src_safety.close()
+                    except Exception:
+                        pass
 
         # 4. Substituição segura
         temp_target = config.DATA_DIR / "lectoria_restoring.db"

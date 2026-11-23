@@ -1,13 +1,20 @@
-# Lectoria — Servidor Pessoal de Livros Digitais e Leitura Colaborativa (v1.8.0 — Reader Experience & Social Annotations)
+# Lectoria — Servidor Pessoal de Livros Digitais, Leitura Colaborativa e Conhecimento Conectado (v1.9.0 — Atlas)
 
-O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para organização, identificação inteligente, automação, clubes de leitura e leitura colaborativa de documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
+O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para organização, identificação inteligente, automação, clubes de leitura, leitura colaborativa e **gestão pessoal de conhecimento conectado (Atlas)** para documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
 
-Foi concebido para operar perfeitamente mesmo em hardware modesto — como computadores antigos e mini-PCs domésticos com processadores de baixo consumo (ex: Intel Celeron), convivendo de forma estável e silenciosa com serviços de mídia como o Jellyfin.
+Foi concebido para operar perfeitamente mesmo em hardware modesto — incluindo VPS de 1 vCPU / 4 GB RAM e mini-PCs domésticos (ex: Intel Celeron), sem depender de IA externa, bancos vetoriais ou frameworks pesados.
 
 ---
 
 ## 1. Principais Recursos
 
+- **Atlas — Conhecimento Conectado (v1.9.0 — Schema SQLite v13)**:
+  - **Conceitos Pessoais (`concepts`) e Reflexões Autorais (`reflections`)**: entidades estritamente privadas por usuário, com editor Markdown seguro construído 100% via DOM, controle otimista de concorrência (`HTTP 409`) e inserção assistida de referências canônicas por UUIDs estáveis.
+  - **Conexões Semânticas Direcionadas e Backlinks (`knowledge_links`)**: 8 tipos fixos de relação (*Complementa*, *Contradiz*, *Exemplifica*, *Fundamenta*, *Desenvolve*, *Referencia*, *Questiona*, *Relaciona-se com*) ligando conceitos, reflexões, destaques, notas e livros, com *Read-Time Authorization* e sentinelas neutros para referências indisponíveis.
+  - **Integração nos Leitores PDF/EPUB, Caderno de Estudos e Biblioteca**: associação contextual de conceitos e conexões diretamente durante a leitura (`#modal-reader-knowledge`), filtros de anotações conectadas/não conectadas no Caderno de Estudos e subaba *Conhecimento* sob demanda nos detalhes do livro.
+  - **Pesquisa Integrada FTS5 e Mapa de Conhecimento SVG**: busca unificada com `unicode61 remove_diacritics 2` (insensível a acentos em português), dupla barreira de autorização relacional, ranking determinístico sem vazamento BM25 entre usuários, snippets estruturados e grafo local interativo em SVG (1–2 saltos, teto de 80 nós / 160 arestas) acompanhado de alternativa textual acessível.
+  - **Exportação Aberta e Portável**: exportação do Atlas pessoal em **Markdown interligado (`.zip`)** com opção de wikilinks compatíveis com Obsidian, **JSON estruturado v2.0** e **CSV tabular (`.zip`)** com proteção contra *formula injection*.
+  - **Otimizações de Desempenho e Política de Backups**: event loop desbloqueado no Uvicorn (`--workers 1`), eliminação de consultas N+1, redução de 87,8% no payload inicial da interface, backups locais diários consistentes (`SQLite Online Backup API`) e cópia externa manual recomendada antes de upgrades/migrações.
 - **Experiência de Leitura & Anotações Colaborativas no Livro (v1.8.0 — Schema SQLite v12)**:
   - **Privacidade por Padrão e Publicação Explícita (`visibility = 'private' | 'public'`)**: Todas as anotações antigas, novas e importadas nascem estritamente privadas; o autor escolhe explicitamente o que publicar no livro e pode revogar a publicação a qualquer momento.
   - **Leitor PDF Colaborativo**: Camadas duplas de desenho vetorial SVG (`.public-drawing-layer` somente-leitura abaixo de `.drawing-layer` editável) com `viewBox` isotrópico imune a zoom e redimensionamento, destaques públicos diferenciados com `#highlight-popover` contextual, pins de notas na margem (`#page-note-popover`), modo marca-texto ativo (`#btn-tool-highlight`), controle de camadas (*Minhas + Públicas*, *Somente minhas*, *Ocultar anotações*) isolado por usuário, busca textual incremental (`Ctrl+F` / `/`) e correção de `dockMargin` em tablets no modo contínuo.

@@ -341,6 +341,41 @@ def get_highlight_by_id(
         return _fetch(conn.cursor())
 
 
+VALID_KNOWLEDGE_FILTERS = ("all", "connected", "unconnected")
+
+
+def _validate_knowledge_filter(knowledge_filter: str) -> str:
+    clean = (knowledge_filter or "all").strip().lower()
+    if clean not in VALID_KNOWLEDGE_FILTERS:
+        raise ValueError(f"Filtro de conhecimento inválido: '{knowledge_filter}'.")
+    return clean
+
+
+def _build_knowledge_filter_clause(
+    alias: str,
+    entity_type: str,
+    knowledge_filter: str,
+    user_id: int,
+) -> tuple[str, List[Any]]:
+    """
+    Constrói cláusula SQL parametrizada para filtrar anotações conectadas ou não conectadas
+    estritamente na rede pessoal de `knowledge_links` do usuário autenticado.
+    """
+    clean_kf = _validate_knowledge_filter(knowledge_filter)
+    if clean_kf == "all":
+        return "", []
+    exists_expr = (
+        f"EXISTS (SELECT 1 FROM knowledge_links kl "
+        f"WHERE kl.user_id = ? AND ("
+        f"(kl.source_type = ? AND kl.source_id = {alias}.id) "
+        f"OR (kl.target_type = ? AND kl.target_id = {alias}.id)"
+        f"))"
+    )
+    if clean_kf == "connected":
+        return f" AND {exists_expr}", [user_id, entity_type, entity_type]
+    return f" AND NOT {exists_expr}", [user_id, entity_type, entity_type]
+
+
 def get_highlights(
     book_id: str,
     page: Optional[int] = None,
@@ -351,6 +386,7 @@ def get_highlights(
     sort_by: str = "position",
     limit: Optional[int] = None,
     offset: int = 0,
+    knowledge_filter: str = "all",
 ) -> List[Dict[str, Any]]:
     """
     Retorna os destaques de um livro respeitando o escopo ('mine', 'public', 'all_visible'),
@@ -394,6 +430,11 @@ def get_highlights(
                 " OR COALESCE(NULLIF(TRIM(up.display_name), ''), NULLIF(TRIM(u.display_name), ''), u.username, '') LIKE ? COLLATE NOCASE)"
             )
             params.extend([term, term, term, term])
+
+        kf_sql, kf_params = _build_knowledge_filter_clause("h", "highlight", knowledge_filter, user_id)
+        if kf_sql:
+            sql += kf_sql
+            params.extend(kf_params)
 
         if sort_by == "recent":
             sql += " ORDER BY h.created_at DESC, h.id ASC"
@@ -624,6 +665,7 @@ def get_notes(
     sort_by: str = "position",
     limit: Optional[int] = None,
     offset: int = 0,
+    knowledge_filter: str = "all",
 ) -> List[Dict[str, Any]]:
     """
     Retorna as anotações do livro respeitando o escopo ('mine', 'public', 'all_visible'),
@@ -669,6 +711,11 @@ def get_notes(
                 " OR COALESCE(NULLIF(TRIM(up.display_name), ''), NULLIF(TRIM(u.display_name), ''), u.username, '') LIKE ? COLLATE NOCASE)"
             )
             params.extend([term, term, term, term])
+
+        kf_sql, kf_params = _build_knowledge_filter_clause("n", "note", knowledge_filter, user_id)
+        if kf_sql:
+            sql += kf_sql
+            params.extend(kf_params)
 
         if sort_by == "recent":
             sql += " ORDER BY n.created_at DESC, n.id ASC"
@@ -1160,12 +1207,15 @@ def get_book_annotations_summary(
     sort_by: str = "position",
     limit: Optional[int] = None,
     offset: int = 0,
+    knowledge_filter: str = "all",
 ) -> Dict[str, Any]:
     """
     Retorna as marcações, anotações, páginas com desenhos (sem carregar `strokes_json` pesado)
-    e marcadores pessoais para o painel de estudos do leitor, respeitando o escopo solicitado.
+    e marcadores pessoais para o painel de estudos do leitor, respeitando o escopo solicitado
+    e o filtro opcional de conhecimento (`all`, `connected`, `unconnected`).
     """
     clean_scope = _validate_scope(scope)
+    clean_kf = _validate_knowledge_filter(knowledge_filter)
     highlights = get_highlights(
         book_id,
         user_id=user_id,
@@ -1175,6 +1225,7 @@ def get_book_annotations_summary(
         sort_by=sort_by,
         limit=limit,
         offset=offset,
+        knowledge_filter=clean_kf,
     )
     notes = get_notes(
         book_id,
@@ -1185,6 +1236,7 @@ def get_book_annotations_summary(
         sort_by=sort_by,
         limit=limit,
         offset=offset,
+        knowledge_filter=clean_kf,
     )
 
     with get_db() as conn:
@@ -1217,13 +1269,16 @@ def get_book_annotations_summary(
             draw_sql += " LIMIT ? OFFSET ?"
             draw_params.extend([max(1, int(limit)), max(0, int(offset))])
 
-        cursor.execute(draw_sql, draw_params)
-        drawing_pages = [_format_author_metadata(dict(r), user_id, annotation_type="drawing") for r in cursor.fetchall()]
-
-        bookmarks = list_bookmarks(book_id, user_id=user_id, limit=limit, offset=offset, search=search)
+        if clean_kf == "connected":
+            drawing_pages = []
+            bookmarks = []
+        else:
+            cursor.execute(draw_sql, draw_params)
+            drawing_pages = [_format_author_metadata(dict(r), user_id, annotation_type="drawing") for r in cursor.fetchall()]
+            bookmarks = list_bookmarks(book_id, user_id=user_id, limit=limit, offset=offset, search=search)
 
         if limit is not None:
-            # Contagem total consistente com o escopo e busca para paginação incremental
+            # Contagem total consistente com o escopo, busca e filtro de conhecimento para paginação incremental
             hl_scope_sql, hl_scope_params = _build_scope_clause("h", clean_scope, user_id)
             hl_count_sql = f"""
                 SELECT COUNT(*) FROM highlights h
@@ -1244,6 +1299,10 @@ def get_book_annotations_summary(
                     " OR COALESCE(NULLIF(TRIM(up.display_name), ''), NULLIF(TRIM(u.display_name), ''), u.username, '') LIKE ? COLLATE NOCASE)"
                 )
                 hl_count_params.extend([term, term, term, term])
+            hl_kf_sql, hl_kf_params = _build_knowledge_filter_clause("h", "highlight", clean_kf, user_id)
+            if hl_kf_sql:
+                hl_count_sql += hl_kf_sql
+                hl_count_params.extend(hl_kf_params)
             cursor.execute(hl_count_sql, hl_count_params)
             total_hl = int(cursor.fetchone()[0])
 
@@ -1268,30 +1327,38 @@ def get_book_annotations_summary(
                     " OR COALESCE(NULLIF(TRIM(up.display_name), ''), NULLIF(TRIM(u.display_name), ''), u.username, '') LIKE ? COLLATE NOCASE)"
                 )
                 nt_count_params.extend([term, term, term, term])
+            nt_kf_sql, nt_kf_params = _build_knowledge_filter_clause("n", "note", clean_kf, user_id)
+            if nt_kf_sql:
+                nt_count_sql += nt_kf_sql
+                nt_count_params.extend(nt_kf_params)
             cursor.execute(nt_count_sql, nt_count_params)
             total_nt = int(cursor.fetchone()[0])
 
-            dr_count_sql = f"""
-                SELECT COUNT(*) FROM page_drawings d
-                LEFT JOIN users u ON d.user_id = u.id
-                LEFT JOIN user_profiles up ON d.user_id = up.user_id
-                WHERE {draw_where}
-            """
-            dr_count_params = [book_id, *scope_params]
-            if search and search.strip():
-                term = f"%{search.strip()}%"
-                dr_count_params.extend([term, term])
-            cursor.execute(dr_count_sql, dr_count_params)
-            total_dr = int(cursor.fetchone()[0])
+            if clean_kf == "connected":
+                total_dr = 0
+                total_bm = 0
+            else:
+                dr_count_sql = f"""
+                    SELECT COUNT(*) FROM page_drawings d
+                    LEFT JOIN users u ON d.user_id = u.id
+                    LEFT JOIN user_profiles up ON d.user_id = up.user_id
+                    WHERE {draw_where}
+                """
+                dr_count_params = [book_id, *scope_params]
+                if search and search.strip():
+                    term = f"%{search.strip()}%"
+                    dr_count_params.extend([term, term])
+                cursor.execute(dr_count_sql, dr_count_params)
+                total_dr = int(cursor.fetchone()[0])
 
-            bm_count_sql = "SELECT COUNT(*) FROM bookmarks WHERE book_id = ? AND user_id = ?"
-            bm_count_params: List[Any] = [book_id, user_id]
-            if search and search.strip():
-                term = f"%{search.strip()}%"
-                bm_count_sql += " AND (COALESCE(label, '') LIKE ? COLLATE NOCASE OR COALESCE(chapter_label, '') LIKE ? COLLATE NOCASE OR CAST(page AS TEXT) LIKE ?)"
-                bm_count_params.extend([term, term, term])
-            cursor.execute(bm_count_sql, bm_count_params)
-            total_bm = int(cursor.fetchone()[0])
+                bm_count_sql = "SELECT COUNT(*) FROM bookmarks WHERE book_id = ? AND user_id = ?"
+                bm_count_params: List[Any] = [book_id, user_id]
+                if search and search.strip():
+                    term = f"%{search.strip()}%"
+                    bm_count_sql += " AND (COALESCE(label, '') LIKE ? COLLATE NOCASE OR COALESCE(chapter_label, '') LIKE ? COLLATE NOCASE OR CAST(page AS TEXT) LIKE ?)"
+                    bm_count_params.extend([term, term, term])
+                cursor.execute(bm_count_sql, bm_count_params)
+                total_bm = int(cursor.fetchone()[0])
 
             effective_offset = max(0, int(offset))
             has_more = (

@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="pt-BR" data-theme="dark" data-app-version="1.8.0">
+<html lang="pt-BR" data-theme="dark" data-app-version="1.9.0">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lectoria — Biblioteca Pessoal</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=1.8.0">
+  <link rel="stylesheet" href="/static/css/style.css?v=1.9.0">
 </head>
 <body>
   <header class="app-header">
@@ -125,6 +125,12 @@
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
         </svg>
         <span>Clubes de Leitura</span>
+      </button>
+      <button id="tab-nav-atlas" class="main-nav-tab-btn" data-view="atlas">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z"/>
+        </svg>
+        <span>Atlas</span>
       </button>
       <button id="tab-nav-admin" class="main-nav-tab-btn" data-view="admin" style="display: none;">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
@@ -739,6 +745,9 @@
         </div>
       </div>
     </section>
+
+    <!-- Seção Principal: Atlas — Conhecimento Conectado (v1.9.0 Fase 5) -->
+    <section id="atlas-section" class="atlas-section" style="display: none;"></section>
   </main>
 
   <!-- Modal: Gerenciador de Coleções -->
@@ -1054,6 +1063,7 @@
             <div class="details-subnav">
               <button class="details-tab-btn active" data-subtab="overview">Visão Geral &amp; Sinopse</button>
               <button class="details-tab-btn" data-subtab="social">Avaliações &amp; Citações</button>
+              <button class="details-tab-btn" data-subtab="knowledge">Conhecimento</button>
               <button class="details-tab-btn" data-subtab="reconciliation">Reconciliação Externa</button>
               <button class="details-tab-btn" data-subtab="edit">Editar Metadados</button>
             </div>
@@ -1111,6 +1121,11 @@
                 <div id="details-social-reviews-list" style="margin-bottom: 0.85rem;"></div>
                 <div id="details-social-annotations-list"></div>
               </div>
+            </div>
+
+            <!-- Subaba Conhecimento: Integração Contextual com o Atlas (v1.9.0 Fase 4) -->
+            <div id="details-subtab-knowledge" class="details-subtab-pane" style="display: none;">
+              <div id="book-details-knowledge-root" class="book-details-knowledge-root"></div>
             </div>
 
             <!-- Subaba 2: Reconciliação com Bases Externas -->
@@ -1766,7 +1781,10 @@
     </div>
   </div>
 
-  <script src="/static/js/app.js?v=1.8.0"></script>
-  <script src="/static/js/shared_reading.js?v=1.8.0"></script>
+  <script src="/static/js/knowledge-api.js?v=1.9.0"></script>
+  <script src="/static/js/book-knowledge.js?v=1.9.0"></script>
+  <script src="/static/js/knowledge.js?v=1.9.0"></script>
+  <script src="/static/js/app.js?v=1.9.0"></script>
+  <script src="/static/js/shared_reading.js?v=1.9.0"></script>
 </body>
 </html>

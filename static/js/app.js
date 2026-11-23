@@ -1,8 +1,8 @@
 /**
- * Lectoria — Aplicação da Biblioteca (v1.8.0)
+ * Lectoria — Aplicação da Biblioteca (v1.9.0)
  * JavaScript puro (Vanilla ES6), rápido e sem dependências pesadas.
  */
-window.LECTORIA_FRONTEND_VERSION = "1.8.0";
+window.LECTORIA_FRONTEND_VERSION = "1.9.0";
 
 function formatApiError(err, fallbackMsg = "Ocorreu um erro ao processar a solicitação.") {
   if (!err) return fallbackMsg;
@@ -139,11 +139,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const tabNavLibrary = document.getElementById("tab-nav-library");
   const tabNavSocial = document.getElementById("tab-nav-social");
   const tabNavClubs = document.getElementById("tab-nav-clubs");
+  const tabNavAtlas = document.getElementById("tab-nav-atlas");
   const tabNavAdmin = document.getElementById("tab-nav-admin");
   const discoverySection = document.getElementById("discovery-section");
   const librarySection = document.getElementById("library-section");
   const socialSection = document.getElementById("social-section");
   const clubsSection = document.getElementById("clubs-section");
+  const atlasSection = document.getElementById("atlas-section");
   const adminSection = document.getElementById("admin-section");
   const shelvesContainer = document.getElementById("shelves-container");
   const discoveryLoading = document.getElementById("discovery-loading");
@@ -266,6 +268,9 @@ document.addEventListener("DOMContentLoaded", () => {
     libraryCache.userId = null;
     if (window.LectoriaSharedReading) {
       window.LectoriaSharedReading.reset();
+    }
+    if (window.LectoriaAtlas) {
+      window.LectoriaAtlas.reset();
     }
   }
 
@@ -1109,7 +1114,21 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // --- Autenticação e Perfis de Usuário ---
-  async function initAuth() {
+  function loadActiveTabInitialData(tabOpts = {}) {
+    if (currentMainTab === "discovery") loadShelves();
+    else if (currentMainTab === "library") loadBooks();
+    else if (currentMainTab === "social") loadSocialFeed();
+    else if (currentMainTab === "clubs") {
+      loadClubs();
+      loadClubInvites();
+    } else if (currentMainTab === "atlas" && window.LectoriaAtlas) {
+      window.LectoriaAtlas.activate(tabOpts || {});
+    } else if (currentMainTab === "admin" && currentUser && currentUser.role === "admin") {
+      loadAdminPanel();
+    }
+  }
+
+  async function initAuth(initialTabOpts = {}) {
     try {
       const res = await fetch("/api/auth/status");
       if (!res.ok) throw new Error("Erro ao consultar status de autenticação");
@@ -1127,7 +1146,8 @@ document.addEventListener("DOMContentLoaded", () => {
         btnOpenLogin.style.display = "none";
         if (adminControls) adminControls.style.display = "none";
       } else if (data.authenticated && data.user) {
-        if (!currentUser || currentUser.id !== data.user.id) {
+        const switchedUser = Boolean(currentUser && currentUser.id !== data.user.id);
+        if (switchedUser) {
           clearUserSessionCache();
         }
         currentUser = data.user;
@@ -1144,12 +1164,8 @@ document.addEventListener("DOMContentLoaded", () => {
           tabNavAdmin.style.display = currentUser.role === "admin" ? "inline-flex" : "none";
         }
         modalAuth.classList.remove("active");
-        await loadCollections();
-        loadTaxonomyTree();
-        loadBooks();
-        if (currentMainTab === "discovery") loadShelves();
-        else if (currentMainTab === "social") loadSocialFeed();
-        else if (currentMainTab === "admin" && currentUser.role === "admin") loadAdminPanel();
+        await Promise.all([loadCollections(), loadTaxonomyTree()]);
+        loadActiveTabInitialData(initialTabOpts);
       } else {
         if (currentUser) {
           clearUserSessionCache();
@@ -1160,7 +1176,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (adminControls) adminControls.style.display = "none";
         if (tabNavAdmin) tabNavAdmin.style.display = "none";
         if (currentMainTab === "admin") {
-          setMainTab("discovery");
+          setMainTab("discovery", { skipLoad: true });
         }
         
         authModalTitle.textContent = "Entrar no Lectoria";
@@ -1173,17 +1189,15 @@ document.addEventListener("DOMContentLoaded", () => {
         if (urlParams.get("login") === "1") {
           modalAuth.classList.add("active");
         }
-        await loadCollections();
-        loadTaxonomyTree();
-        loadBooks();
-        if (currentMainTab === "discovery") loadShelves();
+        await Promise.all([loadCollections(), loadTaxonomyTree()]);
+        loadActiveTabInitialData(initialTabOpts);
       }
     } catch (err) {
       console.warn("Falha ao inicializar autenticação:", err);
       invalidateLibraryCache();
-      await loadCollections();
-      loadBooks({ forceRefresh: true });
-      if (currentMainTab === "discovery") loadShelves();
+      await Promise.all([loadCollections(), loadTaxonomyTree()]);
+      if (currentMainTab === "library") loadBooks({ forceRefresh: true });
+      else loadActiveTabInitialData(initialTabOpts);
     }
   }
 
@@ -1936,10 +1950,24 @@ document.addEventListener("DOMContentLoaded", () => {
   // IMPLEMENTAÇÃO DE DESCOBERTA, PRATELEIRAS E METADADOS (v1.4.0)
   // =========================================================================
 
-  function setMainTab(tab) {
+  function setMainTab(tab, opts) {
+    const options = opts || {};
     if (tab === "admin" && (!currentUser || currentUser.role !== "admin")) {
       tab = "discovery";
     }
+    if (
+      currentMainTab === "atlas" &&
+      tab !== "atlas" &&
+      !options.skipDirtyCheck &&
+      window.LectoriaAtlas &&
+      typeof window.LectoriaAtlas.confirmLeaveIfDirty === "function"
+    ) {
+      const allowed = window.LectoriaAtlas.confirmLeaveIfDirty(() => {
+        setMainTab(tab, Object.assign({}, options, { skipDirtyCheck: true }));
+      });
+      if (!allowed) return;
+    }
+
     currentMainTab = tab;
     localStorage.setItem("lectoria_main_tab", tab);
 
@@ -1947,13 +1975,19 @@ document.addEventListener("DOMContentLoaded", () => {
     if (tabNavLibrary) tabNavLibrary.classList.toggle("active", tab === "library");
     if (tabNavSocial) tabNavSocial.classList.toggle("active", tab === "social");
     if (tabNavClubs) tabNavClubs.classList.toggle("active", tab === "clubs");
+    if (tabNavAtlas) tabNavAtlas.classList.toggle("active", tab === "atlas");
     if (tabNavAdmin) tabNavAdmin.classList.toggle("active", tab === "admin");
 
     if (discoverySection) discoverySection.style.display = tab === "discovery" ? "flex" : "none";
     if (librarySection) librarySection.style.display = tab === "library" ? "block" : "none";
     if (socialSection) socialSection.style.display = tab === "social" ? "block" : "none";
     if (clubsSection) clubsSection.style.display = tab === "clubs" ? "flex" : "none";
+    if (atlasSection) atlasSection.style.display = tab === "atlas" ? "block" : "none";
     if (adminSection) adminSection.style.display = tab === "admin" ? "block" : "none";
+
+    if (options.skipLoad) {
+      return;
+    }
 
     if (tab === "discovery") {
       loadShelves();
@@ -1964,24 +1998,37 @@ document.addEventListener("DOMContentLoaded", () => {
     } else if (tab === "clubs") {
       loadClubs();
       loadClubInvites();
+    } else if (tab === "atlas") {
+      if (!options.skipActivate && window.LectoriaAtlas) {
+        window.LectoriaAtlas.activate(options);
+      }
     } else if (tab === "admin") {
       loadAdminPanel();
     }
   }
 
+  window.LectoriaOpenAtlasTab = () => setMainTab("atlas", { skipActivate: true });
+
   if (tabNavDiscovery) tabNavDiscovery.addEventListener("click", () => setMainTab("discovery"));
   if (tabNavLibrary) tabNavLibrary.addEventListener("click", () => setMainTab("library"));
   if (tabNavSocial) tabNavSocial.addEventListener("click", () => setMainTab("social"));
   if (tabNavClubs) tabNavClubs.addEventListener("click", () => setMainTab("clubs"));
+  if (tabNavAtlas) tabNavAtlas.addEventListener("click", () => setMainTab("atlas"));
   if (tabNavAdmin) tabNavAdmin.addEventListener("click", () => setMainTab("admin"));
 
   // --- Prateleiras de Descoberta ---
+  let shelvesAbortController = null;
   async function loadShelves() {
     if (!shelvesContainer) return;
+    if (shelvesAbortController) {
+      shelvesAbortController.abort();
+    }
+    shelvesAbortController = new AbortController();
+    const signal = shelvesAbortController.signal;
     if (discoveryLoading) discoveryLoading.style.display = "block";
 
     try {
-      const res = await fetch("/api/discovery/shelves");
+      const res = await fetch("/api/discovery/shelves", { signal });
       if (!res.ok) throw new Error("Erro ao carregar prateleiras de descoberta.");
       const data = await res.json();
       const shelves = data.shelves || [];
@@ -2107,6 +2154,9 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       });
     } catch (err) {
+      if (err && err.name === "AbortError") {
+        return;
+      }
       console.error(err);
       if (discoveryLoading) discoveryLoading.style.display = "none";
       shelvesContainer.innerHTML = `
@@ -2115,6 +2165,8 @@ document.addEventListener("DOMContentLoaded", () => {
           <p>Tente novamente mais tarde.</p>
         </div>
       `;
+    } finally {
+      shelvesAbortController = null;
     }
   }
 
@@ -2343,6 +2395,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (lockDesc) lockDesc.checked = locks.has("description");
 
       // Reset para primeira subaba (Visão Geral)
+      if (window.LectoriaBookKnowledge) {
+        window.LectoriaBookKnowledge.setBook(book);
+      }
       switchDetailsSubtab("overview");
       loadBookCandidates(book.id);
       loadBookDetailsSocial(book.id);
@@ -2362,6 +2417,9 @@ document.addEventListener("DOMContentLoaded", () => {
     document.querySelectorAll(".details-subtab-pane").forEach(pane => {
       pane.style.display = pane.id === `details-subtab-${subtabName}` ? "block" : "none";
     });
+    if (subtabName === "knowledge" && window.LectoriaBookKnowledge) {
+      window.LectoriaBookKnowledge.loadIfNeeded();
+    }
   }
 
   document.querySelectorAll(".details-tab-btn").forEach(btn => {
@@ -2373,6 +2431,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (btnCloseDetailsModal) {
     btnCloseDetailsModal.addEventListener("click", () => {
       modalBookDetails.classList.remove("active");
+      if (window.LectoriaBookKnowledge) {
+        window.LectoriaBookKnowledge.cleanup();
+      }
     });
   }
 
@@ -5331,9 +5392,31 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Inicialização
+  // Inicialização (com suporte a deep links ?tab=atlas&subtab=concepts|reflections|search|graph&id=...)
   setView(currentView);
-  setMainTab(currentMainTab);
-  loadTaxonomyTree();
-  initAuth();
+  let initialTabOpts = {};
+  try {
+    const qs = new URLSearchParams(window.location.search);
+    const urlTab = qs.get("tab");
+    if (urlTab === "atlas") {
+      currentMainTab = "atlas";
+      const subtab = qs.get("subtab");
+      const entityId = qs.get("id");
+      const entityType = qs.get("type");
+      const qParam = qs.get("q");
+      if (subtab === "concepts" && entityId) {
+        initialTabOpts = { subtab: "concepts", conceptId: entityId };
+      } else if (subtab === "reflections" && entityId) {
+        initialTabOpts = { subtab: "reflections", reflectionId: entityId };
+      } else if (subtab === "graph" && entityType && entityId) {
+        initialTabOpts = { subtab: "graph", graphEntityType: entityType, graphEntityId: entityId };
+      } else if (subtab === "search") {
+        initialTabOpts = { subtab: "search", searchQuery: qParam || "" };
+      } else if (subtab) {
+        initialTabOpts = { subtab };
+      }
+    }
+  } catch (_) {}
+  setMainTab(currentMainTab, Object.assign({}, initialTabOpts, { skipLoad: true }));
+  initAuth(initialTabOpts);
 });

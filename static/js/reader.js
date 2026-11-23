@@ -566,27 +566,51 @@ document.addEventListener("DOMContentLoaded", async () => {
     }, 2000);
   }
 
-  // --- Progresso ---
+  // --- Progresso (serializado contra concorrência e respostas fora de ordem) ---
+  let progressSaveChain = Promise.resolve();
+  let progressSaveSeq = 0;
+
   async function persistProgress(pageToSave, locator = null) {
     if (isRestoringProgress) return;
-    try {
-      const payload = {
-        current_page: pageToSave,
-        total_pages: totalPages,
-      };
-      const loc = locator || epubCfi;
-      if (loc) {
-        payload.progress_locator = loc;
-      }
-      await fetch(`/api/books/${bookId}/progress`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      showSavedIndicator();
-    } catch (e) {
-      console.warn("Erro ao salvar progresso:", e);
+    clearTimeout(saveProgressTimeout);
+    const mySeq = ++progressSaveSeq;
+    const payload = {
+      current_page: pageToSave,
+      total_pages: totalPages,
+    };
+    const loc = locator || epubCfi;
+    if (loc) {
+      payload.progress_locator = loc;
     }
+
+    const runSave = async () => {
+      if (mySeq !== progressSaveSeq) return;
+      const abortCtrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timerId = abortCtrl ? setTimeout(() => abortCtrl.abort(), 8000) : null;
+      try {
+        const headers = { "Content-Type": "application/json" };
+        const csrfToken = getCsrfToken();
+        if (csrfToken) {
+          headers["X-CSRF-Token"] = csrfToken;
+        }
+        await fetch(`/api/books/${bookId}/progress`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+          signal: abortCtrl ? abortCtrl.signal : undefined,
+        });
+        if (mySeq === progressSaveSeq) {
+          showSavedIndicator();
+        }
+      } catch (e) {
+        console.warn("Erro ao salvar progresso:", e);
+      } finally {
+        if (timerId) clearTimeout(timerId);
+      }
+    };
+
+    progressSaveChain = progressSaveChain.then(runSave, runSave);
+    return progressSaveChain;
   }
 
   function queueSaveProgress(locator = null, delay = 600) {
@@ -701,12 +725,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  // --- Renderização no Modo Página Única ---
+  // --- Renderização no Modo Página Única (protegida por geração contra corrida assíncrona) ---
+  let singleRenderGen = 0;
+
   async function renderSinglePage(num, options = {}) {
     if (!pdfDoc) return;
+    const myRenderGen = ++singleRenderGen;
     const shouldResetScroll = options.resetScroll !== false;
     if (singleRenderTask) {
-      singleRenderTask.cancel();
+      try {
+        singleRenderTask.cancel();
+      } catch (_) {}
       singleRenderTask = null;
     }
 
@@ -718,6 +747,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     try {
       const page = await pdfDoc.getPage(num);
+      if (myRenderGen !== singleRenderGen) return;
+
       const unscaledViewport = page.getViewport({ scale: 1.0 });
       currentScale = calculateScaleForPage(unscaledViewport);
 
@@ -735,9 +766,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       singlePageWrapper.style.height = cssHeight;
       singlePageWrapper.setAttribute("data-page-num", num);
 
-      singleRenderTask = page.render({ canvasContext: ctx, viewport: viewport });
-      await singleRenderTask.promise;
-      singleRenderTask = null;
+      const task = page.render({ canvasContext: ctx, viewport: viewport });
+      singleRenderTask = task;
+      await task.promise;
+      if (singleRenderTask === task) {
+        singleRenderTask = null;
+      }
+      if (myRenderGen !== singleRenderGen) return;
 
       // Mantém topo em 0 caso o redimensionamento do canvas tenha induzido deslocamento
       if (shouldResetScroll && viewportEl.scrollTop !== 0) {
@@ -745,11 +780,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
 
       // Renderiza Camada de Texto para permitir seleção
+      const textContent = await page.getTextContent();
+      if (myRenderGen !== singleRenderGen) return;
+
       singleTextLayer.innerHTML = "";
       singleTextLayer.style.width = cssWidth;
       singleTextLayer.style.height = cssHeight;
       singleTextLayer.style.setProperty("--scale-factor", currentScale);
-      const textContent = await page.getTextContent();
       pdfjsLib.renderTextLayer({
         textContentSource: textContent,
         container: singleTextLayer,
@@ -765,9 +802,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       // Renderiza Marcações, Pins de Notas e Desenhos (Camada Pública + Camada Pessoal)
       renderHighlightsForPage(num, singleHighlightsLayer);
       await setupDrawingLayerForPage(num, singleDrawingLayer, singlePublicDrawingLayer);
+      if (myRenderGen !== singleRenderGen) return;
       renderNotePinsForPage(num, singleNotePinsLayer);
 
-      pageNumInput.value = num;
+      if (document.activeElement !== pageNumInput) {
+        pageNumInput.value = num;
+      }
       btnPrevPage.disabled = num <= 1;
       btnNextPage.disabled = num >= totalPages;
       updateReadingProgressBar();
@@ -1119,6 +1159,29 @@ document.addEventListener("DOMContentLoaded", async () => {
         readonlySpan.textContent = "Destaque público somente leitura";
         hlPopActions.appendChild(readonlySpan);
       }
+
+      if (window.LectoriaReaderKnowledge && h && h.id) {
+        const btnKnowledge = document.createElement("button");
+        btnKnowledge.type = "button";
+        btnKnowledge.className = "btn btn-sm btn-outline btn-open-knowledge";
+        btnKnowledge.textContent = "Conhecimento";
+        btnKnowledge.title = "Gerenciar conceitos, conexões e backlinks no Atlas";
+        btnKnowledge.addEventListener("click", () => {
+          closeHighlightPopover();
+          window.LectoriaReaderKnowledge.openForAnnotation({
+            entityType: "highlight",
+            entityId: h.id,
+            excerpt: h.selected_text || "",
+            isOwn: isOwn,
+            authorName: isOwn ? "" : (h.author_display_name || "Leitor"),
+            bookId: bookId,
+            page: h.page || null,
+            epubCfi: h.epub_cfi || null,
+            chapterLabel: h.chapter_label || "",
+          }, anchorEl);
+        });
+        hlPopActions.appendChild(btnKnowledge);
+      }
     }
 
     positionAnnotationPopover(highlightPopover, anchorEl.getBoundingClientRect());
@@ -1206,6 +1269,29 @@ document.addEventListener("DOMContentLoaded", async () => {
         readonlySpan.style.color = "var(--text-muted)";
         readonlySpan.textContent = "Anotação pública somente leitura";
         notePopActions.appendChild(readonlySpan);
+      }
+
+      if (window.LectoriaReaderKnowledge && n && n.id) {
+        const btnKnowledge = document.createElement("button");
+        btnKnowledge.type = "button";
+        btnKnowledge.className = "btn btn-sm btn-outline btn-open-knowledge";
+        btnKnowledge.textContent = "Conhecimento";
+        btnKnowledge.title = "Gerenciar conceitos, conexões e backlinks no Atlas";
+        btnKnowledge.addEventListener("click", () => {
+          closePageNotePopover();
+          window.LectoriaReaderKnowledge.openForAnnotation({
+            entityType: "note",
+            entityId: n.id,
+            excerpt: n.content || "",
+            isOwn: isOwn,
+            authorName: isOwn ? "" : (n.author_display_name || "Leitor"),
+            bookId: bookId,
+            page: n.page || null,
+            epubCfi: n.epub_cfi || null,
+            chapterLabel: n.chapter_label || "",
+          }, anchorEl);
+        });
+        notePopActions.appendChild(btnKnowledge);
       }
     }
 
@@ -1757,6 +1843,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const drawerState = {
     scope: "all_visible",
     filter: "all",
+    knowledgeFilter: "all",
     sort: "position",
     search: "",
     limit: 50,
@@ -1766,10 +1853,132 @@ document.addEventListener("DOMContentLoaded", async () => {
     error: null,
     requestSeq: 0,
     abortController: null,
+    summaryAbortCtrl: null,
+    batchSummaryAbortCtrl: null,
+    batchSummarySeq: 0,
+    bookKnowledgeSummary: null,
+    knowledgeSummaries: new Map(),
     data: { highlights: [], notes: [], drawing_pages: [], bookmarks: [] },
     totalCounts: { highlights: 0, notes: 0, drawings: 0, bookmarks: 0 },
   };
   let drawerSearchDebounceTimer = null;
+  const drawerKnowledgeFilterBtns = document.querySelectorAll(".drawer-kf-btn");
+  const drawerKnowledgeSummaryEl = document.getElementById("drawer-knowledge-summary");
+
+  function renderDrawerKnowledgeSummaryBar() {
+    if (!drawerKnowledgeSummaryEl) return;
+    const s = drawerState.bookKnowledgeSummary;
+    if (!s) {
+      drawerKnowledgeSummaryEl.textContent = "";
+      return;
+    }
+    drawerKnowledgeSummaryEl.textContent =
+      `Atlas: ${s.distinct_concepts_count} conceito(s) · ${s.personal_links_count} conexão(ões) · ${s.connected_annotations_count} anotação(ões) conectada(s)`;
+  }
+
+  function hydrateDrawerKnowledgeStrips() {
+    if (!drawerItemsList || !window.LectoriaKnowledgeApi) return;
+    const kApi = window.LectoriaKnowledgeApi;
+    drawerItemsList.querySelectorAll(".drawer-knowledge-strip").forEach((strip) => {
+      kApi.clearNode(strip);
+      const etype = strip.getAttribute("data-entity-type");
+      const eid = strip.getAttribute("data-entity-id");
+      if (!etype || !eid) return;
+      const summary = drawerState.knowledgeSummaries.get(`${etype}:${eid}`);
+      if (!summary || (!summary.is_connected && (!summary.concepts || summary.concepts.length === 0))) {
+        strip.classList.add("hidden");
+        return;
+      }
+      strip.classList.remove("hidden");
+
+      const concepts = Array.isArray(summary.concepts) ? summary.concepts : [];
+      concepts.slice(0, 4).forEach((c) => {
+        const chip = kApi.createEl("span", "drawer-concept-chip");
+        const dot = kApi.createEl("span", "rk-color-dot");
+        dot.style.backgroundColor = kApi.sanitizeHexColor(c.color);
+        chip.appendChild(dot);
+        chip.appendChild(kApi.createEl("span", "drawer-concept-chip-text", c.name));
+        strip.appendChild(chip);
+      });
+      if (concepts.length > 4) {
+        strip.appendChild(kApi.createEl("span", "drawer-concept-chip drawer-concept-more", `+${concepts.length - 4}`));
+      }
+
+      const parts = [];
+      if (summary.outgoing_count > 0) parts.push(`${summary.outgoing_count} saída(s)`);
+      if (summary.incoming_count > 0) parts.push(`${summary.incoming_count} backlink(s)`);
+      if (parts.length > 0) {
+        strip.appendChild(kApi.createEl("span", "drawer-links-badge", parts.join(" · ")));
+      }
+    });
+  }
+
+  async function loadDrawerBookKnowledgeSummary() {
+    if (!window.LectoriaKnowledgeApi || !bookId) return;
+    if (drawerState.summaryAbortCtrl) {
+      try { drawerState.summaryAbortCtrl.abort(); } catch (_) {}
+    }
+    const ctrl = new AbortController();
+    drawerState.summaryAbortCtrl = ctrl;
+    try {
+      const data = await window.LectoriaKnowledgeApi.getBookSummary(bookId, ctrl.signal);
+      if (drawerState.summaryAbortCtrl === ctrl) {
+        drawerState.bookKnowledgeSummary = data;
+        renderDrawerKnowledgeSummaryBar();
+      }
+    } catch (_) {
+      // Degradação graciosa: nunca bloquear o Caderno de Estudos se o resumo do Atlas falhar
+    }
+  }
+
+  async function loadDrawerBatchKnowledgeSummaries(highlightsBatch, notesBatch, { reset = false } = {}) {
+    if (!window.LectoriaKnowledgeApi) return;
+    if (reset) {
+      drawerState.knowledgeSummaries.clear();
+    }
+    const entities = [];
+    (highlightsBatch || []).forEach((h) => {
+      if (h && h.id) entities.push({ entity_type: "highlight", entity_id: String(h.id) });
+    });
+    (notesBatch || []).forEach((n) => {
+      if (n && n.id) entities.push({ entity_type: "note", entity_id: String(n.id) });
+    });
+    if (entities.length === 0) {
+      hydrateDrawerKnowledgeStrips();
+      return;
+    }
+
+    if (drawerState.batchSummaryAbortCtrl) {
+      try { drawerState.batchSummaryAbortCtrl.abort(); } catch (_) {}
+    }
+    const ctrl = new AbortController();
+    drawerState.batchSummaryAbortCtrl = ctrl;
+    const seq = ++drawerState.batchSummarySeq;
+
+    try {
+      // Lote único de até 200 entidades (zero N+1)
+      const chunk = entities.slice(0, 200);
+      const res = await window.LectoriaKnowledgeApi.getEntitiesSummary(chunk, ctrl.signal);
+      if (seq !== drawerState.batchSummarySeq) return;
+      const map = (res && res.summaries) || {};
+      Object.keys(map).forEach((k) => {
+        drawerState.knowledgeSummaries.set(k, map[k]);
+      });
+      hydrateDrawerKnowledgeStrips();
+    } catch (_) {
+      // Degradação graciosa: anotações convencionais permanecem intactas
+    }
+  }
+
+  function refreshDrawerKnowledgeAfterMutation() {
+    if (!annotationsDrawer?.classList.contains("active")) return;
+    if (drawerState.knowledgeFilter !== "all") {
+      loadDrawerAnnotations({ append: false });
+    } else {
+      loadDrawerBookKnowledgeSummary();
+      loadDrawerBatchKnowledgeSummaries(drawerState.data.highlights, drawerState.data.notes, { reset: true });
+    }
+  }
 
   function mergeUniqueById(existingList, newList) {
     const map = new Map();
@@ -1830,6 +2039,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         sort: drawerState.sort,
         limit: String(drawerState.limit),
         offset: String(nextOffset),
+        knowledge_filter: drawerState.knowledgeFilter || "all",
       });
       if (drawerState.search) {
         params.set("search", drawerState.search);
@@ -1851,20 +2061,30 @@ document.addEventListener("DOMContentLoaded", async () => {
         bookmarks: (payload.bookmarks || []).length,
       };
 
+      const pageHighlights = payload.highlights || [];
+      const pageNotes = payload.notes || [];
+
       if (append) {
         drawerState.data = {
-          highlights: mergeUniqueById(drawerState.data.highlights, payload.highlights),
-          notes: mergeUniqueById(drawerState.data.notes, payload.notes),
+          highlights: mergeUniqueById(drawerState.data.highlights, pageHighlights),
+          notes: mergeUniqueById(drawerState.data.notes, pageNotes),
           drawing_pages: mergeUniqueById(drawerState.data.drawing_pages, payload.drawing_pages),
           bookmarks: mergeUniqueById(drawerState.data.bookmarks, payload.bookmarks),
         };
       } else {
         drawerState.data = {
-          highlights: payload.highlights || [],
-          notes: payload.notes || [],
+          highlights: pageHighlights,
+          notes: pageNotes,
           drawing_pages: payload.drawing_pages || [],
           bookmarks: payload.bookmarks || [],
         };
+      }
+
+      if (annotationsDrawer?.classList.contains("active")) {
+        if (!append) {
+          loadDrawerBookKnowledgeSummary();
+        }
+        loadDrawerBatchKnowledgeSummaries(pageHighlights, pageNotes, { reset: !append });
       }
     } catch (err) {
       if (err && err.name === "AbortError") return;
@@ -1969,6 +2189,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   });
 
+  drawerKnowledgeFilterBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      const nextKf = btn.getAttribute("data-knowledge-filter") || "all";
+      if (nextKf === drawerState.knowledgeFilter) return;
+      drawerKnowledgeFilterBtns.forEach(b => b.classList.toggle("active", b === btn));
+      drawerState.knowledgeFilter = nextKf;
+      loadDrawerAnnotations({ append: false });
+    });
+  });
+
   if (drawerSortSelect) {
     drawerSortSelect.addEventListener("change", () => {
       drawerState.sort = drawerSortSelect.value === "recent" ? "recent" : "position";
@@ -2054,7 +2284,9 @@ document.addEventListener("DOMContentLoaded", async () => {
           <div class="annotation-quote" style="border-left-color: ${escapeHtml(h.color || "#fef08a")};">
             "${escapeHtml(h.selected_text)}"
           </div>
+          <div class="drawer-knowledge-strip hidden" data-entity-type="highlight" data-entity-id="${escapeHtml(h.id)}"></div>
           <div class="annotation-item-actions">
+            <button type="button" class="btn-item-action btn-drawer-knowledge" data-entity-type="highlight" data-entity-id="${escapeHtml(h.id)}">Conhecimento</button>
             ${isOwn ? `
               <button class="btn-item-action btn-toggle-vis-h" data-h-id="${escapeHtml(h.id)}" data-next-vis="${isPublic ? "private" : "public"}">${isPublic ? "Tornar Privado" : "Tornar Público"}</button>
               <button class="btn-item-action btn-add-note-to-h" data-h-id="${escapeHtml(h.id)}" data-page="${h.page}" data-quote="${escapeHtml(h.selected_text)}" ${cfiAttr} ${chapAttr}>Adicionar Nota</button>
@@ -2085,7 +2317,9 @@ document.addEventListener("DOMContentLoaded", async () => {
           </div>
           ${n.highlight_text ? `<div class="annotation-quote">"${escapeHtml(n.highlight_text)}"</div>` : ""}
           <div class="annotation-note-text">${escapeHtml(n.content)}</div>
+          <div class="drawer-knowledge-strip hidden" data-entity-type="note" data-entity-id="${escapeHtml(n.id)}"></div>
           <div class="annotation-item-actions">
+            <button type="button" class="btn-item-action btn-drawer-knowledge" data-entity-type="note" data-entity-id="${escapeHtml(n.id)}">Conhecimento</button>
             ${isOwn ? `
               <button class="btn-item-action btn-toggle-vis-n" data-note-id="${escapeHtml(n.id)}" data-next-vis="${isPublic ? "private" : "public"}">${isPublic ? "Tornar Privada" : "Tornar Pública"}</button>
               ${eligibleCollectiveReads.length > 0 ? `<button class="btn-item-action btn-share-note-club" data-note-id="${escapeHtml(n.id)}">Compartilhar</button>` : ""}
@@ -2255,6 +2489,36 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     drawerItemsList.innerHTML = html;
+    hydrateDrawerKnowledgeStrips();
+
+    drawerItemsList.querySelectorAll(".btn-drawer-knowledge").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!window.LectoriaReaderKnowledge) return;
+        const etype = btn.getAttribute("data-entity-type");
+        const eid = btn.getAttribute("data-entity-id");
+        if (!etype || !eid) return;
+        const list = etype === "note" ? (drawerState.data.notes || []) : (drawerState.data.highlights || []);
+        const rec = list.find(x => String(x.id) === String(eid));
+        if (!rec) return;
+        const isOwn = rec.is_own !== false;
+        window.LectoriaReaderKnowledge.openForAnnotation(
+          {
+            entityType: etype,
+            entityId: rec.id,
+            excerpt: etype === "note" ? (rec.content || "") : (rec.selected_text || ""),
+            isOwn,
+            authorName: isOwn ? "" : (rec.author_display_name || "Leitor"),
+            bookId,
+            page: rec.page || null,
+            epubCfi: rec.epub_cfi || null,
+            chapterLabel: rec.chapter_label || "",
+          },
+          btn,
+          { onMutated: refreshDrawerKnowledgeAfterMutation }
+        );
+      });
+    });
 
     // Navegação ao clicar no item do painel ou no botão "Ir para a Posição/Página"
     function handleDrawerItemNavigation(el) {
@@ -3335,7 +3599,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     queueSaveProgress();
 
     if (viewMode === "single") {
-      renderSinglePage(currentPage, { resetScroll: true });
+      return renderSinglePage(currentPage, { resetScroll: true });
     } else {
       const slot = document.getElementById(`page-slot-${currentPage}`);
       if (slot) {
@@ -3545,12 +3809,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // --- Atalhos de Teclado Globais ---
   window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && window.LectoriaReaderKnowledge && window.LectoriaReaderKnowledge.isModalOpen()) {
+      e.preventDefault();
+      window.LectoriaReaderKnowledge.close();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f" && bookFormat === "pdf") {
       e.preventDefault();
       openPdfSearchBar();
       return;
     }
     if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+    if (window.LectoriaReaderKnowledge && window.LectoriaReaderKnowledge.isModalOpen()) return;
 
     if (e.key === "ArrowLeft" || e.key === "PageUp") {
       if (currentPage > 1) goToPage(currentPage - 1);
@@ -3609,6 +3879,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Limpeza de recursos e observers para evitar vazamento de memória e ciclos de CPU
   function cleanupObservers() {
+    if (window.LectoriaReaderKnowledge) {
+      window.LectoriaReaderKnowledge.cleanup();
+    }
     if (thumbnailObserver) {
       thumbnailObserver.disconnect();
       thumbnailObserver = null;
@@ -4728,6 +5001,28 @@ document.addEventListener("DOMContentLoaded", async () => {
     currentBookTitle = bookData.title || "";
     bookTitleEl.textContent = bookData.title;
     document.title = `${bookData.title} — Lectoria`;
+
+    if (window.LectoriaReaderKnowledge) {
+      window.LectoriaReaderKnowledge.init({
+        getBookId: () => bookId,
+        getBookFormat: () => bookFormat,
+        getCurrentPage: () => currentPage,
+        getEpubCfi: () => epubCfi,
+        persistProgress: () => persistProgress(currentPage, epubCfi),
+        goToPage: (pageNum) => goToPage(pageNum),
+        navigateToEpubCfi: (cfi, chapLabel) => navigateToEpubCfi(cfi, chapLabel),
+        showToast: (msg, isError) => showReaderToast(msg, isError ? "error" : "info"),
+        getCsrfToken: () => getCsrfToken(),
+      });
+    }
+
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("drawer") === "1" && annotationsDrawer) {
+        annotationsDrawer.classList.add("active");
+        loadDrawerAnnotations({ append: false });
+      }
+    } catch (_) {}
     loadEligibleCollectiveReads();
 
     bookFormat = (bookData.format || (bookData.filename && bookData.filename.toLowerCase().endsWith(".epub") ? "epub" : "pdf")).toLowerCase();

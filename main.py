@@ -17,9 +17,11 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 
 import config
 from database import SCHEMA_VERSION, get_db, init_db
@@ -183,6 +185,39 @@ from shared_reading_service import (
     QuoteNotFoundError,
     TopicNotFoundError,
 )
+import knowledge_service
+from knowledge_service import (
+    AUX_SEARCH_LIMIT,
+    DEFAULT_CONCEPT_COLOR,
+    DEFAULT_GRAPH_DEPTH,
+    DEFAULT_GRAPH_MAX_EDGES,
+    DEFAULT_GRAPH_MAX_NODES,
+    DEFAULT_PAGE_LIMIT,
+    DEFAULT_SEARCH_LIMIT,
+    HARD_MAX_GRAPH_EDGES,
+    HARD_MAX_GRAPH_NODES,
+    MAX_COLOR_LEN,
+    MAX_CONCEPT_DESC_LEN,
+    MAX_CONCEPT_NAME_LEN,
+    MAX_LINK_RATIONALE_LEN,
+    MAX_PAGE_LIMIT,
+    MAX_REFLECTION_BODY_LEN,
+    MAX_REFLECTION_TITLE_LEN,
+    MAX_SEARCH_LIMIT,
+    MAX_SEARCH_QUERY_LEN,
+    MAX_TAG_LEN,
+    MAX_TAGS_COUNT,
+    KnowledgeConflictError,
+    KnowledgeError,
+    KnowledgeNotFoundError,
+    KnowledgePermissionError,
+    KnowledgeValidationError,
+)
+import knowledge_export_service
+from knowledge_export_service import (
+    KnowledgeExportBusyError,
+    KnowledgeExportLimitError,
+)
 
 
 @asynccontextmanager
@@ -243,25 +278,39 @@ async def csrf_and_security_middleware(request: Request, call_next):
                 )
 
         # 2. Validação Double Submit Cookie CSRF
-        # Se o cliente possui o cookie lectoria_csrf, valida o token enviado no cabeçalho ou parâmetro
+        # Se o cliente possui o cookie lectoria_csrf, valida o token enviado no cabeçalho (ou query string legada fora de /api/knowledge)
         expected_csrf = request.cookies.get(CSRF_COOKIE_NAME)
         if expected_csrf:
+            is_knowledge_route = request.url.path.startswith("/api/knowledge")
+            if is_knowledge_route and request.query_params.get("csrf_token"):
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "O envio de token CSRF via URL não é permitido nas rotas de conhecimento. Utilize o cabeçalho x-csrf-token."},
+                    headers={"Cache-Control": "private, no-store"},
+                )
             provided_csrf = (
                 request.headers.get("x-csrf-token")
-                or request.query_params.get("csrf_token")
+                if is_knowledge_route
+                else (
+                    request.headers.get("x-csrf-token")
+                    or request.query_params.get("csrf_token")
+                )
             )
             if not provided_csrf or not secrets.compare_digest(provided_csrf, expected_csrf):
                 return JSONResponse(
                     status_code=status.HTTP_403_FORBIDDEN,
                     content={"detail": "Token CSRF inválido ou ausente."},
+                    headers={"Cache-Control": "private, no-store"},
                 )
 
     response = await call_next(request)
 
-    # 3. Cabeçalhos fundamentais de proteção contra MIME sniffing, clickjacking e vazamento de referer
+    # 3. Cabeçalhos fundamentais de proteção contra MIME sniffing, clickjacking, vazamento de referer e cache privado de conhecimento
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if request.url.path.startswith("/api/knowledge"):
+        response.headers["Cache-Control"] = "private, no-store"
 
     # 4. Emissão transparente do cookie CSRF em navegação de páginas HTML (fora de /api/)
     is_html_page = (
@@ -800,6 +849,293 @@ class SharedQuoteCreatePayload(BaseModel):
 
 
 # =========================================================================
+# MODELOS DE DADOS PARA CONHECIMENTO CONECTADO / SEÇÃO ATLAS (v1.9.0)
+# =========================================================================
+
+KnowledgeEntityTypeLiteral = Literal["concept", "reflection", "highlight", "note", "book"]
+KnowledgeRelationTypeLiteral = Literal[
+    "complements",
+    "contradicts",
+    "exemplifies",
+    "grounds",
+    "develops",
+    "references",
+    "questions",
+    "relates_to",
+]
+KnowledgeDirectionLiteral = Literal["outgoing", "incoming", "both"]
+
+
+class ConceptCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=MAX_CONCEPT_NAME_LEN, description="Nome do conceito")
+    description: str = Field(default="", max_length=MAX_CONCEPT_DESC_LEN, description="Definição ou descrição autoral")
+    tags: List[str] = Field(default_factory=list, max_length=MAX_TAGS_COUNT, description="Etiquetas leves")
+    color: Optional[str] = Field(default=DEFAULT_CONCEPT_COLOR, max_length=MAX_COLOR_LEN, description="Cor hexadecimal do conceito")
+    is_archived: bool = Field(default=False, description="Estado de arquivamento")
+
+    @field_validator("name")
+    @classmethod
+    def _check_name_non_empty(cls, v: str) -> str:
+        clean = v.strip()
+        if not clean:
+            raise ValueError("O nome do conceito não pode ser vazio.")
+        return clean
+
+
+class ConceptUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=MAX_CONCEPT_NAME_LEN)
+    description: Optional[str] = Field(default=None, max_length=MAX_CONCEPT_DESC_LEN)
+    tags: Optional[List[str]] = Field(default=None, max_length=MAX_TAGS_COUNT)
+    color: Optional[str] = Field(default=None, max_length=MAX_COLOR_LEN)
+    is_archived: Optional[bool] = None
+
+    @field_validator("name")
+    @classmethod
+    def _check_optional_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        clean = v.strip()
+        if not clean:
+            raise ValueError("O nome do conceito não pode ser vazio.")
+        return clean
+
+    @model_validator(mode="after")
+    def _check_non_null_fields_if_explicitly_set(self):
+        for field_name in ("name", "description", "tags", "color", "is_archived"):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"O campo '{field_name}' não pode ser nulo quando enviado na atualização.")
+        return self
+
+
+class ConceptResponseModel(BaseModel):
+    id: str
+    user_id: int
+    name: str
+    normalized_name: str
+    description: str
+    tags: List[str]
+    color: str
+    is_archived: bool
+    links_count: int = 0
+    created_at: str
+    updated_at: str
+
+
+class ConceptListResponseModel(BaseModel):
+    items: List[ConceptResponseModel]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+
+class ReflectionCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=MAX_REFLECTION_TITLE_LEN, description="Título da reflexão")
+    body_markdown: str = Field(default="", max_length=MAX_REFLECTION_BODY_LEN, description="Corpo textual em Markdown puro (não renderizado)")
+    primary_book_id: Optional[str] = Field(default=None, max_length=128, description="ID opcional da obra principal associada")
+    tags: List[str] = Field(default_factory=list, max_length=MAX_TAGS_COUNT, description="Etiquetas leves")
+    is_pinned: bool = Field(default=False, description="Indica se a reflexão está fixada no topo")
+    is_archived: bool = Field(default=False, description="Estado de arquivamento")
+
+    @field_validator("title")
+    @classmethod
+    def _check_title_non_empty(cls, v: str) -> str:
+        clean = v.strip()
+        if not clean:
+            raise ValueError("O título da reflexão não pode ser vazio.")
+        return clean
+
+
+class ReflectionUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: Optional[str] = Field(default=None, min_length=1, max_length=MAX_REFLECTION_TITLE_LEN)
+    body_markdown: Optional[str] = Field(default=None, max_length=MAX_REFLECTION_BODY_LEN)
+    primary_book_id: Optional[str] = Field(default=None, max_length=128)
+    tags: Optional[List[str]] = Field(default=None, max_length=MAX_TAGS_COUNT)
+    is_pinned: Optional[bool] = None
+    is_archived: Optional[bool] = None
+    expected_updated_at: Optional[str] = Field(default=None, min_length=1, max_length=64)
+
+    @field_validator("title")
+    @classmethod
+    def _check_optional_title(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        clean = v.strip()
+        if not clean:
+            raise ValueError("O título da reflexão não pode ser vazio.")
+        return clean
+
+    @model_validator(mode="after")
+    def _check_non_null_fields_except_primary_book(self):
+        # primary_book_id pode ser explicitamente None para desassociar o livro principal;
+        # os demais campos não podem ser nulos quando enviados explicitamente.
+        for field_name in ("title", "body_markdown", "tags", "is_pinned", "is_archived", "expected_updated_at"):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"O campo '{field_name}' não pode ser nulo quando enviado na atualização.")
+        return self
+
+
+class ReflectionResponseModel(BaseModel):
+    id: str
+    user_id: int
+    title: str
+    body_markdown: str
+    primary_book_id: Optional[str] = None
+    primary_book_title: Optional[str] = None
+    primary_book_available: Optional[bool] = None
+    tags: List[str]
+    is_pinned: bool
+    is_archived: bool
+    references_count: int = 0
+    backlinks_count: int = 0
+    created_at: str
+    updated_at: str
+
+
+class ReflectionListResponseModel(BaseModel):
+    items: List[ReflectionResponseModel]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+
+class KnowledgeEntityEndpointModel(BaseModel):
+    """Representa uma entidade disponível ou uma referência indisponível mascarada com segurança."""
+    type: KnowledgeEntityTypeLiteral
+    id: str
+    available: bool
+    status: Literal["available", "unavailable"]
+    label: str
+    is_own: Optional[bool] = None
+    user_id: Optional[int] = None
+    author_display_name: Optional[str] = None
+    title: Optional[str] = None
+    excerpt: Optional[str] = None
+    color: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    book_id: Optional[str] = None
+    book_title: Optional[str] = None
+    book_format: Optional[str] = None
+    page: Optional[int] = None
+    epub_cfi: Optional[str] = None
+    chapter_label: Optional[str] = None
+    visibility: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class KnowledgeLinkCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: KnowledgeEntityTypeLiteral
+    source_id: str = Field(min_length=1, max_length=128)
+    target_type: KnowledgeEntityTypeLiteral
+    target_id: str = Field(min_length=1, max_length=128)
+    relation_type: KnowledgeRelationTypeLiteral = Field(default="relates_to")
+    rationale: str = Field(default="", max_length=MAX_LINK_RATIONALE_LEN)
+
+    @field_validator("source_id", "target_id")
+    @classmethod
+    def _strip_ids(cls, v: str) -> str:
+        clean = v.strip()
+        if not clean:
+            raise ValueError("O identificador da entidade não pode ser vazio.")
+        return clean
+
+
+class KnowledgeLinkUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    relation_type: Optional[KnowledgeRelationTypeLiteral] = None
+    rationale: Optional[str] = Field(default=None, max_length=MAX_LINK_RATIONALE_LEN)
+
+    @model_validator(mode="after")
+    def _check_fields_not_null(self):
+        if not self.model_fields_set:
+            raise ValueError("Informe ao menos 'relation_type' ou 'rationale' para atualizar a conexão.")
+        for field_name in ("relation_type", "rationale"):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"O campo '{field_name}' não pode ser nulo quando enviado na atualização.")
+        return self
+
+
+class KnowledgeLinkResponseModel(BaseModel):
+    id: str
+    user_id: int
+    source_type: KnowledgeEntityTypeLiteral
+    source_id: str
+    source: KnowledgeEntityEndpointModel
+    target_type: KnowledgeEntityTypeLiteral
+    target_id: str
+    target: KnowledgeEntityEndpointModel
+    relation_type: KnowledgeRelationTypeLiteral
+    relation_label: str
+    outgoing_label: str
+    incoming_label: str
+    direction: Literal["outgoing", "incoming"]
+    counterpart: KnowledgeEntityEndpointModel
+    rationale: str
+    created_at: str
+    updated_at: str
+
+
+class KnowledgeLinkListResponseModel(BaseModel):
+    items: List[KnowledgeLinkResponseModel]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+
+class KnowledgeEntityConnectionsResponseModel(BaseModel):
+    entity: KnowledgeEntityEndpointModel
+    direction: KnowledgeDirectionLiteral
+    outgoing_links: List[KnowledgeLinkResponseModel]
+    incoming_backlinks: List[KnowledgeLinkResponseModel]
+    total_outgoing: int
+    total_incoming: int
+    limit: int
+    offset: int
+    has_more_outgoing: bool
+    has_more_incoming: bool
+
+
+class KnowledgeLookupItemModel(BaseModel):
+    type: KnowledgeEntityTypeLiteral
+    id: str
+    label: str
+    title: Optional[str] = None
+    subtitle: Optional[str] = None
+    excerpt: Optional[str] = None
+    color: Optional[str] = None
+    book_id: Optional[str] = None
+    book_title: Optional[str] = None
+    page: Optional[int] = None
+    epub_cfi: Optional[str] = None
+    chapter_label: Optional[str] = None
+    is_own: bool
+    visibility: str
+
+
+class KnowledgeLookupResponseModel(BaseModel):
+    items: List[KnowledgeLookupItemModel]
+    count: int
+    limit: int
+    query: str
+    entity_type: Optional[KnowledgeEntityTypeLiteral] = None
+    book_id: Optional[str] = None
+
+
+# =========================================================================
 # CONTROLE DE SESSÃO E AUTORIZAÇÃO
 # =========================================================================
 
@@ -850,7 +1186,7 @@ def require_admin(request: Request) -> dict:
 # =========================================================================
 
 @app.api_route("/", methods=["GET", "HEAD"], response_class=FileResponse)
-async def serve_library_page():
+def serve_library_page():
     """Entrega a página principal da biblioteca."""
     return FileResponse(
         static_path / "index.html",
@@ -859,7 +1195,7 @@ async def serve_library_page():
 
 
 @app.api_route("/reader/{book_id}", methods=["GET", "HEAD"], response_class=FileResponse)
-async def serve_reader_page(book_id: str, request: Request):
+def serve_reader_page(book_id: str, request: Request):
     """Valida o livro e entrega a página do leitor."""
     user = get_current_user(request)
     user_id = user["id"] if user else 1
@@ -876,7 +1212,7 @@ async def serve_reader_page(book_id: str, request: Request):
 
 
 @app.get("/reader.html")
-async def serve_reader_page_html_alias(request: Request, id: Optional[str] = None):
+def serve_reader_page_html_alias(request: Request, id: Optional[str] = None):
     """Redireciona links com parâmetro ?id=... para o caminho oficial /reader/{id}."""
     if id:
         return RedirectResponse(url=f"/reader/{id}", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
@@ -888,7 +1224,7 @@ async def serve_reader_page_html_alias(request: Request, id: Optional[str] = Non
 # =========================================================================
 
 @app.get("/api/auth/status")
-async def auth_status(request: Request):
+def auth_status(request: Request):
     """Verifica se há sessão ativa e se o sistema já possui administrador cadastrado."""
     admin_exists = has_admin_user()
     user = get_current_user(request)
@@ -917,7 +1253,7 @@ async def auth_status(request: Request):
 
 
 @app.post("/api/auth/setup")
-async def setup_initial_admin(payload: SetupPayload, response: Response):
+def setup_initial_admin(payload: SetupPayload, response: Response):
     """Configura o primeiro administrador do sistema quando nenhum existir."""
     if has_admin_user():
         raise HTTPException(
@@ -947,7 +1283,7 @@ async def setup_initial_admin(payload: SetupPayload, response: Response):
 
 
 @app.post("/api/auth/login")
-async def login(payload: LoginPayload, request: Request, response: Response):
+def login(payload: LoginPayload, request: Request, response: Response):
     """Autentica o usuário e inicializa cookie de sessão HTTP seguro."""
     client_ip = request.client.host if request.client else ""
     try:
@@ -969,7 +1305,7 @@ async def login(payload: LoginPayload, request: Request, response: Response):
 
 
 @app.post("/api/auth/logout")
-async def logout(request: Request, response: Response):
+def logout(request: Request, response: Response):
     """Encerra a sessão ativa e limpa os cookies."""
     token = request.cookies.get(SESSION_COOKIE_NAME)
     if not token and request.headers.get("authorization", "").lower().startswith("bearer "):
@@ -983,14 +1319,14 @@ async def logout(request: Request, response: Response):
 
 
 @app.get("/api/auth/me")
-async def get_me(request: Request):
+def get_me(request: Request):
     """Retorna os dados do usuário autenticado."""
     user = require_user(request)
     return {"user": user}
 
 
 @app.get("/api/auth/csrf")
-async def get_csrf_token_endpoint(request: Request, response: Response):
+def get_csrf_token_endpoint(request: Request, response: Response):
     """Retorna o token CSRF atual ou gera um novo caso não exista."""
     token = request.cookies.get(CSRF_COOKIE_NAME)
     if not token:
@@ -1010,14 +1346,14 @@ async def get_csrf_token_endpoint(request: Request, response: Response):
 # =========================================================================
 
 @app.get("/api/users")
-async def list_users_endpoint(request: Request):
+def list_users_endpoint(request: Request):
     """Lista todos os usuários (administrador apenas)."""
     require_admin(request)
     return {"users": list_users()}
 
 
 @app.post("/api/users", status_code=status.HTTP_201_CREATED)
-async def create_user_endpoint(payload: UserCreatePayload, request: Request):
+def create_user_endpoint(payload: UserCreatePayload, request: Request):
     """Cria um novo usuário leitor ou administrador."""
     require_admin(request)
     try:
@@ -1033,7 +1369,7 @@ async def create_user_endpoint(payload: UserCreatePayload, request: Request):
 
 
 @app.put("/api/users/{user_id}")
-async def update_user_endpoint(user_id: int, payload: UserUpdatePayload, request: Request):
+def update_user_endpoint(user_id: int, payload: UserUpdatePayload, request: Request):
     """Atualiza dados, papel, status ou senha de um usuário."""
     require_admin(request)
     try:
@@ -1052,7 +1388,7 @@ async def update_user_endpoint(user_id: int, payload: UserUpdatePayload, request
 
 
 @app.delete("/api/users/{user_id}")
-async def delete_user_endpoint(user_id: int, request: Request):
+def delete_user_endpoint(user_id: int, request: Request):
     """Remove um usuário do sistema."""
     require_admin(request)
     try:
@@ -1069,14 +1405,14 @@ async def delete_user_endpoint(user_id: int, request: Request):
 # =========================================================================
 
 @app.get("/api/sources")
-async def list_sources_endpoint(request: Request):
+def list_sources_endpoint(request: Request):
     """Lista todas as fontes cadastradas (administrador apenas)."""
     require_admin(request)
     return {"sources": list_library_sources()}
 
 
 @app.get("/api/sources/browse")
-async def browse_sources_directories_endpoint(request: Request, path: Optional[str] = None):
+def browse_sources_directories_endpoint(request: Request, path: Optional[str] = None):
     """
     Navegador visual seguro de diretórios do servidor (administrador apenas).
     Permite explorar pastas autorizadas sem digitar caminhos manualmente.
@@ -1091,7 +1427,7 @@ async def browse_sources_directories_endpoint(request: Request, path: Optional[s
 
 
 @app.post("/api/sources/pick-native")
-async def pick_native_directory_endpoint(
+def pick_native_directory_endpoint(
     request: Request,
     payload: Optional[NativePickerPayload] = None,
 ):
@@ -1114,7 +1450,7 @@ async def pick_native_directory_endpoint(
 
 
 @app.post("/api/sources", status_code=status.HTTP_201_CREATED)
-async def add_source_endpoint(payload: SourceCreatePayload, request: Request):
+def add_source_endpoint(payload: SourceCreatePayload, request: Request):
     """Cadastra um novo diretório como fonte de livros."""
     require_admin(request)
     try:
@@ -1127,7 +1463,7 @@ async def add_source_endpoint(payload: SourceCreatePayload, request: Request):
 
 
 @app.put("/api/sources/{source_id}/active")
-async def toggle_source_active_endpoint(source_id: int, payload: SourceActivePayload, request: Request):
+def toggle_source_active_endpoint(source_id: int, payload: SourceActivePayload, request: Request):
     """Ativa ou desativa uma fonte."""
     require_admin(request)
     try:
@@ -1138,7 +1474,7 @@ async def toggle_source_active_endpoint(source_id: int, payload: SourceActivePay
 
 
 @app.delete("/api/sources/{source_id}")
-async def remove_source_endpoint(source_id: int, request: Request):
+def remove_source_endpoint(source_id: int, request: Request):
     """Remove uma fonte de biblioteca (nunca apaga os PDFs físicos)."""
     require_admin(request)
     try:
@@ -1149,7 +1485,7 @@ async def remove_source_endpoint(source_id: int, request: Request):
 
 
 @app.post("/api/sources/{source_id}/scan")
-async def scan_single_source_endpoint(source_id: int, request: Request):
+def scan_single_source_endpoint(source_id: int, request: Request):
     """Executa a varredura manual de uma fonte específica."""
     require_admin(request)
     try:
@@ -1175,7 +1511,7 @@ async def health_check():
 
 
 @app.get("/api/books")
-async def list_books(
+def list_books(
     request: Request,
     search: Optional[str] = None,
     sort_by: str = "title",
@@ -1227,7 +1563,7 @@ async def list_books(
 
 
 @app.get("/api/discovery/shelves")
-async def discovery_shelves_endpoint(request: Request):
+def discovery_shelves_endpoint(request: Request):
     """Retorna as prateleiras dinâmicas de descoberta inspiradas em serviços de streaming."""
     user = require_user(request)
     shelves = get_discovery_shelves(user_id=user["id"])
@@ -1235,7 +1571,7 @@ async def discovery_shelves_endpoint(request: Request):
 
 
 @app.get("/api/taxonomy/tree")
-async def taxonomy_tree_endpoint(request: Request):
+def taxonomy_tree_endpoint(request: Request):
     """Retorna a árvore taxonômica estruturada de categorias e facetas presentes no acervo."""
     require_user(request)
     tree = get_taxonomy_tree()
@@ -1250,7 +1586,7 @@ async def taxonomy_tree_endpoint(request: Request):
 
 
 @app.get("/api/categories")
-async def list_categories_endpoint(request: Request, include_empty: bool = True):
+def list_categories_endpoint(request: Request, include_empty: bool = True):
     """Lista as categorias gerenciadas da biblioteca com ordenação e contagem."""
     require_user(request)
     cats = list_categories(include_empty=include_empty)
@@ -1265,7 +1601,7 @@ class CategoryCreateRequest(BaseModel):
 
 
 @app.post("/api/categories")
-async def create_category_endpoint(payload: CategoryCreateRequest, request: Request):
+def create_category_endpoint(payload: CategoryCreateRequest, request: Request):
     """Cria uma nova categoria (acesso exclusivo admin)."""
     admin = require_admin(request)
     try:
@@ -1294,7 +1630,7 @@ class CategoryUpdateRequest(BaseModel):
 
 
 @app.put("/api/categories/{category_id}")
-async def update_category_endpoint(category_id: int, payload: CategoryUpdateRequest, request: Request):
+def update_category_endpoint(category_id: int, payload: CategoryUpdateRequest, request: Request):
     """Atualiza dados e ordenação de uma categoria (acesso admin)."""
     admin = require_admin(request)
     try:
@@ -1317,7 +1653,7 @@ async def update_category_endpoint(category_id: int, payload: CategoryUpdateRequ
 
 
 @app.delete("/api/categories/{category_id}")
-async def delete_category_endpoint(category_id: int, request: Request):
+def delete_category_endpoint(category_id: int, request: Request):
     """Exclui uma categoria sem nunca apagar livros (acesso admin)."""
     admin = require_admin(request)
     try:
@@ -1340,7 +1676,7 @@ class CategoryMergeRequest(BaseModel):
 
 
 @app.post("/api/categories/merge")
-async def merge_categories_endpoint(payload: CategoryMergeRequest, request: Request):
+def merge_categories_endpoint(payload: CategoryMergeRequest, request: Request):
     """Mescla duas categorias transferindo todas as obras (acesso admin)."""
     admin = require_admin(request)
     try:
@@ -1362,7 +1698,7 @@ class CategoryReorderRequest(BaseModel):
 
 
 @app.post("/api/categories/reorder")
-async def reorder_categories_endpoint(payload: CategoryReorderRequest, request: Request):
+def reorder_categories_endpoint(payload: CategoryReorderRequest, request: Request):
     """Reordena a exibição de categorias (acesso admin)."""
     admin = require_admin(request)
     cats = reorder_categories(payload.ordered_ids)
@@ -1380,7 +1716,7 @@ class BookCategoriesSetRequest(BaseModel):
 
 
 @app.put("/api/books/{book_id}/categories")
-async def set_book_categories_endpoint(book_id: str, payload: BookCategoriesSetRequest, request: Request):
+def set_book_categories_endpoint(book_id: str, payload: BookCategoriesSetRequest, request: Request):
     """Atribui categorias manuais a um livro (acesso leitor/admin autenticado)."""
     user = require_user(request)
     try:
@@ -1400,7 +1736,7 @@ class BatchCategoryAssignmentRequest(BaseModel):
 
 
 @app.post("/api/books/batch-categories")
-async def batch_categories_endpoint(payload: BatchCategoryAssignmentRequest, request: Request):
+def batch_categories_endpoint(payload: BatchCategoryAssignmentRequest, request: Request):
     """Atribui, adiciona ou remove categorias em múltiplos livros de uma vez."""
     require_admin(request)
     try:
@@ -1420,7 +1756,7 @@ class ReadingStatusSetRequest(BaseModel):
 
 
 @app.put("/api/books/{book_id}/reading-status")
-async def set_reading_status_endpoint(book_id: str, payload: ReadingStatusSetRequest, request: Request):
+def set_reading_status_endpoint(book_id: str, payload: ReadingStatusSetRequest, request: Request):
     """Atualiza o status de leitura do livro para o usuário atual (unread, in_progress, completed)."""
     user = require_user(request)
     try:
@@ -1433,7 +1769,7 @@ async def set_reading_status_endpoint(book_id: str, payload: ReadingStatusSetReq
 
 
 @app.post("/api/taxonomy/reclassify-auto")
-async def reclassify_auto_endpoint(request: Request):
+def reclassify_auto_endpoint(request: Request):
     """Reavalia classificações automáticas sem mexer em categorizações manuais (acesso admin)."""
     admin = require_admin(request)
     res = reclassify_all_auto_books()
@@ -1447,7 +1783,7 @@ async def reclassify_auto_endpoint(request: Request):
 
 
 @app.get("/api/books/{book_id}")
-async def retrieve_book(book_id: str, request: Request):
+def retrieve_book(book_id: str, request: Request):
     """Retorna detalhes de um livro específico para o usuário autenticado."""
     user = require_user(request)
     try:
@@ -1460,7 +1796,7 @@ async def retrieve_book(book_id: str, request: Request):
 
 @app.get("/api/books/{book_id}/file")
 @app.head("/api/books/{book_id}/file")
-async def stream_book_file(book_id: str, request: Request):
+def stream_book_file(book_id: str, request: Request):
     """
     Disponibiliza o arquivo PDF/EPUB com suporte a HTTP Range requests (206 Partial Content),
     inspeção de cabeçalhos (HEAD), validação condicional com ETag e políticas seguras de cache.
@@ -1500,7 +1836,7 @@ async def stream_book_file(book_id: str, request: Request):
 
 
 @app.get("/api/books/{book_id}/download")
-async def download_book_file(book_id: str, request: Request):
+def download_book_file(book_id: str, request: Request):
     """
     Entrega o arquivo original do PDF ou EPUB para download direto no dispositivo do leitor.
     Utiliza streaming de arquivo sem carregar o documento na memória.
@@ -1534,7 +1870,7 @@ async def download_book_file(book_id: str, request: Request):
 
 
 @app.get("/api/books/{book_id}/cover")
-async def get_book_cover_endpoint(book_id: str, request: Request):
+def get_book_cover_endpoint(book_id: str, request: Request):
     """
     Entrega a capa do livro (capa personalizada, capa extraída em cache ou capa editorial SVG).
     """
@@ -1571,12 +1907,12 @@ async def upload_custom_book_cover_endpoint(book_id: str, request: Request):
     """
     Define ou substitui uma capa personalizada (PNG, JPEG ou WebP) para um livro.
     """
-    require_user(request)
+    await run_in_threadpool(require_user, request)
     body = await request.body()
     content_type = request.headers.get("content-type", "")
     try:
         image_bytes = extract_uploaded_image_from_request(body, content_type)
-        result = save_custom_cover(book_id, image_bytes)
+        result = await run_in_threadpool(save_custom_cover, book_id, image_bytes)
         return {"status": "success", **result}
     except SecurityError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
@@ -1589,7 +1925,7 @@ async def upload_custom_book_cover_endpoint(book_id: str, request: Request):
 
 
 @app.delete("/api/books/{book_id}/cover")
-async def remove_custom_book_cover_endpoint(book_id: str, request: Request):
+def remove_custom_book_cover_endpoint(book_id: str, request: Request):
     """
     Remove a capa personalizada de um livro e restaura a capa automática (extraída ou editorial).
     """
@@ -1609,12 +1945,12 @@ async def cache_rendered_book_cover_endpoint(book_id: str, request: Request):
     Armazena em cache a miniatura da primeira página renderizada pelo PDF.js no cliente,
     quando o PDF não possui imagem embutida direta e ainda não tem capa personalizada.
     """
-    require_user(request)
+    await run_in_threadpool(require_user, request)
     body = await request.body()
     content_type = request.headers.get("content-type", "")
     try:
         image_bytes = extract_uploaded_image_from_request(body, content_type)
-        result = save_rendered_cover_cache(book_id, image_bytes)
+        result = await run_in_threadpool(save_rendered_cover_cache, book_id, image_bytes)
         return {"status": "success", **result}
     except SecurityError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
@@ -1627,7 +1963,7 @@ async def cache_rendered_book_cover_endpoint(book_id: str, request: Request):
 
 
 @app.post("/api/scan")
-async def trigger_scan(request: Request):
+def trigger_scan(request: Request):
     """
     Executa a varredura manual de todas as fontes sob demanda.
     Requer privilégios de administrador.
@@ -1642,7 +1978,7 @@ async def trigger_scan(request: Request):
 # =========================================================================
 
 @app.get("/api/books/{book_id}/metadata/candidates")
-async def get_book_metadata_candidates_endpoint(book_id: str, request: Request):
+def get_book_metadata_candidates_endpoint(book_id: str, request: Request):
     """Retorna os candidatos a metadados externos registrados para o livro."""
     user = require_user(request)
     try:
@@ -1670,7 +2006,7 @@ async def get_book_metadata_candidates_endpoint(book_id: str, request: Request):
 
 
 @app.post("/api/books/{book_id}/metadata/search")
-async def search_book_metadata_endpoint(book_id: str, payload: MetadataSearchPayload, request: Request):
+def search_book_metadata_endpoint(book_id: str, payload: MetadataSearchPayload, request: Request):
     """
     Realiza busca externa manual (Open Library e/ou Google Books) para encontrar
     candidatos bibliográficos precisos para o livro.
@@ -1758,7 +2094,7 @@ async def search_book_metadata_endpoint(book_id: str, payload: MetadataSearchPay
 
 
 @app.post("/api/books/{book_id}/metadata/apply")
-async def apply_book_metadata_candidate_endpoint(book_id: str, payload: MetadataApplyPayload, request: Request):
+def apply_book_metadata_candidate_endpoint(book_id: str, payload: MetadataApplyPayload, request: Request):
     """
     Aplica formalmente os metadados de um candidato aprovado ao livro, com opção
     de travar campos específicos e aplicar a capa oficial.
@@ -1818,7 +2154,7 @@ async def apply_book_metadata_candidate_endpoint(book_id: str, payload: Metadata
 
 
 @app.put("/api/books/{book_id}/metadata")
-async def update_book_metadata_endpoint(book_id: str, payload: MetadataUpdatePayload, request: Request):
+def update_book_metadata_endpoint(book_id: str, payload: MetadataUpdatePayload, request: Request):
     """Atualização direta de metadados pelo usuário com sincronização FTS5 e travas."""
     user = require_user(request)
     try:
@@ -1836,7 +2172,7 @@ async def update_book_metadata_endpoint(book_id: str, payload: MetadataUpdatePay
 # =========================================================================
 
 @app.get("/api/metadata/queue/status")
-async def metadata_queue_status_endpoint(request: Request):
+def metadata_queue_status_endpoint(request: Request):
     """Consulta o status detalhado da fila de enriquecimento em segundo plano."""
     require_admin(request)
     return enricher.get_status()
@@ -1845,7 +2181,7 @@ async def metadata_queue_status_endpoint(request: Request):
 @app.post("/api/metadata/queue/start")
 async def metadata_queue_start_endpoint(request: Request):
     """Inicia ou retoma o processamento assíncrono da fila de enriquecimento."""
-    require_admin(request)
+    await run_in_threadpool(require_admin, request)
     enricher.start()
     return {"status": "success", "queue": enricher.get_status()}
 
@@ -1853,7 +2189,7 @@ async def metadata_queue_start_endpoint(request: Request):
 @app.post("/api/metadata/queue/pause")
 async def metadata_queue_pause_endpoint(request: Request):
     """Pausa a fila de enriquecimento sem perder a posição atual."""
-    require_admin(request)
+    await run_in_threadpool(require_admin, request)
     enricher.pause()
     return {"status": "success", "queue": enricher.get_status()}
 
@@ -1861,7 +2197,7 @@ async def metadata_queue_pause_endpoint(request: Request):
 @app.post("/api/metadata/queue/cancel")
 async def metadata_queue_cancel_endpoint(request: Request):
     """Cancela e esvazia a fila de enriquecimento."""
-    require_admin(request)
+    await run_in_threadpool(require_admin, request)
     enricher.cancel()
     return {"status": "success", "queue": enricher.get_status()}
 
@@ -1869,8 +2205,12 @@ async def metadata_queue_cancel_endpoint(request: Request):
 @app.post("/api/metadata/queue/enqueue")
 async def metadata_queue_enqueue_endpoint(payload: MetadataQueueEnqueuePayload, request: Request):
     """Enfileira obras para enriquecimento inteligente."""
-    require_admin(request)
-    count = enricher.enqueue_books(payload.book_ids, only_pending=payload.only_pending)
+    await run_in_threadpool(require_admin, request)
+    count = await run_in_threadpool(
+        enricher.enqueue_books,
+        payload.book_ids,
+        only_pending=payload.only_pending,
+    )
     enricher.start()
     return {"status": "success", "enqueued_count": count, "queue": enricher.get_status()}
 
@@ -1880,14 +2220,14 @@ async def metadata_queue_enqueue_endpoint(payload: MetadataQueueEnqueuePayload, 
 # =========================================================================
 
 @app.get("/api/collections")
-async def get_collections(request: Request):
+def get_collections(request: Request):
     """Lista todas as coleções do usuário autenticado."""
     user = require_user(request)
     return {"collections": list_collections(user_id=user["id"])}
 
 
 @app.post("/api/collections", status_code=status.HTTP_201_CREATED)
-async def create_new_collection(payload: CollectionCreatePayload, request: Request):
+def create_new_collection(payload: CollectionCreatePayload, request: Request):
     """Cria uma nova coleção vinculada ao usuário autenticado."""
     user = require_user(request)
     try:
@@ -1900,7 +2240,7 @@ async def create_new_collection(payload: CollectionCreatePayload, request: Reque
 
 
 @app.get("/api/collections/{collection_id}")
-async def retrieve_collection(collection_id: int, request: Request):
+def retrieve_collection(collection_id: int, request: Request):
     """Retorna detalhes de uma coleção do usuário autenticado."""
     user = require_user(request)
     try:
@@ -1910,7 +2250,7 @@ async def retrieve_collection(collection_id: int, request: Request):
 
 
 @app.put("/api/collections/{collection_id}")
-async def modify_collection(collection_id: int, payload: CollectionCreatePayload, request: Request):
+def modify_collection(collection_id: int, payload: CollectionCreatePayload, request: Request):
     """Atualiza o nome e descrição de uma coleção do usuário autenticado."""
     user = require_user(request)
     try:
@@ -1930,7 +2270,7 @@ async def modify_collection(collection_id: int, payload: CollectionCreatePayload
 
 
 @app.delete("/api/collections/{collection_id}")
-async def remove_collection(collection_id: int, request: Request):
+def remove_collection(collection_id: int, request: Request):
     """Remove uma coleção do usuário autenticado."""
     user = require_user(request)
     try:
@@ -1941,7 +2281,7 @@ async def remove_collection(collection_id: int, request: Request):
 
 
 @app.post("/api/collections/{collection_id}/books")
-async def add_book_to_col(collection_id: int, payload: CollectionBookPayload, request: Request):
+def add_book_to_col(collection_id: int, payload: CollectionBookPayload, request: Request):
     """Adiciona um livro a uma coleção do usuário autenticado."""
     user = require_user(request)
     try:
@@ -1954,7 +2294,7 @@ async def add_book_to_col(collection_id: int, payload: CollectionBookPayload, re
 
 
 @app.delete("/api/collections/{collection_id}/books/{book_id}")
-async def remove_book_from_col(collection_id: int, book_id: str, request: Request):
+def remove_book_from_col(collection_id: int, book_id: str, request: Request):
     """Remove a associação de um livro com uma coleção do usuário autenticado."""
     user = require_user(request)
     try:
@@ -1965,7 +2305,7 @@ async def remove_book_from_col(collection_id: int, book_id: str, request: Reques
 
 
 @app.put("/api/books/{book_id}/collections")
-async def update_book_collections_endpoint(book_id: str, payload: BookCollectionsPayload, request: Request):
+def update_book_collections_endpoint(book_id: str, payload: BookCollectionsPayload, request: Request):
     """Atualiza as coleções do usuário às quais o livro pertence."""
     user = require_user(request)
     try:
@@ -1980,7 +2320,7 @@ async def update_book_collections_endpoint(book_id: str, payload: BookCollection
 # =========================================================================
 
 @app.get("/api/books/{book_id}/annotations")
-async def get_all_book_annotations(
+def get_all_book_annotations(
     book_id: str,
     request: Request,
     response: Response,
@@ -1990,6 +2330,7 @@ async def get_all_book_annotations(
     epub_cfi: Optional[str] = Query(default=None, max_length=MAX_EPUB_CFI_LEN),
     limit: Optional[int] = Query(default=None, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    knowledge_filter: Literal["all", "connected", "unconnected"] = Query(default="all"),
 ):
     """Retorna o resumo de anotações, destaques, desenhos e marcadores conforme o escopo."""
     user = require_user(request)
@@ -2005,6 +2346,7 @@ async def get_all_book_annotations(
             sort_by=sort,
             limit=limit,
             offset=offset,
+            knowledge_filter=knowledge_filter,
         )
         return summary
     except SecurityError as e:
@@ -2016,7 +2358,7 @@ async def get_all_book_annotations(
 
 
 @app.get("/api/books/{book_id}/pages/{page}/annotations")
-async def get_page_annotations(
+def get_page_annotations(
     book_id: str,
     page: int,
     request: Request,
@@ -2074,7 +2416,7 @@ async def get_page_annotations(
 
 
 @app.post("/api/books/{book_id}/highlights", status_code=status.HTTP_201_CREATED)
-async def create_new_highlight(book_id: str, payload: HighlightCreatePayload, request: Request):
+def create_new_highlight(book_id: str, payload: HighlightCreatePayload, request: Request):
     """Cria um novo destaque de texto vinculado ao usuário autenticado (privado por padrão)."""
     user = require_user(request)
     try:
@@ -2102,7 +2444,7 @@ async def create_new_highlight(book_id: str, payload: HighlightCreatePayload, re
 
 @app.patch("/api/books/{book_id}/highlights/{highlight_id}/visibility")
 @app.patch("/api/highlights/{highlight_id}/visibility")
-async def patch_highlight_visibility(
+def patch_highlight_visibility(
     highlight_id: str,
     payload: AnnotationVisibilityPayload,
     request: Request,
@@ -2130,7 +2472,7 @@ async def patch_highlight_visibility(
 
 @app.delete("/api/books/{book_id}/highlights/{highlight_id}")
 @app.delete("/api/highlights/{highlight_id}")
-async def remove_highlight(highlight_id: str, request: Request, book_id: Optional[str] = None):
+def remove_highlight(highlight_id: str, request: Request, book_id: Optional[str] = None):
     """Remove um destaque do usuário autenticado."""
     user = require_user(request)
     try:
@@ -2148,7 +2490,7 @@ async def remove_highlight(highlight_id: str, request: Request, book_id: Optiona
 
 
 @app.post("/api/books/{book_id}/notes", status_code=status.HTTP_201_CREATED)
-async def create_new_note(book_id: str, payload: NoteCreatePayload, request: Request):
+def create_new_note(book_id: str, payload: NoteCreatePayload, request: Request):
     """Cria uma nova nota textual vinculada ao usuário autenticado (privada por padrão)."""
     user = require_user(request)
     try:
@@ -2175,7 +2517,7 @@ async def create_new_note(book_id: str, payload: NoteCreatePayload, request: Req
 
 @app.put("/api/books/{book_id}/notes/{note_id}")
 @app.put("/api/notes/{note_id}")
-async def modify_note(note_id: str, payload: NoteUpdatePayload, request: Request, book_id: Optional[str] = None):
+def modify_note(note_id: str, payload: NoteUpdatePayload, request: Request, book_id: Optional[str] = None):
     """Atualiza uma nota do usuário autenticado."""
     user = require_user(request)
     try:
@@ -2201,7 +2543,7 @@ async def modify_note(note_id: str, payload: NoteUpdatePayload, request: Request
 
 @app.patch("/api/books/{book_id}/notes/{note_id}/visibility")
 @app.patch("/api/notes/{note_id}/visibility")
-async def patch_note_visibility(
+def patch_note_visibility(
     note_id: str,
     payload: AnnotationVisibilityPayload,
     request: Request,
@@ -2229,7 +2571,7 @@ async def patch_note_visibility(
 
 @app.delete("/api/books/{book_id}/notes/{note_id}")
 @app.delete("/api/notes/{note_id}")
-async def remove_note(note_id: str, request: Request, book_id: Optional[str] = None):
+def remove_note(note_id: str, request: Request, book_id: Optional[str] = None):
     """Exclui uma nota do usuário autenticado."""
     user = require_user(request)
     try:
@@ -2247,7 +2589,7 @@ async def remove_note(note_id: str, request: Request, book_id: Optional[str] = N
 
 
 @app.get("/api/books/{book_id}/pages/{page}/drawing")
-async def get_drawing_endpoint(
+def get_drawing_endpoint(
     book_id: str,
     page: int,
     request: Request,
@@ -2277,7 +2619,7 @@ async def get_drawing_endpoint(
 
 
 @app.put("/api/books/{book_id}/pages/{page}/drawing")
-async def update_page_drawing(book_id: str, page: int, payload: DrawingSavePayload, request: Request):
+def update_page_drawing(book_id: str, page: int, payload: DrawingSavePayload, request: Request):
     """Salva os traços vetoriais da página para o usuário autenticado."""
     user = require_user(request)
     if page < 1:
@@ -2301,7 +2643,7 @@ async def update_page_drawing(book_id: str, page: int, payload: DrawingSavePaylo
 
 
 @app.patch("/api/books/{book_id}/pages/{page}/drawing/visibility")
-async def patch_page_drawing_visibility(
+def patch_page_drawing_visibility(
     book_id: str,
     page: int,
     payload: AnnotationVisibilityPayload,
@@ -2329,7 +2671,7 @@ async def patch_page_drawing_visibility(
 
 
 @app.delete("/api/books/{book_id}/pages/{page}/drawing")
-async def clear_page_drawing(book_id: str, page: int, request: Request):
+def clear_page_drawing(book_id: str, page: int, request: Request):
     """Limpa todos os traços de desenho da página para o usuário autenticado."""
     user = require_user(request)
     if page < 1:
@@ -2346,7 +2688,7 @@ async def clear_page_drawing(book_id: str, page: int, request: Request):
 
 
 @app.get("/api/books/{book_id}/bookmarks")
-async def get_book_bookmarks_endpoint(
+def get_book_bookmarks_endpoint(
     book_id: str,
     request: Request,
     response: Response,
@@ -2367,7 +2709,7 @@ async def get_book_bookmarks_endpoint(
 
 
 @app.post("/api/books/{book_id}/bookmarks", status_code=status.HTTP_201_CREATED)
-async def create_book_bookmark_endpoint(
+def create_book_bookmark_endpoint(
     book_id: str,
     payload: BookmarkCreatePayload,
     request: Request,
@@ -2395,7 +2737,7 @@ async def create_book_bookmark_endpoint(
 
 @app.delete("/api/books/{book_id}/bookmarks/{bookmark_id}")
 @app.delete("/api/bookmarks/{bookmark_id}")
-async def delete_book_bookmark_endpoint(
+def delete_book_bookmark_endpoint(
     bookmark_id: str,
     request: Request,
     book_id: Optional[str] = None,
@@ -2421,7 +2763,7 @@ async def delete_book_bookmark_endpoint(
 # =========================================================================
 
 @app.get("/api/books/{book_id}/progress")
-async def read_progress(book_id: str, request: Request):
+def read_progress(book_id: str, request: Request):
     """Retorna o progresso de leitura registrado para o usuário autenticado."""
     user = require_user(request)
     try:
@@ -2440,9 +2782,9 @@ async def read_progress(book_id: str, request: Request):
 @app.post("/api/books/{book_id}/progress")
 async def update_progress(book_id: str, request: Request):
     """Atualiza o progresso de leitura do usuário autenticado."""
-    user = require_user(request)
+    user = await run_in_threadpool(require_user, request)
     try:
-        book = get_book(book_id, user_id=user["id"])
+        book = await run_in_threadpool(get_book, book_id, user_id=user["id"])
     except SecurityError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except BookNotFoundError as e:
@@ -2472,19 +2814,23 @@ async def update_progress(book_id: str, request: Request):
             except Exception:
                 pass
 
-    updated = save_progress(
-        book_id=book_id,
-        current_page=current_page,
-        total_pages=total_pages,
-        user_id=user["id"],
-        progress_locator=progress_locator,
-    )
-    social_service.record_reading_milestone(
-        user_id=user["id"],
-        book_id=book_id,
-        percentage=updated.get("percentage", 0.0),
-        current_page=current_page,
-    )
+    def _persist_progress_sync():
+        updated_res = save_progress(
+            book_id=book_id,
+            current_page=current_page,
+            total_pages=total_pages,
+            user_id=user["id"],
+            progress_locator=progress_locator,
+        )
+        social_service.record_reading_milestone(
+            user_id=user["id"],
+            book_id=book_id,
+            percentage=updated_res.get("percentage", 0.0),
+            current_page=current_page,
+        )
+        return updated_res
+
+    updated = await run_in_threadpool(_persist_progress_sync)
     return {"status": "success", "progress": updated}
 
 
@@ -2493,7 +2839,7 @@ async def update_progress(book_id: str, request: Request):
 # =========================================================================
 
 @app.get("/api/books/{book_id}/export/markdown")
-async def export_annotations_markdown(book_id: str, request: Request):
+def export_annotations_markdown(book_id: str, request: Request):
     """Exporta todas as anotações do usuário autenticado formatadas em Markdown."""
     user = require_user(request)
     try:
@@ -2514,7 +2860,7 @@ async def export_annotations_markdown(book_id: str, request: Request):
 
 
 @app.get("/api/books/{book_id}/export/json")
-async def export_annotations_json(book_id: str, request: Request):
+def export_annotations_json(book_id: str, request: Request):
     """Exporta todas as anotações do usuário autenticado estruturadas em JSON."""
     user = require_user(request)
     try:
@@ -2579,10 +2925,10 @@ async def _parse_import_body(request: Request) -> dict:
 @app.post("/api/books/{book_id}/import/preview")
 async def preview_annotations_import(book_id: str, request: Request):
     """Valida o JSON de anotações e retorna um resumo antes da confirmação para o usuário."""
-    user = require_user(request)
+    user = await run_in_threadpool(require_user, request)
     try:
         payload = await _parse_import_body(request)
-        preview = preview_import_annotations(book_id, payload, user_id=user["id"])
+        preview = await run_in_threadpool(preview_import_annotations, book_id, payload, user_id=user["id"])
         return {"status": "success", "preview": preview}
     except BookNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -2593,10 +2939,10 @@ async def preview_annotations_import(book_id: str, request: Request):
 @app.post("/api/books/{book_id}/import/confirm")
 async def confirm_annotations_import(book_id: str, request: Request):
     """Aplica a importação de anotações dentro de uma transação SQLite protegida para o usuário."""
-    user = require_user(request)
+    user = await run_in_threadpool(require_user, request)
     try:
         payload = await _parse_import_body(request)
-        result = apply_import_annotations(book_id, payload, user_id=user["id"])
+        result = await run_in_threadpool(apply_import_annotations, book_id, payload, user_id=user["id"])
         return {"status": "success", "result": result}
     except BookNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -2609,7 +2955,7 @@ async def confirm_annotations_import(book_id: str, request: Request):
 # =========================================================================
 
 @app.post("/api/backup")
-async def trigger_manual_backup(request: Request):
+def trigger_manual_backup(request: Request):
     """Gera uma cópia de segurança pontual do banco SQLite em backups/."""
     require_admin(request)
     try:
@@ -2620,7 +2966,7 @@ async def trigger_manual_backup(request: Request):
 
 
 @app.get("/api/backups")
-async def get_available_backups(request: Request):
+def get_available_backups(request: Request):
     """Lista todos os backups manuais disponíveis no servidor."""
     require_admin(request)
     backups = list_backups()
@@ -2632,7 +2978,7 @@ async def get_available_backups(request: Request):
 # =========================================================================
 
 @app.get("/api/metadata/diagnostics")
-async def metadata_diagnostics_endpoint(request: Request):
+def metadata_diagnostics_endpoint(request: Request):
     """
     Retorna métricas detalhadas por provedor (Open Library, Google Books, Crossref),
     contagem de obras por status de identificação e lista de obras pendentes de revisão.
@@ -2711,7 +3057,7 @@ async def metadata_diagnostics_endpoint(request: Request):
 
 
 @app.post("/api/books/{book_id}/metadata/review")
-async def mark_book_metadata_reviewed_endpoint(
+def mark_book_metadata_reviewed_endpoint(
     book_id: str,
     request: Request,
     payload: Optional[MetadataReviewPayload] = None,
@@ -2741,7 +3087,7 @@ async def mark_book_metadata_reviewed_endpoint(
 
 
 @app.post("/api/books/{book_id}/metadata/reject-candidates")
-async def reject_book_metadata_candidates_endpoint(book_id: str, request: Request):
+def reject_book_metadata_candidates_endpoint(book_id: str, request: Request):
     """Rejeita os candidatos automáticos de um livro e marca como revisado (manual_override)."""
     user = require_user(request)
     try:
@@ -2767,7 +3113,7 @@ async def reject_book_metadata_candidates_endpoint(book_id: str, request: Reques
 
 
 @app.post("/api/books/{book_id}/metadata/reprocess")
-async def reprocess_single_book_metadata_endpoint(book_id: str, request: Request):
+def reprocess_single_book_metadata_endpoint(book_id: str, request: Request):
     """Reprocessa imediatamente a identificação bibliográfica de um livro específico."""
     user = require_admin(request)
     try:
@@ -2780,7 +3126,7 @@ async def reprocess_single_book_metadata_endpoint(book_id: str, request: Request
 
 
 @app.post("/api/metadata/batch-update")
-async def batch_update_metadata_endpoint(payload: BatchMetadataUpdatePayload, request: Request):
+def batch_update_metadata_endpoint(payload: BatchMetadataUpdatePayload, request: Request):
     """Edição em lote de categoria, editora, idioma ou status para múltiplos livros (Admin)."""
     admin = require_admin(request)
     if not payload.book_ids:
@@ -2821,14 +3167,14 @@ async def batch_update_metadata_endpoint(payload: BatchMetadataUpdatePayload, re
 # =========================================================================
 
 @app.get("/api/automation/schedules")
-async def list_automation_schedules_endpoint(request: Request):
+def list_automation_schedules_endpoint(request: Request):
     """Lista todas as rotinas agendadas configuráveis (Admin)."""
     require_admin(request)
     return {"schedules": automation_service.list_schedules()}
 
 
 @app.put("/api/automation/schedules/{job_type}")
-async def update_automation_schedule_endpoint(
+def update_automation_schedule_endpoint(
     job_type: str,
     payload: ScheduleUpdatePayload,
     request: Request,
@@ -2844,7 +3190,7 @@ async def update_automation_schedule_endpoint(
 
 
 @app.get("/api/automation/jobs")
-async def list_automation_jobs_endpoint(
+def list_automation_jobs_endpoint(
     request: Request,
     limit: int = 50,
     status: Optional[str] = None,
@@ -2855,7 +3201,7 @@ async def list_automation_jobs_endpoint(
 
 
 @app.post("/api/automation/jobs/run")
-async def run_automation_job_endpoint(payload: JobRunPayload, request: Request):
+def run_automation_job_endpoint(payload: JobRunPayload, request: Request):
     """Dispara imediatamente uma tarefa da fila persistente (Admin)."""
     admin = require_admin(request)
     try:
@@ -2871,7 +3217,7 @@ async def run_automation_job_endpoint(payload: JobRunPayload, request: Request):
 
 
 @app.post("/api/automation/jobs/{job_id}/cancel")
-async def cancel_automation_job_endpoint(job_id: int, request: Request):
+def cancel_automation_job_endpoint(job_id: int, request: Request):
     """Cancela com segurança uma tarefa pendente ou em andamento (Admin)."""
     admin = require_admin(request)
     try:
@@ -2887,7 +3233,7 @@ async def cancel_automation_job_endpoint(job_id: int, request: Request):
 # =========================================================================
 
 @app.get("/api/admin/dashboard")
-async def admin_dashboard_endpoint(request: Request):
+def admin_dashboard_endpoint(request: Request):
     """Retorna todas as métricas operacionais consolidadas para o Dashboard Administrativo."""
     require_admin(request)
 
@@ -3006,14 +3352,14 @@ async def admin_dashboard_endpoint(request: Request):
 
 
 @app.get("/api/admin/library/diagnostics")
-async def admin_library_diagnostics_endpoint(request: Request):
+def admin_library_diagnostics_endpoint(request: Request):
     """Retorna diagnósticos detalhados de arquivos ausentes, duplicatas, metadados incompletos e formatos não reconhecidos."""
     require_admin(request)
     return get_library_diagnostics()
 
 
 @app.post("/api/users/{user_id}/revoke-sessions")
-async def revoke_user_sessions_endpoint(user_id: int, request: Request):
+def revoke_user_sessions_endpoint(user_id: int, request: Request):
     """Encerra todas as sessões ativas de um usuário específico (Admin)."""
     admin = require_admin(request)
     count = revoke_user_sessions(user_id)
@@ -3022,14 +3368,14 @@ async def revoke_user_sessions_endpoint(user_id: int, request: Request):
 
 
 @app.get("/api/admin/audit-logs")
-async def admin_audit_logs_endpoint(request: Request, limit: int = 100):
+def admin_audit_logs_endpoint(request: Request, limit: int = 100):
     """Retorna os logs de auditoria administrativa."""
     require_admin(request)
     return {"logs": list_admin_audit_logs(limit=limit)}
 
 
 @app.get("/api/admin/maintenance/status")
-async def admin_maintenance_status_endpoint(request: Request):
+def admin_maintenance_status_endpoint(request: Request):
     """Retorna status detalhado do banco SQLite, cache, disco e integridade para a aba Manutenção."""
     require_admin(request)
     integrity_ok = verify_sqlite_integrity(config.DB_PATH)
@@ -3070,7 +3416,7 @@ async def admin_maintenance_status_endpoint(request: Request):
 
 
 @app.post("/api/admin/maintenance/clear-cache")
-async def admin_clear_cache_endpoint(payload: ClearCachePayload, request: Request):
+def admin_clear_cache_endpoint(payload: ClearCachePayload, request: Request):
     """Limpa o cache de consultas externas e/ou o cache de capas extraídas (preservando capas customizadas)."""
     admin = require_admin(request)
     cleared_api = 0
@@ -3114,7 +3460,7 @@ async def admin_clear_cache_endpoint(payload: ClearCachePayload, request: Reques
 # =========================================================================
 
 @app.get("/api/profile/me")
-async def get_my_profile_endpoint(request: Request):
+def get_my_profile_endpoint(request: Request):
     """Retorna o perfil completo, estatísticas e configurações de privacidade do usuário logado."""
     user = require_user(request)
     prof = social_service.get_user_profile(user["id"], viewer_user_id=user["id"])
@@ -3122,7 +3468,7 @@ async def get_my_profile_endpoint(request: Request):
 
 
 @app.put("/api/profile/me")
-async def update_my_profile_endpoint(payload: ProfileUpdatePayload, request: Request):
+def update_my_profile_endpoint(payload: ProfileUpdatePayload, request: Request):
     """Atualiza nome de exibição, cor de avatar, bio e preferências de leitura do usuário logado."""
     user = require_user(request)
     updated = social_service.update_user_profile(user["id"], payload.model_dump(exclude_none=True))
@@ -3131,7 +3477,7 @@ async def update_my_profile_endpoint(payload: ProfileUpdatePayload, request: Req
 
 @app.get("/api/profile/privacy")
 @app.get("/api/profile/me/privacy")
-async def get_my_privacy_endpoint(request: Request):
+def get_my_privacy_endpoint(request: Request):
     """Retorna as configurações de privacidade do usuário logado (privado por padrão)."""
     user = require_user(request)
     priv = social_service.get_privacy_settings(user["id"])
@@ -3140,7 +3486,7 @@ async def get_my_privacy_endpoint(request: Request):
 
 @app.put("/api/profile/privacy")
 @app.put("/api/profile/me/privacy")
-async def update_my_privacy_endpoint(payload: PrivacyUpdatePayload, request: Request):
+def update_my_privacy_endpoint(payload: PrivacyUpdatePayload, request: Request):
     """Atualiza as permissões de compartilhamento do usuário logado."""
     user = require_user(request)
     updated = social_service.update_privacy_settings(user["id"], payload.model_dump(exclude_none=True))
@@ -3148,7 +3494,7 @@ async def update_my_privacy_endpoint(payload: PrivacyUpdatePayload, request: Req
 
 
 @app.get("/api/users/{target_user_id}/profile")
-async def get_other_user_profile_endpoint(target_user_id: int, request: Request):
+def get_other_user_profile_endpoint(target_user_id: int, request: Request):
     """Retorna o perfil de outro usuário filtrando estritamente pelos controles de privacidade dele."""
     user = require_user(request)
     try:
@@ -3159,7 +3505,7 @@ async def get_other_user_profile_endpoint(target_user_id: int, request: Request)
 
 
 @app.get("/api/social/users")
-async def list_social_users_endpoint(request: Request):
+def list_social_users_endpoint(request: Request):
     """Lista os membros ativos da biblioteca para seleção em recomendações comunitárias."""
     user = require_user(request)
     feed = social_service.get_nossa_biblioteca_feed(viewer_user_id=user["id"])
@@ -3167,7 +3513,7 @@ async def list_social_users_endpoint(request: Request):
 
 
 @app.get("/api/books/{book_id}/reviews")
-async def get_book_reviews_endpoint(book_id: str, request: Request):
+def get_book_reviews_endpoint(book_id: str, request: Request):
     """Retorna avaliações (1 a 5 estrelas) e resenhas compartilhadas de um livro."""
     user = require_user(request)
     return social_service.get_book_reviews_summary(book_id, viewer_user_id=user["id"])
@@ -3176,7 +3522,7 @@ async def get_book_reviews_endpoint(book_id: str, request: Request):
 @app.post("/api/books/{book_id}/reviews")
 @app.put("/api/books/{book_id}/reviews")
 @app.put("/api/books/{book_id}/reviews/me")
-async def upsert_book_review_endpoint(book_id: str, payload: BookReviewPayload, request: Request):
+def upsert_book_review_endpoint(book_id: str, payload: BookReviewPayload, request: Request):
     """Salva avaliação de 1 a 5 estrelas, resenha curta, favorito ou 'Quero ler' para um livro."""
     user = require_user(request)
     try:
@@ -3197,7 +3543,7 @@ async def upsert_book_review_endpoint(book_id: str, payload: BookReviewPayload, 
 
 
 @app.get("/api/books/{book_id}/shared-annotations")
-async def list_book_shared_annotations_endpoint(book_id: str, request: Request):
+def list_book_shared_annotations_endpoint(book_id: str, request: Request):
     """Lista todas as anotações e citações compartilhadas de um livro."""
     user = require_user(request)
     items = social_service.list_shared_annotations(viewer_user_id=user["id"], book_id=book_id)
@@ -3206,7 +3552,7 @@ async def list_book_shared_annotations_endpoint(book_id: str, request: Request):
 
 @app.get("/api/shared-annotations")
 @app.get("/api/social/annotations")
-async def list_all_shared_annotations_endpoint(
+def list_all_shared_annotations_endpoint(
     request: Request,
     book_id: Optional[str] = None,
     user_id: Optional[int] = None,
@@ -3225,7 +3571,7 @@ async def list_all_shared_annotations_endpoint(
 
 @app.post("/api/shared-annotations", status_code=status.HTTP_201_CREATED)
 @app.post("/api/social/annotations", status_code=status.HTTP_201_CREATED)
-async def create_shared_annotation_endpoint(
+def create_shared_annotation_endpoint(
     payload: SharedAnnotationCreatePayload,
     request: Request,
 ):
@@ -3257,7 +3603,7 @@ async def create_shared_annotation_endpoint(
 
 @app.put("/api/shared-annotations/{shared_id}")
 @app.put("/api/social/annotations/{shared_id}")
-async def update_shared_annotation_endpoint(
+def update_shared_annotation_endpoint(
     shared_id: int,
     payload: SharedAnnotationUpdatePayload,
     request: Request,
@@ -3282,7 +3628,7 @@ async def update_shared_annotation_endpoint(
 
 @app.delete("/api/shared-annotations/{shared_id}")
 @app.delete("/api/social/annotations/{shared_id}")
-async def delete_shared_annotation_endpoint(shared_id: int, request: Request):
+def delete_shared_annotation_endpoint(shared_id: int, request: Request):
     """Remove o compartilhamento de uma anotação (autor ou moderação admin em item público)."""
     user = require_user(request)
     try:
@@ -3300,7 +3646,7 @@ async def delete_shared_annotation_endpoint(shared_id: int, request: Request):
 
 @app.post("/api/shared-annotations/{shared_id}/comments", status_code=status.HTTP_201_CREATED)
 @app.post("/api/social/annotations/{shared_id}/comments", status_code=status.HTTP_201_CREATED)
-async def add_comment_to_shared_annotation_endpoint(
+def add_comment_to_shared_annotation_endpoint(
     shared_id: int,
     payload: AnnotationCommentPayload,
     request: Request,
@@ -3325,7 +3671,7 @@ async def add_comment_to_shared_annotation_endpoint(
 
 @app.put("/api/annotation-comments/{comment_id}")
 @app.put("/api/social/comments/{comment_id}")
-async def edit_annotation_comment_endpoint(
+def edit_annotation_comment_endpoint(
     comment_id: int,
     payload: AnnotationCommentPayload,
     request: Request,
@@ -3349,7 +3695,7 @@ async def edit_annotation_comment_endpoint(
 
 @app.delete("/api/annotation-comments/{comment_id}")
 @app.delete("/api/social/comments/{comment_id}")
-async def delete_annotation_comment_endpoint(comment_id: int, request: Request):
+def delete_annotation_comment_endpoint(comment_id: int, request: Request):
     """Exclui um comentário (próprio autor ou moderação admin)."""
     user = require_user(request)
     try:
@@ -3367,7 +3713,7 @@ async def delete_annotation_comment_endpoint(comment_id: int, request: Request):
 
 @app.get("/api/recommendations")
 @app.get("/api/social/recommendations")
-async def list_recommendations_endpoint(request: Request):
+def list_recommendations_endpoint(request: Request):
     """Lista recomendações de leitura recebidas e enviadas pelo usuário."""
     user = require_user(request)
     return social_service.list_user_recommendations(user["id"])
@@ -3375,7 +3721,7 @@ async def list_recommendations_endpoint(request: Request):
 
 @app.post("/api/recommendations", status_code=status.HTTP_201_CREATED)
 @app.post("/api/social/recommendations", status_code=status.HTTP_201_CREATED)
-async def create_recommendation_endpoint(
+def create_recommendation_endpoint(
     payload: RecommendationCreatePayload,
     request: Request,
 ):
@@ -3397,7 +3743,7 @@ async def create_recommendation_endpoint(
 
 
 @app.get("/api/social/feed")
-async def get_nossa_biblioteca_feed_endpoint(request: Request):
+def get_nossa_biblioteca_feed_endpoint(request: Request):
     """Retorna o mural consolidado 'Nossa Biblioteca' respeitando as permissões de privacidade."""
     user = require_user(request)
     return social_service.get_nossa_biblioteca_feed(viewer_user_id=user["id"])
@@ -3408,7 +3754,7 @@ async def get_nossa_biblioteca_feed_endpoint(request: Request):
 # =========================================================================
 
 @app.get("/api/reading-clubs")
-async def list_reading_clubs_endpoint(
+def list_reading_clubs_endpoint(
     request: Request,
     mine: bool = False,
     search: Optional[str] = None,
@@ -3426,7 +3772,7 @@ async def list_reading_clubs_endpoint(
 
 
 @app.post("/api/reading-clubs", status_code=status.HTTP_201_CREATED)
-async def create_reading_club_endpoint(payload: ClubCreatePayload, request: Request):
+def create_reading_club_endpoint(payload: ClubCreatePayload, request: Request):
     """Cria um novo clube de leitura e associa o criador como 'owner'."""
     user = require_user(request)
     try:
@@ -3442,7 +3788,7 @@ async def create_reading_club_endpoint(payload: ClubCreatePayload, request: Requ
 
 
 @app.get("/api/reading-clubs/invites/mine")
-async def list_my_invites_endpoint(request: Request, status_filter: str = "pending"):
+def list_my_invites_endpoint(request: Request, status_filter: str = "pending"):
     """Lista convites recebidos pelo usuário autenticado (estática antes de /{club_id})."""
     user = require_user(request)
     invites = clubs_service.list_user_invites(user_id=user["id"], status=status_filter)
@@ -3450,7 +3796,7 @@ async def list_my_invites_endpoint(request: Request, status_filter: str = "pendi
 
 
 @app.post("/api/reading-clubs/invites/{invite_id}/respond")
-async def respond_invite_endpoint(invite_id: str, payload: InviteResponsePayload, request: Request):
+def respond_invite_endpoint(invite_id: str, payload: InviteResponsePayload, request: Request):
     """Aceita ou rejeita um convite para clube privado."""
     user = require_user(request)
     try:
@@ -3469,7 +3815,7 @@ async def respond_invite_endpoint(invite_id: str, payload: InviteResponsePayload
 
 
 @app.delete("/api/reading-clubs/invites/{invite_id}")
-async def cancel_invite_endpoint(invite_id: str, request: Request):
+def cancel_invite_endpoint(invite_id: str, request: Request):
     """Cancela um convite pendente (remetente ou proprietário/moderador do clube)."""
     user = require_user(request)
     try:
@@ -3484,7 +3830,7 @@ async def cancel_invite_endpoint(invite_id: str, request: Request):
 
 
 @app.get("/api/reading-clubs/{club_id}")
-async def get_reading_club_endpoint(club_id: str, request: Request):
+def get_reading_club_endpoint(club_id: str, request: Request):
     """Retorna dados completos de um clube de leitura (anti-enumeração para clubes privados)."""
     user = require_user(request)
     try:
@@ -3495,7 +3841,7 @@ async def get_reading_club_endpoint(club_id: str, request: Request):
 
 
 @app.patch("/api/reading-clubs/{club_id}")
-async def update_reading_club_endpoint(club_id: str, payload: ClubUpdatePayload, request: Request):
+def update_reading_club_endpoint(club_id: str, payload: ClubUpdatePayload, request: Request):
     """Edita metadados do clube (apenas proprietário ou admin)."""
     user = require_user(request)
     try:
@@ -3517,7 +3863,7 @@ async def update_reading_club_endpoint(club_id: str, payload: ClubUpdatePayload,
 
 @app.post("/api/reading-clubs/{club_id}/archive")
 @app.patch("/api/reading-clubs/{club_id}/archive")
-async def archive_reading_club_endpoint(club_id: str, request: Request, payload: Optional[ClubArchivePayload] = None):
+def archive_reading_club_endpoint(club_id: str, request: Request, payload: Optional[ClubArchivePayload] = None):
     """Arquiva ou desarquiva um clube de leitura preservando o histórico."""
     user = require_user(request)
     archive = payload.archive if payload is not None else True
@@ -3531,7 +3877,7 @@ async def archive_reading_club_endpoint(club_id: str, request: Request, payload:
 
 
 @app.post("/api/reading-clubs/{club_id}/join")
-async def join_reading_club_endpoint(club_id: str, request: Request):
+def join_reading_club_endpoint(club_id: str, request: Request):
     """Permite entrada em clube público ou clube privado com convite pendente."""
     user = require_user(request)
     try:
@@ -3546,7 +3892,7 @@ async def join_reading_club_endpoint(club_id: str, request: Request):
 
 
 @app.post("/api/reading-clubs/{club_id}/leave")
-async def leave_reading_club_endpoint(club_id: str, request: Request):
+def leave_reading_club_endpoint(club_id: str, request: Request):
     """Permite saída de membro do clube com validação de titularidade."""
     user = require_user(request)
     try:
@@ -3559,7 +3905,7 @@ async def leave_reading_club_endpoint(club_id: str, request: Request):
 
 
 @app.get("/api/reading-clubs/{club_id}/members")
-async def list_club_members_endpoint(club_id: str, request: Request):
+def list_club_members_endpoint(club_id: str, request: Request):
     """Lista todos os participantes de um clube e seus papéis."""
     user = require_user(request)
     try:
@@ -3570,7 +3916,7 @@ async def list_club_members_endpoint(club_id: str, request: Request):
 
 
 @app.patch("/api/reading-clubs/{club_id}/members/{target_user_id}")
-async def update_club_member_role_endpoint(
+def update_club_member_role_endpoint(
     club_id: str,
     target_user_id: int,
     payload: MemberRoleUpdatePayload,
@@ -3595,7 +3941,7 @@ async def update_club_member_role_endpoint(
 
 
 @app.delete("/api/reading-clubs/{club_id}/members/{target_user_id}")
-async def remove_club_member_endpoint(club_id: str, target_user_id: int, request: Request):
+def remove_club_member_endpoint(club_id: str, target_user_id: int, request: Request):
     """Remove participante do clube (proprietário ou moderador)."""
     user = require_user(request)
     try:
@@ -3614,7 +3960,7 @@ async def remove_club_member_endpoint(club_id: str, target_user_id: int, request
 
 
 @app.post("/api/reading-clubs/{club_id}/transfer-ownership")
-async def transfer_club_ownership_endpoint(
+def transfer_club_ownership_endpoint(
     club_id: str,
     payload: OwnershipTransferPayload,
     request: Request,
@@ -3637,7 +3983,7 @@ async def transfer_club_ownership_endpoint(
 
 
 @app.post("/api/reading-clubs/{club_id}/invites", status_code=status.HTTP_201_CREATED)
-async def create_club_invite_endpoint(
+def create_club_invite_endpoint(
     club_id: str,
     payload: ClubInvitePayload,
     request: Request,
@@ -3660,7 +4006,7 @@ async def create_club_invite_endpoint(
 
 
 @app.get("/api/reading-clubs/{club_id}/invites")
-async def list_club_invites_endpoint(club_id: str, request: Request):
+def list_club_invites_endpoint(club_id: str, request: Request):
     """Lista convites pendentes de um clube (apenas proprietário e moderadores)."""
     user = require_user(request)
     try:
@@ -3673,7 +4019,7 @@ async def list_club_invites_endpoint(club_id: str, request: Request):
 
 
 @app.get("/api/reading-clubs/{club_id}/reads")
-async def list_club_reads_endpoint(club_id: str, request: Request, status_filter: Optional[str] = None):
+def list_club_reads_endpoint(club_id: str, request: Request, status_filter: Optional[str] = None):
     """Lista todas as leituras coletivas do clube."""
     user = require_user(request)
     try:
@@ -3688,7 +4034,7 @@ async def list_club_reads_endpoint(club_id: str, request: Request, status_filter
 
 
 @app.post("/api/reading-clubs/{club_id}/reads", status_code=status.HTTP_201_CREATED)
-async def create_collective_read_endpoint(
+def create_collective_read_endpoint(
     club_id: str,
     payload: CollectiveReadCreatePayload,
     request: Request,
@@ -3720,7 +4066,7 @@ async def create_collective_read_endpoint(
 # -------------------------------------------------------------------------
 
 @app.get("/api/collective-reads/mine")
-async def list_my_collective_reads_endpoint(request: Request, status_filter: Optional[str] = None):
+def list_my_collective_reads_endpoint(request: Request, status_filter: Optional[str] = None):
     """Lista todas as leituras coletivas nas quais o usuário autenticado participa."""
     user = require_user(request)
     reads = clubs_service.list_user_collective_reads(user_id=user["id"], status=status_filter)
@@ -3728,7 +4074,7 @@ async def list_my_collective_reads_endpoint(request: Request, status_filter: Opt
 
 
 @app.get("/api/collective-reads/{read_id}")
-async def get_collective_read_endpoint(read_id: str, request: Request):
+def get_collective_read_endpoint(read_id: str, request: Request):
     """Retorna detalhes de uma leitura coletiva, metadados do livro e participantes."""
     user = require_user(request)
     try:
@@ -3739,7 +4085,7 @@ async def get_collective_read_endpoint(read_id: str, request: Request):
 
 
 @app.patch("/api/collective-reads/{read_id}")
-async def update_collective_read_endpoint(
+def update_collective_read_endpoint(
     read_id: str,
     payload: CollectiveReadUpdatePayload,
     request: Request,
@@ -3766,7 +4112,7 @@ async def update_collective_read_endpoint(
 
 
 @app.post("/api/collective-reads/{read_id}/join")
-async def join_collective_read_endpoint(read_id: str, request: Request):
+def join_collective_read_endpoint(read_id: str, request: Request):
     """Inscreve o usuário na leitura coletiva (requer ser membro do clube)."""
     user = require_user(request)
     try:
@@ -3781,7 +4127,7 @@ async def join_collective_read_endpoint(read_id: str, request: Request):
 
 
 @app.post("/api/collective-reads/{read_id}/leave")
-async def leave_collective_read_endpoint(read_id: str, request: Request):
+def leave_collective_read_endpoint(read_id: str, request: Request):
     """Permite a saída de um participante da leitura coletiva."""
     user = require_user(request)
     try:
@@ -3819,7 +4165,7 @@ def _handle_shared_reading_error(exc: Exception) -> HTTPException:
 
 
 @app.get("/api/collective-reads/{read_id}/overview")
-async def get_shared_reading_overview_endpoint(read_id: str, request: Request):
+def get_shared_reading_overview_endpoint(read_id: str, request: Request):
     """Retorna visão geral da leitura coletiva (contadores, discussões recentes sem spoiler e metas)."""
     user = require_user(request)
     try:
@@ -3829,7 +4175,7 @@ async def get_shared_reading_overview_endpoint(read_id: str, request: Request):
 
 
 @app.get("/api/collective-reads/{read_id}/topics")
-async def list_shared_topics_endpoint(
+def list_shared_topics_endpoint(
     read_id: str,
     request: Request,
     page: int = Query(default=1, ge=1, le=10000),
@@ -3851,7 +4197,7 @@ async def list_shared_topics_endpoint(
 
 
 @app.post("/api/collective-reads/{read_id}/topics", status_code=status.HTTP_201_CREATED)
-async def create_shared_topic_endpoint(
+def create_shared_topic_endpoint(
     read_id: str,
     payload: SharedTopicCreatePayload,
     request: Request,
@@ -3876,7 +4222,7 @@ async def create_shared_topic_endpoint(
 
 
 @app.get("/api/collective-reads/{read_id}/topics/{topic_id}")
-async def get_shared_topic_detail_endpoint(
+def get_shared_topic_detail_endpoint(
     read_id: str,
     topic_id: str,
     request: Request,
@@ -3898,7 +4244,7 @@ async def get_shared_topic_detail_endpoint(
 
 
 @app.put("/api/collective-reads/{read_id}/topics/{topic_id}")
-async def edit_shared_topic_endpoint(
+def edit_shared_topic_endpoint(
     read_id: str,
     topic_id: str,
     payload: SharedTopicUpdatePayload,
@@ -3925,7 +4271,7 @@ async def edit_shared_topic_endpoint(
 
 
 @app.patch("/api/collective-reads/{read_id}/topics/{topic_id}/moderate")
-async def moderate_shared_topic_endpoint(
+def moderate_shared_topic_endpoint(
     read_id: str,
     topic_id: str,
     payload: SharedTopicModeratePayload,
@@ -3947,7 +4293,7 @@ async def moderate_shared_topic_endpoint(
 
 
 @app.delete("/api/collective-reads/{read_id}/topics/{topic_id}")
-async def delete_shared_topic_endpoint(
+def delete_shared_topic_endpoint(
     read_id: str,
     topic_id: str,
     request: Request,
@@ -3967,7 +4313,7 @@ async def delete_shared_topic_endpoint(
 
 
 @app.post("/api/collective-reads/{read_id}/topics/{topic_id}/posts", status_code=status.HTTP_201_CREATED)
-async def create_shared_post_endpoint(
+def create_shared_post_endpoint(
     read_id: str,
     topic_id: str,
     payload: SharedPostCreatePayload,
@@ -3990,7 +4336,7 @@ async def create_shared_post_endpoint(
 
 
 @app.put("/api/collective-reads/{read_id}/topics/{topic_id}/posts/{post_id}")
-async def edit_shared_post_endpoint(
+def edit_shared_post_endpoint(
     read_id: str,
     topic_id: str,
     post_id: str,
@@ -4014,7 +4360,7 @@ async def edit_shared_post_endpoint(
 
 
 @app.delete("/api/collective-reads/{read_id}/topics/{topic_id}/posts/{post_id}")
-async def delete_shared_post_endpoint(
+def delete_shared_post_endpoint(
     read_id: str,
     topic_id: str,
     post_id: str,
@@ -4035,7 +4381,7 @@ async def delete_shared_post_endpoint(
 
 
 @app.get("/api/collective-reads/{read_id}/goals")
-async def list_shared_goals_endpoint(
+def list_shared_goals_endpoint(
     read_id: str,
     request: Request,
     include_archived: bool = False,
@@ -4053,7 +4399,7 @@ async def list_shared_goals_endpoint(
 
 
 @app.post("/api/collective-reads/{read_id}/goals", status_code=status.HTTP_201_CREATED)
-async def create_shared_goal_endpoint(
+def create_shared_goal_endpoint(
     read_id: str,
     payload: SharedGoalCreatePayload,
     request: Request,
@@ -4077,7 +4423,7 @@ async def create_shared_goal_endpoint(
 
 
 @app.put("/api/collective-reads/{read_id}/goals/{goal_id}")
-async def update_shared_goal_endpoint(
+def update_shared_goal_endpoint(
     read_id: str,
     goal_id: str,
     payload: SharedGoalUpdatePayload,
@@ -4104,7 +4450,7 @@ async def update_shared_goal_endpoint(
 
 
 @app.delete("/api/collective-reads/{read_id}/goals/{goal_id}")
-async def delete_shared_goal_endpoint(
+def delete_shared_goal_endpoint(
     read_id: str,
     goal_id: str,
     request: Request,
@@ -4124,7 +4470,7 @@ async def delete_shared_goal_endpoint(
 
 
 @app.put("/api/collective-reads/{read_id}/goals/{goal_id}/progress")
-async def update_shared_goal_progress_endpoint(
+def update_shared_goal_progress_endpoint(
     read_id: str,
     goal_id: str,
     payload: SharedGoalProgressPayload,
@@ -4145,7 +4491,7 @@ async def update_shared_goal_progress_endpoint(
 
 
 @app.get("/api/collective-reads/{read_id}/quotes")
-async def list_shared_quotes_endpoint(
+def list_shared_quotes_endpoint(
     read_id: str,
     request: Request,
     page: int = Query(default=1, ge=1, le=10000),
@@ -4165,7 +4511,7 @@ async def list_shared_quotes_endpoint(
 
 
 @app.post("/api/collective-reads/{read_id}/quotes", status_code=status.HTTP_201_CREATED)
-async def share_quote_endpoint(
+def share_quote_endpoint(
     read_id: str,
     payload: SharedQuoteCreatePayload,
     request: Request,
@@ -4190,7 +4536,7 @@ async def share_quote_endpoint(
 
 
 @app.delete("/api/collective-reads/{read_id}/quotes/{quote_id}")
-async def delete_shared_quote_endpoint(
+def delete_shared_quote_endpoint(
     read_id: str,
     quote_id: str,
     request: Request,
@@ -4210,11 +4556,697 @@ async def delete_shared_quote_endpoint(
 
 
 @app.get("/api/books/{book_id}/collective-reads")
-async def list_publishable_book_collective_reads_endpoint(book_id: str, request: Request):
+def list_publishable_book_collective_reads_endpoint(book_id: str, request: Request):
     """Lista leituras coletivas elegíveis para publicação de citações pelo usuário nesta obra."""
     user = require_user(request)
     reads = clubs_service.get_publishable_collective_reads_for_book(book_id=book_id, user_id=user["id"])
     return {"reads": reads, "count": len(reads)}
+
+
+# =========================================================================
+# ENDPOINTS REST: CONHECIMENTO CONECTADO / SEÇÃO ATLAS (v1.9.0 — Fase 2)
+# =========================================================================
+
+def _handle_knowledge_error(exc: Exception) -> HTTPException:
+    """
+    Padroniza o mapeamento das exceções de domínio do Conhecimento Conectado (Atlas)
+    para códigos HTTP sem vazar mensagens internas do SQLite, stack traces ou caminhos locais.
+    """
+    if isinstance(exc, KnowledgeNotFoundError):
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    if isinstance(exc, KnowledgePermissionError):
+        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    if isinstance(exc, KnowledgeConflictError):
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    if isinstance(exc, KnowledgeExportBusyError):
+        return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    if isinstance(exc, (KnowledgeValidationError, KnowledgeExportLimitError)):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Erro interno ao processar operação de conhecimento conectado.",
+    )
+
+
+# -------------------------------------------------------------------------
+# 1. API DE CONCEITOS (`/api/knowledge/concepts`)
+# -------------------------------------------------------------------------
+
+@app.get("/api/knowledge/concepts", response_model=ConceptListResponseModel)
+def list_knowledge_concepts_endpoint(
+    request: Request,
+    response: Response,
+    search: Optional[str] = Query(default=None, max_length=MAX_SEARCH_QUERY_LEN),
+    tag: Optional[str] = Query(default=None, max_length=MAX_TAG_LEN),
+    include_archived: bool = Query(default=False),
+    sort: Literal["updated_desc", "created_desc", "name_asc"] = Query(default="updated_desc"),
+    limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(default=0, ge=0),
+):
+    """Lista conceitos privados pertencentes exclusivamente ao usuário autenticado."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        return knowledge_service.list_concepts(
+            user_id=user["id"],
+            search=search,
+            tag=tag,
+            include_archived=include_archived,
+            sort_by=sort,
+            limit=limit,
+            offset=offset,
+        )
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.post("/api/knowledge/concepts", status_code=status.HTTP_201_CREATED)
+def create_knowledge_concept_endpoint(
+    payload: ConceptCreatePayload,
+    request: Request,
+    response: Response,
+):
+    """Cria um novo conceito privado para o usuário autenticado."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        concept = knowledge_service.create_concept(
+            user_id=user["id"],
+            name=payload.name,
+            description=payload.description,
+            tags=payload.tags,
+            color=payload.color,
+            is_archived=payload.is_archived,
+        )
+        return {"status": "success", "concept": ConceptResponseModel.model_validate(concept).model_dump()}
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.get("/api/knowledge/concepts/{concept_id}")
+def get_knowledge_concept_endpoint(
+    concept_id: str,
+    request: Request,
+    response: Response,
+):
+    """Consulta um conceito privado pertencente ao usuário autenticado."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        concept = knowledge_service.get_concept(concept_id=concept_id, user_id=user["id"])
+        return {"concept": ConceptResponseModel.model_validate(concept).model_dump()}
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.patch("/api/knowledge/concepts/{concept_id}")
+def update_knowledge_concept_endpoint(
+    concept_id: str,
+    payload: ConceptUpdatePayload,
+    request: Request,
+    response: Response,
+):
+    """Atualiza parcialmente um conceito privado do usuário autenticado preservando seu UUID."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        concept = knowledge_service.update_concept(
+            concept_id=concept_id,
+            user_id=user["id"],
+            name=payload.name if "name" in payload.model_fields_set else None,
+            description=payload.description if "description" in payload.model_fields_set else None,
+            tags=payload.tags if "tags" in payload.model_fields_set else None,
+            color=payload.color if "color" in payload.model_fields_set else None,
+            is_archived=payload.is_archived if "is_archived" in payload.model_fields_set else None,
+        )
+        return {"status": "success", "concept": ConceptResponseModel.model_validate(concept).model_dump()}
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.delete("/api/knowledge/concepts/{concept_id}")
+def delete_knowledge_concept_endpoint(
+    concept_id: str,
+    request: Request,
+    response: Response,
+):
+    """Exclui um conceito privado pertencente ao usuário autenticado e limpa seus vínculos."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        res = knowledge_service.delete_concept(concept_id=concept_id, user_id=user["id"])
+        return {"status": "success", **res}
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+# -------------------------------------------------------------------------
+# 2. API DE REFLEXÕES AUTORAIS (`/api/knowledge/reflections`)
+# -------------------------------------------------------------------------
+
+@app.get("/api/knowledge/reflections", response_model=ReflectionListResponseModel)
+def list_knowledge_reflections_endpoint(
+    request: Request,
+    response: Response,
+    search: Optional[str] = Query(default=None, max_length=MAX_SEARCH_QUERY_LEN),
+    tag: Optional[str] = Query(default=None, max_length=MAX_TAG_LEN),
+    primary_book_id: Optional[str] = Query(default=None, max_length=128),
+    include_archived: bool = Query(default=False),
+    sort: Literal["updated_desc", "created_desc", "title_asc"] = Query(default="updated_desc"),
+    limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(default=0, ge=0),
+):
+    """Lista reflexões autorais privadas do usuário autenticado."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        return knowledge_service.list_reflections(
+            user_id=user["id"],
+            search=search,
+            tag=tag,
+            primary_book_id=primary_book_id,
+            include_archived=include_archived,
+            sort_by=sort,
+            limit=limit,
+            offset=offset,
+        )
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.post("/api/knowledge/reflections", status_code=status.HTTP_201_CREATED)
+def create_knowledge_reflection_endpoint(
+    payload: ReflectionCreatePayload,
+    request: Request,
+    response: Response,
+):
+    """Cria uma nova reflexão autoral privada (corpo Markdown armazenado e retornado como texto puro não confiável)."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        reflection = knowledge_service.create_reflection(
+            user_id=user["id"],
+            title=payload.title,
+            body_markdown=payload.body_markdown,
+            primary_book_id=payload.primary_book_id,
+            tags=payload.tags,
+            is_pinned=payload.is_pinned,
+            is_archived=payload.is_archived,
+        )
+        return {"status": "success", "reflection": ReflectionResponseModel.model_validate(reflection).model_dump()}
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.get("/api/knowledge/reflections/{reflection_id}")
+def get_knowledge_reflection_endpoint(
+    reflection_id: str,
+    request: Request,
+    response: Response,
+):
+    """Consulta uma reflexão autoral privada do usuário autenticado, incluindo referências e backlinks resolvidos."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        reflection = knowledge_service.get_reflection(reflection_id=reflection_id, user_id=user["id"])
+        references = knowledge_service.get_reflection_references(reflection_id=reflection_id, user_id=user["id"])
+        backlinks = knowledge_service.get_reflection_backlinks(reflection_id=reflection_id, user_id=user["id"])
+        return {
+            "reflection": ReflectionResponseModel.model_validate(reflection).model_dump(),
+            "references": [KnowledgeLinkResponseModel.model_validate(r).model_dump() for r in references],
+            "backlinks": [KnowledgeLinkResponseModel.model_validate(b).model_dump() for b in backlinks],
+        }
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.patch("/api/knowledge/reflections/{reflection_id}")
+def update_knowledge_reflection_endpoint(
+    reflection_id: str,
+    payload: ReflectionUpdatePayload,
+    request: Request,
+    response: Response,
+):
+    """Atualiza parcialmente uma reflexão autoral privada do usuário autenticado."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        primary_book_arg: Any = (
+            payload.primary_book_id
+            if "primary_book_id" in payload.model_fields_set
+            else ...
+        )
+        reflection = knowledge_service.update_reflection(
+            reflection_id=reflection_id,
+            user_id=user["id"],
+            title=payload.title if "title" in payload.model_fields_set else None,
+            body_markdown=payload.body_markdown if "body_markdown" in payload.model_fields_set else None,
+            primary_book_id=primary_book_arg,
+            tags=payload.tags if "tags" in payload.model_fields_set else None,
+            is_pinned=payload.is_pinned if "is_pinned" in payload.model_fields_set else None,
+            is_archived=payload.is_archived if "is_archived" in payload.model_fields_set else None,
+            expected_updated_at=payload.expected_updated_at if "expected_updated_at" in payload.model_fields_set else None,
+        )
+        return {"status": "success", "reflection": ReflectionResponseModel.model_validate(reflection).model_dump()}
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.delete("/api/knowledge/reflections/{reflection_id}")
+def delete_knowledge_reflection_endpoint(
+    reflection_id: str,
+    request: Request,
+    response: Response,
+):
+    """Exclui uma reflexão autoral privada do usuário autenticado e limpa seus vínculos."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        res = knowledge_service.delete_reflection(reflection_id=reflection_id, user_id=user["id"])
+        return {"status": "success", **res}
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+# -------------------------------------------------------------------------
+# 3. API DE CONEXÕES SEMÂNTICAS (`/api/knowledge/links`)
+# -------------------------------------------------------------------------
+
+@app.get("/api/knowledge/links", response_model=KnowledgeLinkListResponseModel)
+def list_knowledge_links_endpoint(
+    request: Request,
+    response: Response,
+    source_type: Optional[KnowledgeEntityTypeLiteral] = Query(default=None),
+    source_id: Optional[str] = Query(default=None, max_length=128),
+    target_type: Optional[KnowledgeEntityTypeLiteral] = Query(default=None),
+    target_id: Optional[str] = Query(default=None, max_length=128),
+    entity_type: Optional[KnowledgeEntityTypeLiteral] = Query(default=None),
+    entity_id: Optional[str] = Query(default=None, max_length=128),
+    direction: KnowledgeDirectionLiteral = Query(default="both"),
+    relation_type: Optional[KnowledgeRelationTypeLiteral] = Query(default=None),
+    sort: Literal["created_desc", "updated_desc"] = Query(default="created_desc"),
+    limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(default=0, ge=0),
+):
+    """Lista conexões semânticas pessoais do usuário autenticado com hidratação segura dos extremos."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        return knowledge_service.list_knowledge_links(
+            user_id=user["id"],
+            source_type=source_type,
+            source_id=source_id,
+            target_type=target_type,
+            target_id=target_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            direction=direction,
+            relation_type=relation_type,
+            sort_by=sort,
+            limit=limit,
+            offset=offset,
+        )
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.post("/api/knowledge/links", status_code=status.HTTP_201_CREATED)
+def create_knowledge_link_endpoint(
+    payload: KnowledgeLinkCreatePayload,
+    request: Request,
+    response: Response,
+):
+    """Cria uma conexão semântica direcionada entre duas entidades autorizadas."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        link = knowledge_service.create_knowledge_link(
+            user_id=user["id"],
+            source_type=payload.source_type,
+            source_id=payload.source_id,
+            target_type=payload.target_type,
+            target_id=payload.target_id,
+            relation_type=payload.relation_type,
+            rationale=payload.rationale,
+        )
+        return {"status": "success", "link": KnowledgeLinkResponseModel.model_validate(link).model_dump()}
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.get("/api/knowledge/links/{link_id}")
+def get_knowledge_link_endpoint(
+    link_id: str,
+    request: Request,
+    response: Response,
+):
+    """Consulta uma conexão pessoal do usuário autenticado com resolução em tempo de leitura dos extremos."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        link = knowledge_service.get_knowledge_link(link_id=link_id, user_id=user["id"])
+        return {"link": KnowledgeLinkResponseModel.model_validate(link).model_dump()}
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.patch("/api/knowledge/links/{link_id}")
+def update_knowledge_link_endpoint(
+    link_id: str,
+    payload: KnowledgeLinkUpdatePayload,
+    request: Request,
+    response: Response,
+):
+    """Atualiza o tipo de relação e/ou a justificativa autoral de uma conexão própria (extremos imutáveis)."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        link = knowledge_service.update_knowledge_link(
+            link_id=link_id,
+            user_id=user["id"],
+            relation_type=payload.relation_type if "relation_type" in payload.model_fields_set else None,
+            rationale=payload.rationale if "rationale" in payload.model_fields_set else None,
+        )
+        return {"status": "success", "link": KnowledgeLinkResponseModel.model_validate(link).model_dump()}
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.delete("/api/knowledge/links/{link_id}")
+def delete_knowledge_link_endpoint(
+    link_id: str,
+    request: Request,
+    response: Response,
+):
+    """Remove uma conexão pertencente ao próprio usuário autenticado."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        res = knowledge_service.delete_knowledge_link(link_id=link_id, user_id=user["id"])
+        return {"status": "success", **res}
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+# -------------------------------------------------------------------------
+# 4. API DE REFERÊNCIAS E BACKLINKS POR ENTIDADE
+# -------------------------------------------------------------------------
+
+@app.get(
+    "/api/knowledge/entities/{entity_type}/{entity_id}/connections",
+    response_model=KnowledgeEntityConnectionsResponseModel,
+)
+def get_entity_connections_endpoint(
+    entity_type: KnowledgeEntityTypeLiteral,
+    entity_id: str,
+    request: Request,
+    response: Response,
+    direction: KnowledgeDirectionLiteral = Query(default="both"),
+    relation_type: Optional[KnowledgeRelationTypeLiteral] = Query(default=None),
+    limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(default=0, ge=0),
+):
+    """
+    Lista conexões de saída e/ou backlinks recebidos de uma entidade autorizada.
+    Valida primeiramente a autorização sobre a entidade consultada (anti-enumeração).
+    """
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        return knowledge_service.get_entity_connections_and_backlinks(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            user_id=user["id"],
+            direction=direction,
+            relation_type=relation_type,
+            limit=limit,
+            offset=offset,
+        )
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.get(
+    "/api/knowledge/entities/{entity_type}/{entity_id}/backlinks",
+    response_model=KnowledgeEntityConnectionsResponseModel,
+)
+def get_entity_backlinks_endpoint(
+    entity_type: KnowledgeEntityTypeLiteral,
+    entity_id: str,
+    request: Request,
+    response: Response,
+    relation_type: Optional[KnowledgeRelationTypeLiteral] = Query(default=None),
+    limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(default=0, ge=0),
+):
+    """
+    Endpoint dedicado para consulta de backlinks (relações de entrada) de uma entidade autorizada.
+    """
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        return knowledge_service.get_entity_connections_and_backlinks(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            user_id=user["id"],
+            direction="incoming",
+            relation_type=relation_type,
+            limit=limit,
+            offset=offset,
+        )
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+# -------------------------------------------------------------------------
+# 5. API DE LOCALIZAÇÃO ASSISTIDA (`/api/knowledge/lookup`)
+# -------------------------------------------------------------------------
+
+@app.get("/api/knowledge/lookup", response_model=KnowledgeLookupResponseModel)
+def lookup_knowledge_entities_endpoint(
+    request: Request,
+    response: Response,
+    q: str = Query(default="", max_length=MAX_SEARCH_QUERY_LEN),
+    entity_type: Optional[KnowledgeEntityTypeLiteral] = Query(default=None),
+    book_id: Optional[str] = Query(default=None, max_length=128),
+    limit: int = Query(default=20, ge=1, le=AUX_SEARCH_LIMIT),
+):
+    """
+    Localização assistida de entidades referenciáveis (`concept`, `reflection`, `highlight`, `note`, `book`)
+    para criação de conexões e inserção assistida de referências.
+    """
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        return knowledge_service.lookup_referencable_entities(
+            user_id=user["id"],
+            query=q,
+            entity_type=entity_type,
+            book_id=book_id,
+            limit=limit,
+        )
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+# -------------------------------------------------------------------------
+# 6. RESUMOS AGREGADOS SEM N+1 (CADERNO DE ESTUDOS E LIVROS — FASE 4)
+# -------------------------------------------------------------------------
+
+class KnowledgeSummaryEntityItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    entity_type: Literal["highlight", "note", "book"]
+    entity_id: str = Field(..., min_length=1, max_length=128)
+
+
+class KnowledgeEntitiesSummaryPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    entities: List[KnowledgeSummaryEntityItem] = Field(..., max_length=200)
+
+
+@app.get("/api/knowledge/books/{book_id}/summary")
+def get_book_knowledge_summary_endpoint(
+    book_id: str,
+    request: Request,
+    response: Response,
+):
+    """Retorna contagens pessoais agregadas de conhecimento conectado para uma obra acessível."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        return knowledge_service.get_book_knowledge_summary(
+            book_id=book_id,
+            user_id=user["id"],
+        )
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.post("/api/knowledge/entities/summary")
+def get_entities_knowledge_summary_endpoint(
+    payload: KnowledgeEntitiesSummaryPayload,
+    request: Request,
+    response: Response,
+):
+    """Retorna resumos pessoais em lote (sem N+1) para até 200 entidades autorizadas."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        return knowledge_service.get_entities_knowledge_summary(
+            user_id=user["id"],
+            entities=[item.model_dump() for item in payload.entities],
+        )
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.get("/api/knowledge/summary")
+def get_atlas_overview_summary_endpoint(
+    request: Request,
+    response: Response,
+    recent_limit: int = Query(default=6, ge=1, le=20),
+):
+    """Retorna a visão geral agregada e estritamente pessoal do Atlas do usuário autenticado (Fase 5)."""
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        return knowledge_service.get_atlas_overview_summary(
+            user_id=user["id"],
+            recent_limit=recent_limit,
+        )
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+# -------------------------------------------------------------------------
+# 7. PESQUISA INTEGRADA DO ATLAS E GRAFO LOCAL DE CONHECIMENTO (FASE 6)
+# -------------------------------------------------------------------------
+
+@app.get("/api/knowledge/search")
+def search_knowledge_endpoint(
+    request: Request,
+    response: Response,
+    q: str = Query(default="", max_length=MAX_SEARCH_QUERY_LEN),
+    entity_types: Optional[str] = Query(default=None, max_length=128),
+    book_id: Optional[str] = Query(default=None, max_length=128),
+    include_archived: bool = Query(default=False),
+    limit: int = Query(default=DEFAULT_SEARCH_LIMIT, ge=1, le=MAX_SEARCH_LIMIT),
+    offset: int = Query(default=0, ge=0),
+):
+    """
+    Pesquisa integrada do Atlas (KD-008 — Fase 6) sobre conceitos, reflexões,
+    destaques, notas, conexões semânticas e metadados de obras acessíveis,
+    com autorização relacional em tempo de leitura e snippets seguros.
+    """
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        return knowledge_service.search_knowledge(
+            user_id=user["id"],
+            query=q,
+            entity_types=entity_types,
+            book_id=book_id,
+            include_archived=include_archived,
+            limit=limit,
+            offset=offset,
+        )
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+@app.get("/api/knowledge/graph")
+def get_knowledge_graph_endpoint(
+    request: Request,
+    response: Response,
+    entity_type: KnowledgeEntityTypeLiteral = Query(...),
+    entity_id: str = Query(..., min_length=1, max_length=128),
+    depth: int = Query(default=DEFAULT_GRAPH_DEPTH, ge=1, le=2),
+    max_nodes: int = Query(default=DEFAULT_GRAPH_MAX_NODES, ge=1, le=HARD_MAX_GRAPH_NODES),
+    max_edges: int = Query(default=DEFAULT_GRAPH_MAX_EDGES, ge=1, le=HARD_MAX_GRAPH_EDGES),
+    entity_types: Optional[str] = Query(default=None, max_length=128),
+    relation_types: Optional[str] = Query(default=None, max_length=256),
+):
+    """
+    Retorna o subgrafo local de conhecimento centrado em `(entity_type, entity_id)`
+    limitado a 1 ou 2 saltos (`max_nodes <= 80`, `max_edges <= 160`), incluindo
+    a lista textual acessível do mesmo subconjunto autorizado (KD-006 — Fase 6).
+    """
+    user = require_user(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        return knowledge_service.get_knowledge_graph(
+            user_id=user["id"],
+            entity_type=entity_type,
+            entity_id=entity_id,
+            depth=depth,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+            entity_types=entity_types,
+            relation_types=relation_types,
+        )
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+
+# -------------------------------------------------------------------------
+# 8. EXPORTAÇÃO PORTÁTIL DO ATLAS (FASE 7 — KD-009)
+# -------------------------------------------------------------------------
+
+def _cleanup_temp_export_file(path_str: str) -> None:
+    try:
+        if path_str and Path(path_str).exists():
+            Path(path_str).unlink()
+    except OSError:
+        pass
+
+
+def _stream_file_and_cleanup(file_path: str, chunk_size: int = 65536):
+    try:
+        with open(file_path, "rb") as fp:
+            while True:
+                chunk = fp.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+    finally:
+        _cleanup_temp_export_file(file_path)
+
+
+@app.get("/api/knowledge/export")
+def export_knowledge_atlas_endpoint(
+    request: Request,
+    format: Literal["markdown_zip", "json", "csv"] = Query(default="markdown_zip"),
+    wikilinks: bool = Query(default=False),
+    include_archived: bool = Query(default=True),
+):
+    """
+    Exporta o conhecimento pessoal autorizado do Atlas do usuário autenticado
+    em Markdown ZIP (`markdown_zip`), JSON estruturado v2.0 (`json`) ou pacote CSV (`csv`).
+    """
+    user = require_user(request)
+    try:
+        result = knowledge_export_service.generate_atlas_export_file(
+            user_id=user["id"],
+            export_format=format,
+            wikilinks=wikilinks,
+            include_archived=include_archived,
+        )
+    except KnowledgeError as exc:
+        raise _handle_knowledge_error(exc)
+
+    file_path = result["file_path"]
+    filename = result["filename"]
+    return StreamingResponse(
+        _stream_file_and_cleanup(file_path),
+        media_type=result["media_type"],
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+        background=BackgroundTask(_cleanup_temp_export_file, file_path),
+    )
+
 
 
 if __name__ == "__main__":

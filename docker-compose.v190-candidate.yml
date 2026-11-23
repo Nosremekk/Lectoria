@@ -1,0 +1,69 @@
+# =============================================================================
+# Lectoria v1.9.0 — Arquivo Candidato de Docker Compose para Produção (VPS Real)
+# =============================================================================
+# IMPORTANTE:
+# - Alinhado integralmente à topologia real verificada na VPS na Fase 8.C:
+#   - Host: 1 vCPU, 3,8 GiB RAM (sem `cpus: 1.5`).
+#   - Persistência: bind mounts locais em `/storage/*` (NUNCA volumes nomeados
+#     `/app/*`, o que iniciaria a aplicação com banco SQLite vazio).
+#   - Conectividade privada: `tailscale serve` → `http://127.0.0.1:8765`.
+#   - Ownership atual em `./data`: `root:root` (mantido `root` na v1.9.0).
+# - NÃO substitui o `compose.yaml` remoto nem o `docker-compose.yml` genérico.
+# - Documentação: docs/v1.9.0/32-production-configuration-proposal.md
+# =============================================================================
+
+services:
+  lectoria:
+    # Durante a janela de release, utilizar tag imutável (`:v1.9.0`);
+    # retornar a `:stable` somente após validação pós-upgrade e decisão do proprietário.
+    image: ghcr.io/nosremekk/lectoria:v1.9.0
+    container_name: lectoria
+    restart: unless-stopped
+    init: true
+
+    environment:
+      LECTORIA_APP_NAME: Lectoria
+      LECTORIA_HOST: 0.0.0.0
+      LECTORIA_PORT: "8765"
+      LECTORIA_LIBRARY_DIR: /storage/books
+      LECTORIA_DATA_DIR: /storage/data
+      LECTORIA_DB_PATH: /storage/data/lectoria.db
+      LECTORIA_COVERS_DIR: /storage/data/covers
+      LECTORIA_BACKUPS_DIR: /storage/backups
+      LECTORIA_SECURE_COOKIES: "true"
+      TZ: America/Sao_Paulo
+
+    volumes:
+      - ./books:/storage/books
+      - ./data:/storage/data
+      - ./backups:/storage/backups
+
+    ports:
+      - "127.0.0.1:8765:8765"
+
+    # VPS real: 1 vCPU, 3,8 GiB RAM (2,9 GiB livres).
+    # `mem_limit: 1g` amplia margem sobre `768m` sem competir com demais serviços.
+    mem_limit: 1g
+    mem_reservation: 256m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; r = urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=2); assert r.status == 200",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
