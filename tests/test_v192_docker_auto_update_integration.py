@@ -8,6 +8,7 @@ para `deployment/docker-auto-update.sh` (Fase 11.2.5).
 - Nunca utiliza `docker system prune` nem interfere em containers existentes.
 """
 
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -180,17 +181,16 @@ CMD ["sh", "-c", "trap 'exit 0' TERM INT; while true; do sleep 1; done"]
         assert get_ctr_id() == ctr_id_v2
         assert len(backup_marker.read_text().splitlines()) == 1
 
-        # Cenário F — Execuções concorrentes: flock impede conflito
+        # Cenário F — Execuções concorrentes: flock impede conflito (lock via fcntl sem filho órfão)
         lock_file = state_dir / "update.lock"
-        holder = subprocess.Popen(["flock", str(lock_file), "sleep", "5"])
-        try:
-            time.sleep(0.2)
-            res_f = _run(["bash", str(UPDATER_SCRIPT)], env=make_env(), check=False)
-            assert res_f.returncode == 0
-            assert "CONCURRENT_RUN_SKIPPED" in res_f.stdout
-        finally:
-            holder.terminate()
-            holder.wait(timeout=5)
+        with open(lock_file, "a+", encoding="utf-8") as lock_fh:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                res_f = _run(["bash", str(UPDATER_SCRIPT)], env=make_env(), check=False)
+                assert res_f.returncode == 0
+                assert "CONCURRENT_RUN_SKIPPED" in res_f.stdout
+            finally:
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
         # Cenário E — Healthcheck propositalmente inválido (v3): timeout + arquivo blocked
         build_and_push("v3-unhealthy", healthy=False)
