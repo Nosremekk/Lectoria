@@ -7,6 +7,39 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.9.0] - 2026-11-23
+
+### Adicionado (`Added`)
+- **Atlas — Conhecimento Conectado (Schema SQLite v13, `database.py`, `knowledge_service.py`)**:
+  - Migração incremental aditiva `v12 → v13` com backup pré-migração automático (`lectoria_pre_migration_v12_to_v13.db.bak`), rollback atômico e backfill automático de anotações existentes em `knowledge_fts`.
+  - Novas tabelas `concepts` (conceitos pessoais privados por usuário), `reflections` (reflexões autorais em Markdown), `knowledge_links` (8 tipos canônicos de conexão semântica direcionada com justificativa opcional e identidade por UUIDs estáveis) e tabela virtual FTS5 `knowledge_fts` (`tokenize='unicode61 remove_diacritics 2'`), acompanhadas de índices compostos iniciados por `user_id` e 13 triggers de integridade e sincronização.
+  - Resolução centralizada com *Read-Time Authorization* (`resolve_knowledge_entity`), sentinelas neutros para referências indisponíveis e dupla barreira relacional no FTS5 sem vazamento estatístico de IDF entre usuários.
+- **API REST do Atlas (`/api/knowledge/*`, `main.py`, `knowledge_export_service.py`)**:
+  - 23+ endpoints cobrindo CRUD de conceitos, reflexões (com controle otimista `expected_updated_at` / `HTTP 409`), conexões, backlinks, localização assistida (`/lookup`), resumos agregados sem N+1 (`/summary`, `/books/{id}/summary`, `/entities/summary`), pesquisa integrada (`/search` com snippets estruturados e fallback relacional), grafo local (`/graph`, 1–2 saltos, teto 80 nós / 160 arestas) e exportações (`/export`).
+  - Exportação portável (`knowledge_export_service.py`) em **Markdown interligado (`.zip`)** com opção de wikilinks compatíveis com Obsidian, **JSON estruturado v2.0** e **CSV tabular (`.zip`)** com proteção contra *formula injection*, streaming em disco temporário e `BoundedSemaphore(4)` contra sobrecarga.
+- **Interface Integrada do Atlas, Leitores e Caderno de Estudos (`static/js/knowledge*.js`, `reader-knowledge.js`, `book-knowledge.js`)**:
+  - Nova seção principal **Atlas** com 6 subabas (*Visão geral*, *Conceitos*, *Reflexões* com editor Markdown seguro 100% DOM, *Conexões*, *Pesquisa* e *Mapa* SVG local + alternativa textual acessível).
+  - Integração contextual nos leitores PDF e EPUB (`#modal-reader-knowledge`), no Caderno de Estudos (filtros `Todas` / `Conectadas` / `Sem conexões`, chips de conceitos e contadores em lote) e subaba *Conhecimento* sob demanda nos detalhes da obra na Biblioteca.
+- **Suíte de Testes e Benchmarks da v1.9.0 (`tests/test_v190_*.py`, `tests/e2e/test_v190_*.py`, `tests/performance/`)**:
+  - Expansão da suíte automatizada para **359 testes aprovados** (`305` unitários/integração + `54` E2E Playwright) e scripts reproduzíveis de benchmark backend/SQLite/Uvicorn e profiling frontend.
+
+### Otimizado (`Performance`)
+- **Desbloqueio do Event Loop no Uvicorn (`--workers 1`) (`main.py`, `auth_service.py`)**:
+  - Conversão de 174 rotas síncronas bloqueantes de `async def` para `def` + `run_in_threadpool` nas 9 rotas `async def` com `await`/tasks assíncronas, preservando `/api/health` como `async def` puro; latência máxima de `/api/health` durante exportações reduzida de `495,5 ms` para `< 17 ms` (`3,48 ms` na validação final) e paralelismo real do `BoundedSemaphore(4)`.
+  - `threading.Lock` e poda de entradas expiradas no rate limiter de login (`auth_service.py`).
+- **Eliminação de Consultas N+1 e Planos SQL Indexados (`knowledge_service.py`, `knowledge_export_service.py`, `library.py`)**:
+  - Paginação SQL em `list_concepts`/`list_reflections` (`2.004 → 6` SQLs), hidratação em lote + formatação adiada em `search_knowledge`, remoção de loop N+1 em `build_atlas_export_snapshot` (`2.007 → 8` SQLs), `UNION ALL`/`UNION` indexados no grafo e chunking `IN (...)` em blocos de 500 IDs.
+- **Carregamento Inicial do Frontend (`static/js/app.js`)**:
+  - Eliminação de chamadas duplicadas (`/api/discovery/shelves`, `/api/taxonomy/tree`) e carga sob demanda da aba ativa, reduzindo o payload inicial de `/` em `87,8%` (`308,7 KB → 37,7 KB`).
+- **Backup Pré-Restauração WAL-Safe (`backup_service.py`)**:
+  - Uso de `sqlite3.Connection.backup()` em `restore_backup()` e fechamento determinístico `try...finally`.
+
+### Alterado (`Changed`)
+- **Sincronização de Versão e Cache-Busting (`1.9.0`)**: atualização coordenada em `config.APP_VERSION`, `static/index.html`, `static/reader.html`, `static/js/app.js`, documentação canônica e `docker-compose.v190-candidate.yml` (alinhado à VPS real de 1 vCPU / bind mounts `/storage/*`).
+- **Política Operacional de Backups**: backup local diário (`lectoria-backup.service`) mantido como mecanismo principal, complementado por cópia externa manual dos dados essenciais antes de upgrades e migrações (backup remoto Restic/Rclone descontinuado voluntariamente pelo proprietário na Fase 8.D).
+
+---
+
 ## [1.8.0] - 2026-11-17
 
 ### Adicionado (`Added`)

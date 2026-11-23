@@ -752,112 +752,124 @@ def get_books(
 
         if books:
             book_ids = [b["id"] for b in books]
-            placeholders = ",".join("?" for _ in book_ids)
+            chunk_size = 500
 
-            # Anexa coleções
-            cursor.execute(
-                f"""
-                SELECT cb.book_id, c.id, c.name
-                FROM collections c
-                INNER JOIN collection_books cb ON c.id = cb.collection_id
-                WHERE cb.book_id IN ({placeholders}) AND c.user_id = ?
-                ORDER BY c.name COLLATE NOCASE ASC
-                """,
-                (*book_ids, user_id),
-            )
+            # Anexa coleções em lotes seguros contra SQLITE_MAX_VARIABLE_NUMBER
             coll_map: Dict[str, List[Dict[str, Any]]] = {}
-            for row in cursor.fetchall():
-                b_id = row["book_id"]
-                if b_id not in coll_map:
-                    coll_map[b_id] = []
-                coll_map[b_id].append({"id": row["id"], "name": row["name"]})
+            for start in range(0, len(book_ids), chunk_size):
+                chunk = book_ids[start : start + chunk_size]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor.execute(
+                    f"""
+                    SELECT cb.book_id, c.id, c.name
+                    FROM collections c
+                    INNER JOIN collection_books cb ON c.id = cb.collection_id
+                    WHERE cb.book_id IN ({placeholders}) AND c.user_id = ?
+                    ORDER BY c.name COLLATE NOCASE ASC
+                    """,
+                    (*chunk, user_id),
+                )
+                for row in cursor.fetchall():
+                    b_id = row["book_id"]
+                    if b_id not in coll_map:
+                        coll_map[b_id] = []
+                    coll_map[b_id].append({"id": row["id"], "name": row["name"]})
 
             # Anexa categorias gerenciadas em lote (book_categories + categories)
-            cursor.execute(
-                f"""
-                SELECT bc.book_id, c.name AS category, bc.subcategory, bc.is_manual, c.display_order
-                FROM book_categories bc
-                JOIN categories c ON bc.category_id = c.id
-                WHERE bc.book_id IN ({placeholders})
-                ORDER BY c.display_order ASC, c.name COLLATE NOCASE ASC
-                """,
-                book_ids,
-            )
             managed_cat_map: Dict[str, Dict[str, Any]] = {
                 bid: {"categories": [], "subcategories": [], "is_manual": False}
                 for bid in book_ids
             }
-            for row in cursor.fetchall():
-                bid = row["book_id"]
-                cat_name = row["category"]
-                if cat_name and cat_name not in managed_cat_map[bid]["categories"]:
-                    managed_cat_map[bid]["categories"].append(cat_name)
-                if row["subcategory"] and row["subcategory"] not in managed_cat_map[bid]["subcategories"]:
-                    managed_cat_map[bid]["subcategories"].append(row["subcategory"])
-                if row["is_manual"]:
-                    managed_cat_map[bid]["is_manual"] = True
+            for start in range(0, len(book_ids), chunk_size):
+                chunk = book_ids[start : start + chunk_size]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor.execute(
+                    f"""
+                    SELECT bc.book_id, c.name AS category, bc.subcategory, bc.is_manual, c.display_order
+                    FROM book_categories bc
+                    JOIN categories c ON bc.category_id = c.id
+                    WHERE bc.book_id IN ({placeholders})
+                    ORDER BY c.display_order ASC, c.name COLLATE NOCASE ASC
+                    """,
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    bid = row["book_id"]
+                    cat_name = row["category"]
+                    if cat_name and cat_name not in managed_cat_map[bid]["categories"]:
+                        managed_cat_map[bid]["categories"].append(cat_name)
+                    if row["subcategory"] and row["subcategory"] not in managed_cat_map[bid]["subcategories"]:
+                        managed_cat_map[bid]["subcategories"].append(row["subcategory"])
+                    if row["is_manual"]:
+                        managed_cat_map[bid]["is_manual"] = True
 
             # Anexa assuntos bibliográficos em lote (evita N+1 queries)
-            cursor.execute(
-                f"""
-                SELECT bs.book_id, s.name, s.category, s.subcategory, s.genre, s.origin, s.period, bs.is_manual
-                FROM book_subjects bs
-                JOIN subjects s ON bs.subject_id = s.id
-                WHERE bs.book_id IN ({placeholders})
-                ORDER BY s.category, s.name
-                """,
-                book_ids,
-            )
             tax_map: Dict[str, Dict[str, Any]] = {
                 bid: {"categories": set(), "subcategories": set(), "genres": set(), "origins": set(), "subjects": [], "is_manual": False}
                 for bid in book_ids
             }
-            for row in cursor.fetchall():
-                bid = row["book_id"]
-                if row["category"] and row["category"].lower() != "geral":
-                    tax_map[bid]["categories"].add(row["category"])
-                if row["subcategory"]:
-                    tax_map[bid]["subcategories"].add(row["subcategory"])
-                if row["genre"]:
-                    tax_map[bid]["genres"].add(row["genre"])
-                if row["origin"]:
-                    tax_map[bid]["origins"].add(row["origin"])
-                if row["is_manual"]:
-                    tax_map[bid]["is_manual"] = True
-                tax_map[bid]["subjects"].append(row["name"])
+            for start in range(0, len(book_ids), chunk_size):
+                chunk = book_ids[start : start + chunk_size]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor.execute(
+                    f"""
+                    SELECT bs.book_id, s.name, s.category, s.subcategory, s.genre, s.origin, s.period, bs.is_manual
+                    FROM book_subjects bs
+                    JOIN subjects s ON bs.subject_id = s.id
+                    WHERE bs.book_id IN ({placeholders})
+                    ORDER BY s.category, s.name
+                    """,
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    bid = row["book_id"]
+                    if row["category"] and row["category"].lower() != "geral":
+                        tax_map[bid]["categories"].add(row["category"])
+                    if row["subcategory"]:
+                        tax_map[bid]["subcategories"].add(row["subcategory"])
+                    if row["genre"]:
+                        tax_map[bid]["genres"].add(row["genre"])
+                    if row["origin"]:
+                        tax_map[bid]["origins"].add(row["origin"])
+                    if row["is_manual"]:
+                        tax_map[bid]["is_manual"] = True
+                    tax_map[bid]["subjects"].append(row["name"])
 
             # Anexa leituras coletivas ativas do usuário
             cr_map: Dict[str, List[Dict[str, Any]]] = {}
             try:
-                cursor.execute(
-                    f"""
-                    SELECT
-                        cr.book_id, cr.id AS read_id, cr.club_id, cr.title AS read_title,
-                        cr.status AS read_status, cr.start_date, cr.end_date,
-                        c.name AS club_name,
-                        (SELECT COUNT(*) FROM collective_read_members crm2 WHERE crm2.read_id = cr.id) AS members_count
-                    FROM collective_reads cr
-                    JOIN collective_read_members crm ON cr.id = crm.read_id
-                    JOIN reading_clubs c ON cr.club_id = c.id
-                    WHERE cr.book_id IN ({placeholders}) AND crm.user_id = ? AND cr.status != 'cancelled'
-                    ORDER BY cr.created_at DESC;
-                    """,
-                    (*book_ids, user_id),
-                )
-                for cr_row in cursor.fetchall():
-                    cbid = cr_row["book_id"]
-                    if cbid not in cr_map:
-                        cr_map[cbid] = []
-                    cr_map[cbid].append({
-                        "read_id": cr_row["read_id"],
-                        "club_id": cr_row["club_id"],
-                        "read_title": cr_row["read_title"],
-                        "read_status": cr_row["read_status"],
-                        "start_date": cr_row["start_date"],
-                        "end_date": cr_row["end_date"],
-                        "club_name": cr_row["club_name"],
-                        "members_count": cr_row["members_count"],
-                    })
+                for start in range(0, len(book_ids), chunk_size):
+                    chunk = book_ids[start : start + chunk_size]
+                    placeholders = ",".join("?" for _ in chunk)
+                    cursor.execute(
+                        f"""
+                        SELECT
+                            cr.book_id, cr.id AS read_id, cr.club_id, cr.title AS read_title,
+                            cr.status AS read_status, cr.start_date, cr.end_date,
+                            c.name AS club_name,
+                            (SELECT COUNT(*) FROM collective_read_members crm2 WHERE crm2.read_id = cr.id) AS members_count
+                        FROM collective_reads cr
+                        JOIN collective_read_members crm ON cr.id = crm.read_id
+                        JOIN reading_clubs c ON cr.club_id = c.id
+                        WHERE cr.book_id IN ({placeholders}) AND crm.user_id = ? AND cr.status != 'cancelled'
+                        ORDER BY cr.created_at DESC;
+                        """,
+                        (*chunk, user_id),
+                    )
+                    for cr_row in cursor.fetchall():
+                        cbid = cr_row["book_id"]
+                        if cbid not in cr_map:
+                            cr_map[cbid] = []
+                        cr_map[cbid].append({
+                            "read_id": cr_row["read_id"],
+                            "club_id": cr_row["club_id"],
+                            "read_title": cr_row["read_title"],
+                            "read_status": cr_row["read_status"],
+                            "start_date": cr_row["start_date"],
+                            "end_date": cr_row["end_date"],
+                            "club_name": cr_row["club_name"],
+                            "members_count": cr_row["members_count"],
+                        })
             except Exception:
                 cr_map = {}
 

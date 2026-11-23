@@ -11,8 +11,8 @@ Antes de propor ou aplicar qualquer modificação, consulte os documentos técni
 O **Lectoria** é uma aplicação *self-hosted* de biblioteca digital e leitura colaborativa para documentos **PDF** e livros digitais **EPUB**.
 - **Foco Arquitetural**: Sobriedade estética editorial, velocidade, baixo consumo de memória RAM, CPU e I/O de disco, permitindo convivência pacífica com servidores de mídia (como Jellyfin) em hardware doméstico modesto (ex: Intel Celeron 847).
 - **Licença**: Código aberto sob licença MIT.
-- **Versão Atual**: `1.8.0` (base estável anterior: `1.7.0`).
-- **Schema SQLite**: Versão 12.
+- **Versão Atual**: `1.9.0` (base estável anterior: `1.8.0`).
+- **Schema SQLite**: Versão 13.
 
 ---
 
@@ -33,8 +33,10 @@ O **Lectoria** é uma aplicação *self-hosted* de biblioteca digital e leitura 
 ## 3. Mapa de Módulos do Sistema
 
 ### Backend (Python)
-- `main.py`: Ponto de entrada FastAPI, injeção de dependências (`require_user`, `require_admin`), middleware CSRF, rotas REST e resolução leve de arquivos (`/api/books/{id}/file`).
-- `database.py`: Inicialização do banco, schema SQLite, migrações incrementais (`_apply_migration_v11`), triggers e foreign keys.
+- `main.py`: Ponto de entrada FastAPI, injeção de dependências (`require_user`, `require_admin`), middleware CSRF, rotas REST (rotas síncronas em `def` / `run_in_threadpool` para preservar o event loop do Uvicorn `--workers 1`; `/api/health` em `async def` puro) e resolução leve de arquivos (`/api/books/{id}/file`).
+- `database.py`: Inicialização do banco, schema SQLite v13, migrações incrementais (`_apply_migration_v11`..`v13`), triggers e foreign keys.
+- `knowledge_service.py`: Domínio do **Atlas** (conceitos, reflexões, conexões semânticas, backlinks, *Read-Time Authorization*, pesquisa FTS5 + fallback relacional e grafo local).
+- `knowledge_export_service.py`: Exportação portável do Atlas em Markdown interligado (`.zip`), JSON v2.0 e CSV tabular com streaming em disco temporário e `BoundedSemaphore(4)`.
 - `shared_reading_service.py`: Regras de negócio da Leitura Compartilhada (tópicos, respostas encadeadas, metas, progresso voluntário e citações).
 - `clubs_service.py`: Ciclo de vida de Clubes de Leitura, papéis (`owner`, `moderator`, `member`), convites e leituras coletivas.
 - `social_service.py`: Camada comunitária "Nossa Biblioteca" (resenhas, avaliações, favoritos, recomendações).
@@ -46,9 +48,10 @@ O **Lectoria** é uma aplicação *self-hosted* de biblioteca digital e leitura 
 - `config.py`: Variáveis de ambiente (`LECTORIA_*`), diretórios persistentes e constantes de runtime.
 
 ### Frontend (Vanilla JS & HTML)
-- `static/index.html`: Shell principal da biblioteca, abas de Descoberta, Acervo, Nossa Biblioteca e Clubes.
-- `static/reader.html`: Interface do leitor adaptativo para PDF e EPUB (desktop, tablet e mobile).
-- `static/js/app.js`: Lógica da aplicação principal, cache leve em memória, renderização progressiva em lotes (36 livros).
+- `static/index.html`: Shell principal da biblioteca, abas de Descoberta, Acervo, Nossa Biblioteca, Clubes e **Atlas**.
+- `static/reader.html`: Interface do leitor adaptativo para PDF e EPUB (desktop, tablet e mobile) com integração ao Atlas.
+- `static/js/app.js`: Lógica da aplicação principal, cache leve em memória, carregamento sob demanda por aba ativa e renderização progressiva em lotes (36 livros).
+- `static/js/knowledge-api.js`, `static/js/knowledge.js`, `static/js/book-knowledge.js`, `static/js/reader-knowledge.js`: Camada cliente do **Atlas** (Visão Geral, Conceitos, Reflexões Markdown seguras, Conexões, Pesquisa FTS5, Mapa SVG local, Exportação e integrações nos leitores/Caderno/Biblioteca).
 - `static/js/shared_reading.js`: Painel integrado da Leitura Coletiva (Visão Geral, Discussões, Metas, Citações), controle de spoilers e `AbortController`.
 - `static/js/reader.js`: Motor do leitor híbrido (PDF.js/EPUB.js), navegação por hash (`#page=N`, `#cfi=...`), seleção e compartilhamento.
 - `static/css/style.css`: Folha de estilo consolidada com temas Claro, Escuro e Sépia, contenção de layout e responsividade (320px–1920px).

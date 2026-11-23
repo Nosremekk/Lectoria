@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import hashlib
 from pathlib import Path
 import secrets
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -36,40 +37,62 @@ class UserAlreadyExistsError(Exception):
 
 # Controle de tentativas de login em memória para proteção simples contra força bruta
 _FAILED_LOGINS: Dict[str, List[float]] = {}
+_RATE_LIMIT_LOCK = threading.Lock()
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_DURATION_SECONDS = 300  # 5 minutos
+
+
+def _prune_expired_failed_logins_locked(now: float) -> None:
+    """Remove entradas expiradas para limitar o uso de memória sob múltiplas falhas."""
+    expired = [
+        k for k, ts_list in _FAILED_LOGINS.items()
+        if not any(now - t < LOCKOUT_DURATION_SECONDS for t in ts_list)
+    ]
+    for k in expired:
+        _FAILED_LOGINS.pop(k, None)
 
 
 def _check_rate_limit(key: str) -> None:
     """Verifica se o identificador (IP ou username) excedeu o limite de tentativas."""
     now = time.time()
-    if key in _FAILED_LOGINS:
-        # Filtra tentativas dentro da janela
-        recent = [t for t in _FAILED_LOGINS[key] if now - t < LOCKOUT_DURATION_SECONDS]
-        _FAILED_LOGINS[key] = recent
-        if len(recent) >= MAX_FAILED_ATTEMPTS:
-            wait_seconds = int(LOCKOUT_DURATION_SECONDS - (now - recent[0]))
-            raise RateLimitError(
-                f"Muitas tentativas incorretas. Acesso bloqueado temporariamente por {wait_seconds} segundos."
-            )
+    with _RATE_LIMIT_LOCK:
+        if len(_FAILED_LOGINS) > 1000:
+            _prune_expired_failed_logins_locked(now)
+        if key in _FAILED_LOGINS:
+            # Filtra tentativas dentro da janela
+            recent = [t for t in _FAILED_LOGINS[key] if now - t < LOCKOUT_DURATION_SECONDS]
+            if recent:
+                _FAILED_LOGINS[key] = recent
+            else:
+                _FAILED_LOGINS.pop(key, None)
+            if len(recent) >= MAX_FAILED_ATTEMPTS:
+                wait_seconds = int(LOCKOUT_DURATION_SECONDS - (now - recent[0]))
+                raise RateLimitError(
+                    f"Muitas tentativas incorretas. Acesso bloqueado temporariamente por {wait_seconds} segundos."
+                )
 
 
 def _record_failed_attempt(key: str) -> None:
     """Registra uma tentativa falha de login."""
     now = time.time()
-    if key not in _FAILED_LOGINS:
-        _FAILED_LOGINS[key] = []
-    _FAILED_LOGINS[key].append(now)
+    with _RATE_LIMIT_LOCK:
+        if len(_FAILED_LOGINS) > 1000:
+            _prune_expired_failed_logins_locked(now)
+        if key not in _FAILED_LOGINS:
+            _FAILED_LOGINS[key] = []
+        _FAILED_LOGINS[key].append(now)
 
 
 def _clear_failed_attempts(key: str) -> None:
     """Limpa tentativas após login bem-sucedido."""
-    _FAILED_LOGINS.pop(key, None)
+    with _RATE_LIMIT_LOCK:
+        _FAILED_LOGINS.pop(key, None)
 
 
 def clear_failed_logins() -> None:
     """Limpa todas as tentativas falhas registradas (utilizado em testes)."""
-    _FAILED_LOGINS.clear()
+    with _RATE_LIMIT_LOCK:
+        _FAILED_LOGINS.clear()
 
 
 def hash_password(password: str) -> str:

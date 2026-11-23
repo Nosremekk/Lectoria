@@ -6,7 +6,7 @@ Este documento descreve a integração técnica dos motores de leitura **PDF.js*
 
 ## 1. Visão Geral dos Motores
 
-O leitor adaptativo do Lectoria reside em [static/reader.html](file:///home/vini/Jellyfin%20livros/static/reader.html) e [static/js/reader.js](file:///home/vini/Jellyfin%20livros/static/js/reader.js). A renderização é 100% executada no navegador do cliente sem conversão pesada no servidor.
+O leitor adaptativo do Lectoria reside em [static/reader.html](file:///home/vini/Jellyfin%20livros/static/reader.html), [static/js/reader.js](file:///home/vini/Jellyfin%20livros/static/js/reader.js) e [static/js/reader-knowledge.js](file:///home/vini/Jellyfin%20livros/static/js/reader-knowledge.js) (integração contextual com o **Atlas v1.9.0**: associação de conceitos, conexões semânticas, backlinks e filtros no Caderno de Estudos sem consultas N+1). A renderização é 100% executada no navegador do cliente sem conversão pesada no servidor.
 
 | Motor | Formato Suportado | Biblioteca Base | Localizador URL |
 | :--- | :--- | :--- | :--- |

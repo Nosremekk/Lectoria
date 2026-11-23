@@ -66,7 +66,9 @@ Este documento descreve os principais grupos de rotas REST, contratos de requisi
 
 ---
 
-## 5. Leitura Compartilhada (`/api/collective-reads/{read_id}/*`)
+## 5. Leitura Compartilhada (`/api/collective-reads/{read_id}/*`) e Atlas (`/api/knowledge/*`)
+
+> **Domínio do Atlas (v1.9.0)**: Os contratos completos dos 23+ endpoints de Conhecimento Conectado (`/api/knowledge/concepts`, `/reflections`, `/links`, `/entities/{type}/{id}/connections`, `/lookup`, `/summary`, `/books/{id}/summary`, `/entities/summary`, `/search`, `/graph` e `/export`) estão documentados em [docs/v1.9.0/13-knowledge-api-contracts.md](v1.9.0/13-knowledge-api-contracts.md), [22-atlas-search-and-fts5.md](v1.9.0/22-atlas-search-and-fts5.md), [23-atlas-local-knowledge-graph.md](v1.9.0/23-atlas-local-knowledge-graph.md) e [25-atlas-export-formats.md](v1.9.0/25-atlas-export-formats.md). Todos exigem sessão autenticada, cabeçalho `x-csrf-token` (bloqueado em query string), `ConfigDict(extra="forbid")` e `Cache-Control: private, no-store`.
 
 Grupo de 18 rotas REST introduzidas na v1.7.0 gerenciadas por `shared_reading_service.py`:
 

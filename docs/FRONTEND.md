@@ -23,7 +23,11 @@ static/
 ├── css/
 │   └── style.css            # Folha de estilo consolidada e responsiva
 ├── js/
-│   ├── app.js               # Catálogo da biblioteca, busca, filtros e modais gerais
+│   ├── app.js               # Catálogo da biblioteca, busca, filtros, abas sob demanda e modais gerais
+│   ├── knowledge-api.js     # Cliente REST compartilhado do Atlas e renderizador Markdown seguro (v1.9.0)
+│   ├── knowledge.js         # Seção principal Atlas: Visão Geral, Conceitos, Reflexões, Conexões, Pesquisa, Mapa SVG e Exportação (v1.9.0)
+│   ├── book-knowledge.js    # Subaba contextual Conhecimento no modal de detalhes da obra (v1.9.0)
+│   ├── reader-knowledge.js  # Integração contextual do Atlas nos leitores PDF/EPUB e Caderno de Estudos (v1.9.0)
 │   ├── shared_reading.js    # Painel integrado de Leitura Coletiva (v1.7.0)
 │   └── reader.js            # Motores de renderização PDF.js e EPUB.js
 ├── index.html               # Aplicação principal (SPA sem hash router pesado)

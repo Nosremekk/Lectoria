@@ -25,9 +25,9 @@ def _login_user(client: TestClient, username: str, password: str) -> dict:
 
 def test_v151_frontend_backend_version_alignment(client):
     """Confirma que backend, index.html, reader.html e app.js declaram e servem a versão da aplicação em sincronia."""
-    allowed_versions = ("1.5.1", "1.5.2", "1.6.0", "1.6.1", "1.6.2", "1.6.3", "1.7.0", "1.8.0")
+    allowed_versions = ("1.5.1", "1.5.2", "1.6.0", "1.6.1", "1.6.2", "1.6.3", "1.7.0", "1.8.0", "1.9.0")
     assert config.APP_VERSION in allowed_versions
-    assert config.APP_VERSION == "1.8.0"
+    assert config.APP_VERSION == "1.9.0"
 
     status_res = client.get("/api/auth/status")
     assert status_res.status_code == 200
@@ -37,6 +37,9 @@ def test_v151_frontend_backend_version_alignment(client):
     assert index_res.status_code == 200
     html = index_res.text
     assert f'data-app-version="{config.APP_VERSION}"' in html
+    assert f'/static/js/knowledge-api.js?v={config.APP_VERSION}' in html
+    assert f'/static/js/book-knowledge.js?v={config.APP_VERSION}' in html
+    assert f'/static/js/knowledge.js?v={config.APP_VERSION}' in html
     assert f'/static/js/app.js?v={config.APP_VERSION}' in html
     assert f'/static/js/shared_reading.js?v={config.APP_VERSION}' in html
     assert f'/static/css/style.css?v={config.APP_VERSION}' in html
@@ -46,6 +49,8 @@ def test_v151_frontend_backend_version_alignment(client):
         reader_html_path = Path(__file__).resolve().parent.parent / "static" / "reader.html"
     reader_html = reader_html_path.read_text(encoding="utf-8")
     assert f'data-app-version="{config.APP_VERSION}"' in reader_html
+    assert f'/static/js/knowledge-api.js?v={config.APP_VERSION}' in reader_html
+    assert f'/static/js/reader-knowledge.js?v={config.APP_VERSION}' in reader_html
     assert f'/static/js/reader.js?v={config.APP_VERSION}' in reader_html
     assert f'/static/css/style.css?v={config.APP_VERSION}' in reader_html
 

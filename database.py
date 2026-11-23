@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Generator, Optional
 import config
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -155,6 +155,10 @@ def init_db(db_path: Optional[Path] = None) -> None:
             if current_version < 12:
                 _apply_migration_v12(cursor)
                 cursor.execute("INSERT INTO schema_migrations (version) VALUES (12);")
+
+            if current_version < 13:
+                _apply_migration_v13(cursor)
+                cursor.execute("INSERT INTO schema_migrations (version) VALUES (13);")
 
             conn.commit()
         except Exception:
@@ -1595,6 +1599,416 @@ def _apply_migration_v12(cursor: sqlite3.Cursor) -> None:
     cursor.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_bookmarks_book_user_pos ON bookmarks(book_id, user_id, page, COALESCE(epub_cfi, ''));"
     )
+
+
+def _apply_migration_v13(cursor: sqlite3.Cursor) -> None:
+    """
+    Migração v13 (v1.9.0 — Conhecimento Conectado / Seção Atlas):
+    1. Cria a tabela `concepts` (conceitos autorais privados isolados por `user_id`).
+    2. Cria a tabela `reflections` (reflexões autorais em Markdown isoladas por `user_id`).
+    3. Cria a tabela `knowledge_links` (conexões semânticas tipadas e referências internas por UUID).
+    4. Cria índices compostos iniciados por `user_id` para consultas O(log N) sem full scan.
+    5. Cria a tabela virtual `knowledge_fts` (SQLite FTS5 com `tokenize='unicode61 remove_diacritics 2'`)
+       para pesquisa integrada insensível a acentos e caixa em língua portuguesa.
+    6. Cria triggers SQLite de integridade referencial polimórfica e sincronização automática com `knowledge_fts`,
+       preservando vínculos e justificativas autorais de terceiros quando uma anotação pública deixa de estar disponível.
+    7. Popula inicialmente `knowledge_fts` com destaques, notas, conceitos, reflexões e justificativas já existentes.
+    """
+    # 1. Tabela de Conceitos Pessoais (KD-002)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS concepts (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL CHECK (length(trim(name)) >= 1 AND length(name) <= 160),
+            normalized_name TEXT NOT NULL CHECK (length(trim(normalized_name)) >= 1 AND length(normalized_name) <= 160),
+            description TEXT NOT NULL DEFAULT '' CHECK (length(description) <= 10000),
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            color TEXT NOT NULL DEFAULT '#d4a853',
+            is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_concepts_user_norm_name ON concepts(user_id, normalized_name);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_concepts_user_updated ON concepts(user_id, is_archived, updated_at DESC, id ASC);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_concepts_user_created ON concepts(user_id, created_at DESC, id ASC);"
+    )
+
+    # 2. Tabela de Reflexões Autorais (KD-005)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reflections (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            title TEXT NOT NULL CHECK (length(trim(title)) >= 1 AND length(title) <= 300),
+            body_markdown TEXT NOT NULL DEFAULT '' CHECK (length(body_markdown) <= 50000),
+            primary_book_id TEXT NULL REFERENCES books(id) ON DELETE SET NULL,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1)),
+            is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reflections_user_updated ON reflections(user_id, is_archived, is_pinned DESC, updated_at DESC, id ASC);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reflections_user_created ON reflections(user_id, created_at DESC, id ASC);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reflections_user_book ON reflections(user_id, primary_book_id);"
+    )
+
+    # 3. Tabela de Conexões Semânticas e Referências Internas (KD-003 e KD-004)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_links (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            source_type TEXT NOT NULL CHECK (source_type IN ('concept', 'reflection', 'highlight', 'note', 'book')),
+            source_id TEXT NOT NULL CHECK (length(trim(source_id)) >= 1),
+            target_type TEXT NOT NULL CHECK (target_type IN ('concept', 'reflection', 'highlight', 'note', 'book')),
+            target_id TEXT NOT NULL CHECK (length(trim(target_id)) >= 1),
+            relation_type TEXT NOT NULL DEFAULT 'relates_to' CHECK (
+                relation_type IN (
+                    'complements', 'contradicts', 'exemplifies', 'grounds',
+                    'develops', 'references', 'questions', 'relates_to'
+                )
+            ),
+            rationale TEXT NOT NULL DEFAULT '' CHECK (length(rationale) <= 2000),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CHECK (NOT (source_type = target_type AND source_id = target_id))
+        );
+        """
+    )
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_links_tuple
+        ON knowledge_links(user_id, source_type, source_id, target_type, target_id, relation_type);
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_klinks_user_source ON knowledge_links(user_id, source_type, source_id, created_at DESC, id ASC);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_klinks_user_target ON knowledge_links(user_id, target_type, target_id, created_at DESC, id ASC);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_klinks_user_rel ON knowledge_links(user_id, relation_type, updated_at DESC, id ASC);"
+    )
+
+    # 4. Tabela Virtual SQLite FTS5 para Pesquisa Integrada (KD-008)
+    cursor.execute(
+        """
+        CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+            entity_type UNINDEXED,
+            entity_id UNINDEXED,
+            user_id UNINDEXED,
+            book_id UNINDEXED,
+            title,
+            body,
+            tags,
+            tokenize='unicode61 remove_diacritics 2'
+        );
+        """
+    )
+
+    # 5. Triggers de Sincronização FTS5 e Integridade Referencial Polimórfica
+    # 5.1. Conceitos -> FTS e limpeza de knowledge_links do próprio usuário
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_concepts_ai_fts
+        AFTER INSERT ON concepts
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'concept' AND entity_id = NEW.id;
+            INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+            VALUES ('concept', NEW.id, CAST(NEW.user_id AS TEXT), '', NEW.name, NEW.description, NEW.tags_json);
+        END;
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_concepts_au_fts
+        AFTER UPDATE ON concepts
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'concept' AND entity_id = NEW.id;
+            INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+            VALUES ('concept', NEW.id, CAST(NEW.user_id AS TEXT), '', NEW.name, NEW.description, NEW.tags_json);
+        END;
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_concepts_ad_cleanup
+        AFTER DELETE ON concepts
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'concept' AND entity_id = OLD.id;
+            DELETE FROM knowledge_links
+            WHERE user_id = OLD.user_id
+              AND ((source_type = 'concept' AND source_id = OLD.id)
+                   OR (target_type = 'concept' AND target_id = OLD.id));
+        END;
+        """
+    )
+
+    # 5.2. Reflexões -> FTS e limpeza de knowledge_links do próprio usuário
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_reflections_ai_fts
+        AFTER INSERT ON reflections
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'reflection' AND entity_id = NEW.id;
+            INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+            VALUES ('reflection', NEW.id, CAST(NEW.user_id AS TEXT), COALESCE(NEW.primary_book_id, ''), NEW.title, NEW.body_markdown, NEW.tags_json);
+        END;
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_reflections_au_fts
+        AFTER UPDATE ON reflections
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'reflection' AND entity_id = NEW.id;
+            INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+            VALUES ('reflection', NEW.id, CAST(NEW.user_id AS TEXT), COALESCE(NEW.primary_book_id, ''), NEW.title, NEW.body_markdown, NEW.tags_json);
+        END;
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_reflections_ad_cleanup
+        AFTER DELETE ON reflections
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'reflection' AND entity_id = OLD.id;
+            DELETE FROM knowledge_links
+            WHERE user_id = OLD.user_id
+              AND ((source_type = 'reflection' AND source_id = OLD.id)
+                   OR (target_type = 'reflection' AND target_id = OLD.id));
+        END;
+        """
+    )
+
+    # 5.3. Destaques (highlights) -> FTS e limpeza segura (preservando links de terceiros e links com justificativa)
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_highlights_ai_fts
+        AFTER INSERT ON highlights
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'highlight' AND entity_id = NEW.id;
+            INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+            VALUES (
+                'highlight',
+                NEW.id,
+                CAST(NEW.user_id AS TEXT),
+                NEW.book_id,
+                COALESCE(NEW.chapter_label, ''),
+                COALESCE(NEW.selected_text, '') || ' ' || COALESCE(NEW.text_context, ''),
+                ''
+            );
+        END;
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_highlights_au_fts
+        AFTER UPDATE ON highlights
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'highlight' AND entity_id = NEW.id;
+            INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+            VALUES (
+                'highlight',
+                NEW.id,
+                CAST(NEW.user_id AS TEXT),
+                NEW.book_id,
+                COALESCE(NEW.chapter_label, ''),
+                COALESCE(NEW.selected_text, '') || ' ' || COALESCE(NEW.text_context, ''),
+                ''
+            );
+        END;
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_highlights_ad_cleanup
+        AFTER DELETE ON highlights
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'highlight' AND entity_id = OLD.id;
+            DELETE FROM knowledge_links
+            WHERE user_id = OLD.user_id
+              AND trim(COALESCE(rationale, '')) = ''
+              AND ((source_type = 'highlight' AND source_id = OLD.id)
+                   OR (target_type = 'highlight' AND target_id = OLD.id));
+        END;
+        """
+    )
+
+    # 5.4. Notas (notes) -> FTS e limpeza segura (preservando links de terceiros e links com justificativa)
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_notes_ai_fts
+        AFTER INSERT ON notes
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'note' AND entity_id = NEW.id;
+            INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+            VALUES (
+                'note',
+                NEW.id,
+                CAST(NEW.user_id AS TEXT),
+                NEW.book_id,
+                COALESCE(NEW.chapter_label, ''),
+                COALESCE(NEW.content, ''),
+                ''
+            );
+        END;
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_notes_au_fts
+        AFTER UPDATE ON notes
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'note' AND entity_id = NEW.id;
+            INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+            VALUES (
+                'note',
+                NEW.id,
+                CAST(NEW.user_id AS TEXT),
+                NEW.book_id,
+                COALESCE(NEW.chapter_label, ''),
+                COALESCE(NEW.content, ''),
+                ''
+            );
+        END;
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_notes_ad_cleanup
+        AFTER DELETE ON notes
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'note' AND entity_id = OLD.id;
+            DELETE FROM knowledge_links
+            WHERE user_id = OLD.user_id
+              AND trim(COALESCE(rationale, '')) = ''
+              AND ((source_type = 'note' AND source_id = OLD.id)
+                   OR (target_type = 'note' AND target_id = OLD.id));
+        END;
+        """
+    )
+
+    # 5.5. Conexões (knowledge_links) -> FTS para indexar justificativas autorais (rationale)
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_klinks_ai_fts
+        AFTER INSERT ON knowledge_links
+        WHEN length(trim(COALESCE(NEW.rationale, ''))) > 0
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'link' AND entity_id = NEW.id;
+            INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+            VALUES ('link', NEW.id, CAST(NEW.user_id AS TEXT), '', NEW.relation_type, NEW.rationale, '');
+        END;
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_klinks_au_fts
+        AFTER UPDATE ON knowledge_links
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'link' AND entity_id = NEW.id;
+            INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+            SELECT 'link', NEW.id, CAST(NEW.user_id AS TEXT), '', NEW.relation_type, NEW.rationale, ''
+            WHERE length(trim(COALESCE(NEW.rationale, ''))) > 0;
+        END;
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_klinks_ad_fts
+        AFTER DELETE ON knowledge_links
+        BEGIN
+            DELETE FROM knowledge_fts WHERE entity_type = 'link' AND entity_id = OLD.id;
+        END;
+        """
+    )
+
+    # 5.6. Limpeza de FTS e dados órfãos quando um usuário é excluído
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users';")
+    if cursor.fetchone():
+        cursor.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_users_ad_knowledge_fts
+            AFTER DELETE ON users
+            BEGIN
+                DELETE FROM knowledge_fts WHERE user_id = CAST(OLD.id AS TEXT);
+                DELETE FROM highlights WHERE user_id = OLD.id;
+                DELETE FROM notes WHERE user_id = OLD.id;
+            END;
+            """
+        )
+
+    # 6. População inicial do índice knowledge_fts com registros já existentes (idempotente)
+    cursor.execute("DELETE FROM knowledge_fts;")
+    cursor.execute(
+        """
+        INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+        SELECT 'concept', id, CAST(user_id AS TEXT), '', name, description, tags_json
+        FROM concepts;
+        """
+    )
+    cursor.execute(
+        """
+        INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+        SELECT 'reflection', id, CAST(user_id AS TEXT), COALESCE(primary_book_id, ''), title, body_markdown, tags_json
+        FROM reflections;
+        """
+    )
+    cursor.execute(
+        """
+        INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+        SELECT
+            'highlight',
+            id,
+            CAST(user_id AS TEXT),
+            book_id,
+            COALESCE(chapter_label, ''),
+            COALESCE(selected_text, '') || ' ' || COALESCE(text_context, ''),
+            ''
+        FROM highlights;
+        """
+    )
+    cursor.execute(
+        """
+        INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+        SELECT
+            'note',
+            id,
+            CAST(user_id AS TEXT),
+            book_id,
+            COALESCE(chapter_label, ''),
+            COALESCE(content, ''),
+            ''
+        FROM notes;
+        """
+    )
+    cursor.execute(
+        """
+        INSERT INTO knowledge_fts (entity_type, entity_id, user_id, book_id, title, body, tags)
+        SELECT 'link', id, CAST(user_id AS TEXT), '', relation_type, rationale, ''
+        FROM knowledge_links
+        WHERE length(trim(COALESCE(rationale, ''))) > 0;
+        """
+    )
+
 
 
 

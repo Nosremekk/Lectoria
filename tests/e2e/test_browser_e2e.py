@@ -164,8 +164,8 @@ def e2e_server():
     proc = subprocess.Popen(
         cmd,
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         cwd=str(Path(__file__).resolve().parent.parent.parent),
     )
 
@@ -1113,10 +1113,11 @@ def test_v160_reading_clubs_and_collective_reads_multiuser(e2e_server, browser_i
 
     # Alice alterna para a aba de Participantes e clica em Convidar
     page_a.click("#club-tab-members")
-    page_a.wait_for_timeout(300)
+    page_a.wait_for_selector("#btn-club-invite-user", state="visible", timeout=5000)
     assert page_a.is_visible("#btn-club-invite-user"), "Botão de convite deve estar disponível para proprietário em clube privado"
     page_a.click("#btn-club-invite-user")
-    page_a.wait_for_timeout(400)
+    page_a.wait_for_selector("#modal-club-invite.active", state="visible", timeout=5000)
+    page_a.wait_for_function("() => (document.getElementById('invite-user-select')?.options.length || 0) > 1", timeout=5000)
 
     # Seleciona User B (Bob) no dropdown de convite
     assert page_a.is_visible("#modal-club-invite"), "Modal de convite deve abrir"
@@ -1128,7 +1129,7 @@ def test_v160_reading_clubs_and_collective_reads_multiuser(e2e_server, browser_i
     assert bob_option, f"Bob deve estar listado nos candidatos a convite: {options}"
     page_a.select_option("#invite-user-select", bob_option["value"])
     page_a.click("#btn-confirm-invite-modal")
-    page_a.wait_for_timeout(600)
+    page_a.wait_for_function("() => !document.getElementById('modal-club-invite')?.classList.contains('active')", timeout=5000)
 
     # =========================================================================
     # FASE 2: USER B RECEBE, VISUALIZA E ACEITA O CONVITE
@@ -1139,10 +1140,10 @@ def test_v160_reading_clubs_and_collective_reads_multiuser(e2e_server, browser_i
     page_b.on("dialog", lambda d: d.accept())
 
     page_b.goto(base_url)
-    page_b.wait_for_timeout(400)
+    page_b.wait_for_selector("#tab-nav-clubs", state="visible", timeout=5000)
 
     page_b.click("#tab-nav-clubs")
-    page_b.wait_for_timeout(400)
+    page_b.wait_for_selector("#club-invites-banner", state="visible", timeout=5000)
 
     # Banner de convites pendentes deve estar visível com o convite
     assert page_b.is_visible("#club-invites-banner"), "Banner de convites pendentes deve ser exibido para User B"
@@ -1151,7 +1152,7 @@ def test_v160_reading_clubs_and_collective_reads_multiuser(e2e_server, browser_i
 
     # User B clica em 'Aceitar' convite
     page_b.click(".btn-accept-invite")
-    page_b.wait_for_timeout(600)
+    page_b.wait_for_selector("#club-detail-view", state="visible", timeout=5000)
 
     # User B é imediatamente direcionado para o clube privado
     assert page_b.is_visible("#club-detail-view"), "Detalhes do clube devem abrir para User B após aceitar convite"
@@ -1161,9 +1162,10 @@ def test_v160_reading_clubs_and_collective_reads_multiuser(e2e_server, browser_i
     # FASE 3: USER A CRIA LEITURA COLETIVA PARA O LIVRO 'doc_5_pages.pdf'
     # =========================================================================
     page_a.click("#club-tab-reads")
-    page_a.wait_for_timeout(300)
+    page_a.wait_for_selector("#btn-club-new-read", state="visible", timeout=5000)
     page_a.click("#btn-club-new-read")
-    page_a.wait_for_timeout(400)
+    page_a.wait_for_selector("#modal-collective-read-form.active", state="visible", timeout=5000)
+    page_a.wait_for_function("() => (document.getElementById('read-form-book-select')?.options.length || 0) > 1", timeout=5000)
 
     assert page_a.is_visible("#modal-collective-read-form"), "Modal de nova leitura coletiva deve abrir"
     book_options = page_a.evaluate("""() => {
@@ -1178,7 +1180,7 @@ def test_v160_reading_clubs_and_collective_reads_multiuser(e2e_server, browser_i
     page_a.fill("#read-form-desc", "Cronograma de discussão em grupo.")
     page_a.select_option("#read-form-status", "in_progress")
     page_a.click("#btn-save-read-form")
-    page_a.wait_for_timeout(600)
+    page_a.wait_for_function("() => (document.getElementById('club-reads-grid')?.textContent || '').includes('Leitura Conjunta: Filosofia e Métodos')", timeout=5000)
 
     # Leitura aparece na grade de leituras do clube para Alice
     reads_text_a = page_a.text_content("#club-reads-grid")
@@ -1189,7 +1191,7 @@ def test_v160_reading_clubs_and_collective_reads_multiuser(e2e_server, browser_i
     # =========================================================================
     # User B atualiza/abre a aba de leituras
     page_b.click("#club-tab-reads")
-    page_b.wait_for_timeout(400)
+    page_b.wait_for_function("() => (document.getElementById('club-reads-grid')?.textContent || '').includes('Leitura Conjunta: Filosofia e Métodos')", timeout=5000)
     reads_text_b = page_b.text_content("#club-reads-grid")
     assert "Leitura Conjunta: Filosofia e Métodos" in reads_text_b
 

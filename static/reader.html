@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="pt-BR" data-theme="dark" data-app-version="1.8.0">
+<html lang="pt-BR" data-theme="dark" data-app-version="1.9.0">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lectoria — Leitor</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=1.8.0">
+  <link rel="stylesheet" href="/static/css/style.css?v=1.9.0">
 </head>
 <body class="reader-body">
   <header class="reader-header">
@@ -357,6 +357,16 @@
         <option value="position">Posição no livro</option>
         <option value="recent">Mais recentes</option>
       </select>
+    </div>
+
+    <!-- Filtro e Indicadores Pessoais do Atlas no Caderno de Estudos (v1.9.0 Fase 4) -->
+    <div id="drawer-knowledge-bar" class="drawer-knowledge-bar">
+      <div id="drawer-knowledge-filter-group" class="drawer-knowledge-filter-group" role="group" aria-label="Filtrar por conexões no Atlas">
+        <button type="button" class="drawer-kf-btn active" data-knowledge-filter="all">Todas</button>
+        <button type="button" class="drawer-kf-btn" data-knowledge-filter="connected">Conectadas</button>
+        <button type="button" class="drawer-kf-btn" data-knowledge-filter="unconnected">Sem conexões</button>
+      </div>
+      <div id="drawer-knowledge-summary" class="drawer-knowledge-summary" aria-live="polite"></div>
     </div>
 
     <div class="drawer-tabs">
@@ -862,10 +872,143 @@
     </div>
   </div>
 
+  <!-- Modal Contextual: Conhecimento Conectado / Atlas no Leitor (v1.9.0 Fase 3) -->
+  <div id="modal-reader-knowledge" class="rk-modal-overlay hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="rk-modal-title">
+    <div class="rk-modal-content">
+      <div class="rk-modal-header">
+        <div>
+          <h3 id="rk-modal-title" class="rk-modal-title">Conhecimento — Atlas</h3>
+          <p class="rk-modal-subtitle">Conceitos, conexões semânticas e backlinks desta anotação</p>
+        </div>
+        <button id="btn-close-reader-knowledge" class="btn btn-icon rk-close-btn" type="button" title="Fechar painel de conhecimento" aria-label="Fechar painel de conhecimento">&times;</button>
+      </div>
+
+      <div class="rk-modal-body">
+        <div id="rk-entity-context" class="rk-entity-context"></div>
+        <div id="rk-status-banner" class="rk-status-banner hidden" role="status" aria-live="polite"></div>
+
+        <!-- Seção 1: Conceitos associados -->
+        <section class="rk-section" aria-labelledby="rk-concepts-heading">
+          <div class="rk-section-header">
+            <h4 id="rk-concepts-heading" class="rk-section-title">Conceitos associados</h4>
+            <button id="rk-btn-toggle-create-concept" class="btn btn-sm btn-secondary" type="button">+ Criar conceito</button>
+          </div>
+
+          <div id="rk-associated-concepts" class="rk-concepts-chips"></div>
+          <div id="rk-concept-preview" class="rk-concept-preview hidden"></div>
+
+          <div class="rk-lookup-wrap">
+            <label class="sr-only" for="rk-concept-search">Buscar conceito para associar</label>
+            <input id="rk-concept-search" class="rk-input" type="search" placeholder="Buscar conceito existente no Atlas..." autocomplete="off" maxlength="160">
+            <div id="rk-concept-search-results" class="rk-lookup-results hidden" role="listbox" aria-label="Resultados de conceitos"></div>
+          </div>
+
+          <form id="rk-create-concept-form" class="rk-subform hidden">
+            <div class="rk-subform-title">Novo conceito no Atlas</div>
+            <label class="rk-field-label">
+              Nome do conceito *
+              <input id="rk-concept-name" class="rk-input" type="text" required maxlength="160" placeholder="Ex.: Autonomia da Técnica">
+            </label>
+            <label class="rk-field-label">
+              Descrição (opcional)
+              <textarea id="rk-concept-desc" class="rk-textarea" rows="2" maxlength="10000" placeholder="Resumo ou definição pessoal do conceito..."></textarea>
+            </label>
+            <div class="rk-form-grid-2">
+              <label class="rk-field-label">
+                Etiquetas (separadas por vírgula)
+                <input id="rk-concept-tags" class="rk-input" type="text" maxlength="300" placeholder="filosofia, modernidade">
+              </label>
+              <label class="rk-field-label">
+                Cor
+                <input id="rk-concept-color" class="rk-color-input" type="color" value="#d4a853">
+              </label>
+            </div>
+            <div class="rk-inline-form-actions">
+              <button id="rk-btn-cancel-create-concept" class="btn btn-sm btn-ghost" type="button">Cancelar</button>
+              <button id="rk-btn-submit-create-concept" class="btn btn-sm btn-primary" type="submit">Criar e associar</button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Seção 2: Conexões semânticas e Backlinks -->
+        <section class="rk-section" aria-labelledby="rk-links-heading">
+          <div class="rk-section-header">
+            <h4 id="rk-links-heading" class="rk-section-title">Conexões e Backlinks</h4>
+            <button id="rk-btn-toggle-new-link" class="btn btn-sm btn-secondary" type="button">+ Nova conexão</button>
+          </div>
+
+          <form id="rk-new-link-form" class="rk-subform hidden">
+            <div class="rk-subform-title">Criar conexão semântica</div>
+            <div class="rk-origin-box">
+              <span class="rk-origin-caption">Origem</span>
+              <span id="rk-new-link-origin" class="rk-origin-value">Anotação atual</span>
+            </div>
+
+            <div class="rk-form-grid-2">
+              <label class="rk-field-label">
+                Tipo de destino
+                <select id="rk-target-type" class="rk-select">
+                  <option value="">Todos os tipos</option>
+                  <option value="concept">Conceito</option>
+                  <option value="reflection">Reflexão</option>
+                  <option value="highlight">Destaque</option>
+                  <option value="note">Nota</option>
+                  <option value="book">Livro</option>
+                </select>
+              </label>
+              <label class="rk-checkbox-row">
+                <input id="rk-target-book-only" type="checkbox">
+                <span>Filtrar apenas neste livro</span>
+              </label>
+            </div>
+
+            <div class="rk-lookup-wrap">
+              <label class="rk-field-label" for="rk-target-search">Buscar destino *</label>
+              <input id="rk-target-search" class="rk-input" type="search" placeholder="Digite para localizar conceito, nota, destaque, reflexão ou livro..." autocomplete="off" maxlength="300">
+              <div id="rk-target-search-results" class="rk-lookup-results hidden" role="listbox" aria-label="Resultados de destinos"></div>
+            </div>
+
+            <div id="rk-selected-target" class="rk-selected-target hidden"></div>
+
+            <label class="rk-field-label">
+              Tipo de relação *
+              <select id="rk-relation-select" class="rk-select"></select>
+            </label>
+
+            <div id="rk-direction-preview" class="rk-direction-preview" aria-live="polite"></div>
+
+            <label class="rk-field-label">
+              Justificativa (opcional)
+              <textarea id="rk-rationale-input" class="rk-textarea" rows="2" maxlength="2000" placeholder="Por que estes dois itens se conectam?"></textarea>
+              <span id="rk-rationale-counter" class="rk-char-counter">0/2000</span>
+            </label>
+
+            <div class="rk-inline-form-actions">
+              <button id="rk-btn-cancel-new-link" class="btn btn-sm btn-ghost" type="button">Cancelar</button>
+              <button id="rk-btn-submit-new-link" class="btn btn-sm btn-primary" type="submit">Criar conexão</button>
+            </div>
+          </form>
+
+          <div class="rk-tabs" role="tablist" aria-label="Direção das conexões">
+            <button id="rk-tab-outgoing" class="rk-tab-btn active" type="button" role="tab" aria-selected="true">Conexões de saída (0)</button>
+            <button id="rk-tab-incoming" class="rk-tab-btn" type="button" role="tab" aria-selected="false">Backlinks recebidos (0)</button>
+          </div>
+
+          <div id="rk-links-list" class="rk-links-list"></div>
+          <div class="rk-load-more-wrap">
+            <button id="rk-btn-load-more" class="btn btn-sm btn-ghost hidden" type="button">Carregar mais</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
   <!-- Aviso não bloqueante do leitor (v1.7.0) -->
   <div id="reader-toast" class="reader-toast" role="status" aria-live="polite" style="display: none;"></div>
 
   <script src="/static/vendor/pdfjs/pdf.min.js"></script>
-  <script src="/static/js/reader.js?v=1.8.0"></script>
+  <script src="/static/js/knowledge-api.js?v=1.9.0"></script>
+  <script src="/static/js/reader-knowledge.js?v=1.9.0"></script>
+  <script src="/static/js/reader.js?v=1.9.0"></script>
 </body>
 </html>

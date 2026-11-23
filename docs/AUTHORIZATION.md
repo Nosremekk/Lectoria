@@ -11,7 +11,8 @@ Este documento descreve os mecanismos de autenticação, proteção contra ataqu
   - Na criação da sessão, um token pseudo-aleatório seguro de 32 bytes em Base64 é gerado (`auth_service.create_session`).
   - O banco SQLite armazena apenas o hash criptográfico **SHA-256** do token (`sessions.token_hash`), impedindo que vazamentos de banco comprometam sessões ativas.
   - O token trafega no cookie HTTP `lectoria_session` com atributos de segurança `HttpOnly`, `SameSite=Lax` e `Path=/`.
-- **Proteção contra Força Bruta**: Rate-limiting em memória para tentativas consecutivas incorretas de login (`/api/auth/login`).
+- **Proteção contra Força Bruta**: Rate-limiting em memória (`_RATE_LIMIT_LOCK` thread-safe com poda automática de entradas expiradas) para tentativas consecutivas incorretas de login (`/api/auth/login`).
+- **Isolamento do Atlas (v1.9.0 — *Read-Time Authorization*)**: `concepts`, `reflections` e `knowledge_links` são estritamente privados por `user_id` (`HTTP 404` anti-enumeração para terceiros). Toda resolução de extremos e candidatos FTS5 revalida permissões nas tabelas relacionais originais em tempo de leitura; referências revogadas ou indisponíveis retornam sentinelas neutros sem vazar metadados protegidos. Detalhes em [docs/v1.9.0/04-security-privacy-and-authorization.md](v1.9.0/04-security-privacy-and-authorization.md).
 
 ---
 

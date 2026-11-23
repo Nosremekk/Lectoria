@@ -1,6 +1,6 @@
 # Banco de Dados e Persistência do Lectoria
 
-Este documento descreve o modelo de dados, o schema atual (versão 12), a política de integridade relacional, as regras de migração e os mecanismos de backup do **Lectoria**.
+Este documento descreve o modelo de dados, o schema atual (**versão 13 na v1.9.0**; versão 12 na base anterior v1.8.0), a política de integridade relacional, as regras de migração e os mecanismos de backup local do **Lectoria**.
 
 ---
 
@@ -15,9 +15,9 @@ O Lectoria utiliza **SQLite 3** como seu único banco de dados de produção:
 
 ---
 
-## 2. Visão do Schema e Entidades (Schema v12)
+## 2. Visão do Schema e Entidades (Schema v13 — v1.9.0 em desenvolvimento)
 
-O schema está na **versão 12**, versionado pela tabela `schema_migrations`.
+O schema está na **versão 13** (introduzida na Fase 1 da v1.9.0), versionado pela tabela `schema_migrations`.
 
 O código DDL completo e canônico reside em [database.py](file:///home/vini/Jellyfin%20livros/database.py).
 
@@ -159,6 +159,77 @@ A migração `_apply_migration_v12` evoluiu as tabelas de estudo do leitor sem p
 - **Índices**:
   - `idx_bookmarks_book_user_page ON bookmarks(book_id, user_id, page)`
   - `uq_bookmarks_book_user_pos ON bookmarks(book_id, user_id, page, COALESCE(epub_cfi, ''))` (previne duplicação na mesma posição)
+
+---
+
+## 3.2 Evolução na v1.9.0 (Fase 1 / Schema v13 — Conhecimento Conectado / Seção Atlas)
+
+A migração `_apply_migration_v13` adiciona de forma 100% aditiva as estruturas do domínio de Conhecimento Conectado (**Atlas**), preservando intactas todas as tabelas das versões v1–v12:
+
+### Nova tabela `concepts` (Conceitos Pessoais — `KD-002`)
+- **Finalidade**: Vocabulário conceitual privado e isolado por `user_id`, independente das tabelas globais `categories` e `subjects`.
+- **Campos Chave**:
+  - `id TEXT PRIMARY KEY` (UUID v4)
+  - `user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE`
+  - `name TEXT NOT NULL CHECK (length(trim(name)) >= 1 AND length(name) <= 160)`
+  - `normalized_name TEXT NOT NULL CHECK (length(trim(normalized_name)) >= 1 AND length(trim(normalized_name)) <= 160)` (Unicode NFC + `.casefold()`)
+  - `description TEXT NOT NULL DEFAULT '' CHECK (length(description) <= 10000)`
+  - `tags_json TEXT NOT NULL DEFAULT '[]'`
+  - `color TEXT NOT NULL DEFAULT '#d4a853'`
+  - `is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1))`
+  - `created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`
+- **Índices**:
+  - `uq_concepts_user_norm_name ON concepts(user_id, normalized_name)`
+  - `idx_concepts_user_updated ON concepts(user_id, is_archived, updated_at DESC, id ASC)`
+  - `idx_concepts_user_created ON concepts(user_id, created_at DESC, id ASC)`
+
+### Nova tabela `reflections` (Reflexões Autorais — `KD-005`)
+- **Finalidade**: Textos autorais longos e sínteses transversais em Markdown puro (`body_markdown`), privados e isolados por `user_id`.
+- **Campos Chave**:
+  - `id TEXT PRIMARY KEY` (UUID v4)
+  - `user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE`
+  - `title TEXT NOT NULL CHECK (length(trim(title)) >= 1 AND length(title) <= 300)`
+  - `body_markdown TEXT NOT NULL DEFAULT '' CHECK (length(body_markdown) <= 50000)`
+  - `primary_book_id TEXT NULL REFERENCES books(id) ON DELETE SET NULL`
+  - `tags_json TEXT NOT NULL DEFAULT '[]'`
+  - `is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1))`
+  - `is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1))`
+  - `created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`
+- **Índices**:
+  - `idx_reflections_user_updated ON reflections(user_id, is_archived, is_pinned DESC, updated_at DESC, id ASC)`
+  - `idx_reflections_user_created ON reflections(user_id, created_at DESC, id ASC)`
+  - `idx_reflections_user_book ON reflections(user_id, primary_book_id)`
+
+### Nova tabela `knowledge_links` (Conexões Semânticas e Referências por UUID — `KD-003` e `KD-004`)
+- **Finalidade**: Fonte única de verdade para conexões tipadas, referências internas e backlinks entre `concept`, `reflection`, `highlight`, `note` e `book`.
+- **Campos Chave**:
+  - `id TEXT PRIMARY KEY` (UUID v4)
+  - `user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE`
+  - `source_type TEXT NOT NULL CHECK (source_type IN ('concept', 'reflection', 'highlight', 'note', 'book'))`
+  - `source_id TEXT NOT NULL CHECK (length(trim(source_id)) >= 1)`
+  - `target_type TEXT NOT NULL CHECK (target_type IN ('concept', 'reflection', 'highlight', 'note', 'book'))`
+  - `target_id TEXT NOT NULL CHECK (length(trim(target_id)) >= 1)`
+  - `relation_type TEXT NOT NULL DEFAULT 'relates_to' CHECK (relation_type IN ('complements', 'contradicts', 'exemplifies', 'grounds', 'develops', 'references', 'questions', 'relates_to'))`
+  - `rationale TEXT NOT NULL DEFAULT '' CHECK (length(rationale) <= 2000)`
+  - `created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`
+  - `CHECK (NOT (source_type = target_type AND source_id = target_id))` (bloqueio de auto-referência)
+- **Índices**:
+  - `uq_knowledge_links_tuple ON knowledge_links(user_id, source_type, source_id, target_type, target_id, relation_type)`
+  - `idx_klinks_user_source ON knowledge_links(user_id, source_type, source_id, created_at DESC, id ASC)`
+  - `idx_klinks_user_target ON knowledge_links(user_id, target_type, target_id, created_at DESC, id ASC)`
+  - `idx_klinks_user_rel ON knowledge_links(user_id, relation_type, updated_at DESC, id ASC)`
+
+### Nova tabela virtual `knowledge_fts` (SQLite FTS5 — `KD-008`)
+- **Finalidade**: Índice invertido FTS5 para localização rápida de candidatos em conceitos, reflexões, destaques, notas e justificativas de conexão, com suporte nativo à língua portuguesa (`tokenize='unicode61 remove_diacritics 2'`).
+- **Regra de Segurança**: `knowledge_fts` atua estritamente como localizador de candidatos; todo item retornado é revalidado contra as tabelas relacionais originais antes de expor conteúdo.
+- **Triggers de Sincronização e Integridade Polimórfica**:
+  - `trg_concepts_ai_fts`, `trg_concepts_au_fts`, `trg_concepts_ad_cleanup`
+  - `trg_reflections_ai_fts`, `trg_reflections_au_fts`, `trg_reflections_ad_cleanup`
+  - `trg_highlights_ai_fts`, `trg_highlights_au_fts`, `trg_highlights_ad_cleanup`
+  - `trg_notes_ai_fts`, `trg_notes_au_fts`, `trg_notes_ad_cleanup`
+  - `trg_klinks_ai_fts`, `trg_klinks_au_fts`, `trg_klinks_ad_fts`
+  - `trg_users_ad_knowledge_fts`
+  - Os triggers de exclusão de `highlights` e `notes` preservam intencionalmente conexões e justificativas autorais (`rationale`) pertencentes a outros usuários, que passam a ser resolvidas como `available = False` ("Referência indisponível") em tempo de leitura.
 
 ---
 
