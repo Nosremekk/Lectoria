@@ -24,8 +24,9 @@ import database
 import knowledge_service
 
 
-ARTIFACT_DIR = Path("/home/vini/.gemini/antigravity/brain/9ae11ae2-ebc0-44c2-9e79-22a1b0910e27")
-ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+from tests.e2e.artifact_utils import get_artifact_dir
+
+ARTIFACT_DIR = get_artifact_dir()
 
 
 def _find_free_port() -> int:

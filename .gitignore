@@ -12,6 +12,7 @@ __pycache__/
 .coverage
 htmlcov/
 *.log
+tests/artifacts/
 
 # Editores e Sistema Operacional
 .vscode/
