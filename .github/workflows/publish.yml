@@ -8,68 +8,116 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
-      version:
-        description: "Tag/versão da imagem (ex: v1.5.0). Se vazio, utiliza a tag atual ou APP_VERSION."
+      promote_tag:
+        description: "Tag SemVer opcional a promover (ex: v1.9.2). Deixe vazio para publicação contínua (:stable + :sha-*)."
         required: false
         type: string
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
-  group: publish-ghcr-${{ github.ref }}
+  group: ghcr-publish-lectoria
   cancel-in-progress: false
 
 jobs:
-  test-and-publish:
-    name: Test Suite & Publish to GHCR
+  preflight:
+    name: Preflight & Release Policy Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.meta.outputs.mode }}
+      app_version: ${{ steps.meta.outputs.app_version }}
+      raw_version: ${{ steps.meta.outputs.raw_version }}
+      clean_version: ${{ steps.meta.outputs.clean_version }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
+      sha_tag: ${{ steps.meta.outputs.sha_tag }}
+      build_date: ${{ steps.meta.outputs.build_date }}
+
+    steps:
+      - name: Checkout repository (full history for ancestry check)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate trigger mode, version alignment, and commit ancestry
+        id: meta
+        env:
+          INPUT_PROMOTE_TAG: ${{ github.event.inputs.promote_tag }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          FULL_REF: ${{ github.ref }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          APP_VER="$(python3 -c 'import config; print(config.APP_VERSION)')"
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          SHA_TAG="sha-${SHORT_SHA}"
+          BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          if [ -n "$INPUT_PROMOTE_TAG" ]; then
+            MODE="release_tag"
+            RAW_VERSION="$INPUT_PROMOTE_TAG"
+          elif [ "$REF_TYPE" = "tag" ]; then
+            MODE="release_tag"
+            RAW_VERSION="$REF_NAME"
+          else
+            MODE="continuous"
+            RAW_VERSION="v${APP_VER}"
+            if [ "$FULL_REF" != "refs/heads/main" ]; then
+              echo "::error::Publicação contínua só é permitida na branch main (ref atual: ${FULL_REF})."
+              exit 1
+            fi
+          fi
+
+          CLEAN_VERSION="${RAW_VERSION#v}"
+
+          if [ "$MODE" = "release_tag" ]; then
+            if ! [[ "$RAW_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Tag inválida '${RAW_VERSION}'. Formato obrigatório: vX.Y.Z (SemVer)."
+              exit 1
+            fi
+            EXPECTED_TAG="v${APP_VER}"
+            if [ "$RAW_VERSION" != "$EXPECTED_TAG" ]; then
+              echo "::error::Tag '${RAW_VERSION}' diverge de config.APP_VERSION ('${APP_VER}'). Esperado: '${EXPECTED_TAG}'."
+              exit 1
+            fi
+            git fetch origin main --no-tags
+            if ! git merge-base --is-ancestor "$COMMIT_SHA" origin/main; then
+              echo "::error::Commit '${COMMIT_SHA}' não está integrado em origin/main. Promoção de tag recusada."
+              exit 1
+            fi
+          fi
+
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "app_version=${APP_VER}" >> "$GITHUB_OUTPUT"
+          echo "raw_version=${RAW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "clean_version=${CLEAN_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "build_date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Mandatory Test Suite
+    needs: [preflight]
+    if: needs.preflight.outputs.mode == 'continuous'
+    uses: ./.github/workflows/_test-suite.yml
+
+  build-and-publish-continuous:
+    name: Build, Smoke Test & Publish (:sha-* and :stable)
+    needs: [preflight, test]
+    if: needs.preflight.outputs.mode == 'continuous'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-
-      - name: Install system and Python test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends sqlite3
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          playwright install --with-deps chromium
-
-      - name: Verify Python bytecode compilation
-        run: |
-          python -m py_compile *.py scripts/*.py
-
-      - name: Run full automated test suite
-        run: |
-          pytest -v tests/
-
-      - name: Extract version metadata
-        id: meta
-        env:
-          INPUT_VERSION: ${{ github.event.inputs.version }}
-          REF_NAME: ${{ github.ref_name }}
-          REF_TYPE: ${{ github.ref_type }}
-        run: |
-          if [ -n "$INPUT_VERSION" ]; then
-            RAW_VERSION="$INPUT_VERSION"
-          elif [ "$REF_TYPE" = "tag" ]; then
-            RAW_VERSION="$REF_NAME"
-          else
-            APP_VER="$(python3 -c 'import config; print(config.APP_VERSION)')"
-            RAW_VERSION="v${APP_VER}"
-          fi
-          CLEAN_VERSION="${RAW_VERSION#v}"
-          echo "raw_version=${RAW_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "clean_version=${CLEAN_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -81,7 +129,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push immutable commit image (:sha-*)
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -89,38 +137,218 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ghcr.io/nosremekk/lectoria:${{ steps.meta.outputs.raw_version }}
-            ghcr.io/nosremekk/lectoria:${{ steps.meta.outputs.clean_version }}
-            ghcr.io/nosremekk/lectoria:stable
+            ghcr.io/nosremekk/lectoria:${{ needs.preflight.outputs.sha_tag }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            APP_VERSION=${{ needs.preflight.outputs.app_version }}
+            BUILD_DATE=${{ needs.preflight.outputs.build_date }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/Nosremekk/Lectoria
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.preflight.outputs.app_version }}
+            org.opencontainers.image.created=${{ needs.preflight.outputs.build_date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Validate published GHCR image and /api/health
+      - name: Run smoke test against exact built digest (before promoting :stable)
         env:
-          RAW_VER: ${{ steps.meta.outputs.raw_version }}
-          CLEAN_VER: ${{ steps.meta.outputs.clean_version }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          APP_VER: ${{ needs.preflight.outputs.app_version }}
+          EXPECTED_SHA: ${{ github.sha }}
         run: |
-          echo "Published digest: ${IMAGE_DIGEST}"
-          docker pull "ghcr.io/nosremekk/lectoria:${RAW_VER}"
-          docker pull "ghcr.io/nosremekk/lectoria:${CLEAN_VER}"
-          docker pull "ghcr.io/nosremekk/lectoria:stable"
+          set -euo pipefail
+          IMAGE_REF="ghcr.io/nosremekk/lectoria@${IMAGE_DIGEST}"
+          docker pull "${IMAGE_REF}"
 
-          ID_RAW="$(docker image inspect --format='{{.Id}}' "ghcr.io/nosremekk/lectoria:${RAW_VER}")"
-          ID_CLEAN="$(docker image inspect --format='{{.Id}}' "ghcr.io/nosremekk/lectoria:${CLEAN_VER}")"
-          ID_STABLE="$(docker image inspect --format='{{.Id}}' "ghcr.io/nosremekk/lectoria:stable")"
-          test "$ID_RAW" = "$ID_CLEAN"
-          test "$ID_CLEAN" = "$ID_STABLE"
+          ACTUAL_REV="$(docker image inspect --format='{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE_REF}")"
+          if [ "${ACTUAL_REV}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::Rótulo OCI revision ('${ACTUAL_REV}') diverge do commit esperado ('${EXPECTED_SHA}')."
+            exit 1
+          fi
 
-          docker run -d --name lectoria-smoke -p 18765:8765 "ghcr.io/nosremekk/lectoria:stable"
+          docker run -d --name lectoria-smoke -p 18765:8765 "${IMAGE_REF}"
           trap 'docker rm -f lectoria-smoke >/dev/null 2>&1 || true' EXIT
 
+          HEALTH_OK=0
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:18765/api/health > /tmp/health.json 2>/dev/null; then
+              HEALTH_OK=1
               break
             fi
             sleep 1
           done
 
+          if [ "${HEALTH_OK}" -ne 1 ]; then
+            docker logs lectoria-smoke || true
+            echo "::error::Smoke test falhou: /api/health não respondeu em 30s. Tag :stable não será atualizada."
+            exit 1
+          fi
+
           cat /tmp/health.json
-          python3 -c "import json, os; data = json.load(open('/tmp/health.json')); expected = os.environ['CLEAN_VER']; assert data.get('status') == 'healthy', data; assert data.get('version') == expected, data; print('Verified /api/health:', data)"
+          python3 -c "import json, os; data = json.load(open('/tmp/health.json')); expected = os.environ['APP_VER']; assert data.get('status') == 'healthy', data; assert data.get('version') == expected, data; print('Verified /api/health:', data)"
+
+      - name: Promote validated digest to :stable (never touching versioned tags)
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          SHA_TAG: ${{ needs.preflight.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          IMAGE_REF="ghcr.io/nosremekk/lectoria@${IMAGE_DIGEST}"
+          docker buildx imagetools create -t ghcr.io/nosremekk/lectoria:stable "${IMAGE_REF}"
+
+          DIGEST_SHA="$(docker buildx imagetools inspect "ghcr.io/nosremekk/lectoria:${SHA_TAG}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          DIGEST_STABLE="$(docker buildx imagetools inspect "ghcr.io/nosremekk/lectoria:stable" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          test "${DIGEST_SHA}" = "${IMAGE_DIGEST}"
+          test "${DIGEST_STABLE}" = "${IMAGE_DIGEST}"
+
+      - name: Publish step summary
+        if: always()
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          SHA_TAG: ${{ needs.preflight.outputs.sha_tag }}
+          APP_VER: ${{ needs.preflight.outputs.app_version }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "## Publicação Contínua — Lectoria (main)"
+            echo ""
+            echo "| Campo | Valor |"
+            echo "| :--- | :--- |"
+            echo "| **Commit SHA** | \`${GITHUB_SHA}\` |"
+            echo "| **Referência Git** | \`${GITHUB_REF}\` |"
+            echo "| **APP_VERSION** | \`${APP_VER}\` |"
+            echo "| **Tags Docker publicadas** | \`ghcr.io/nosremekk/lectoria:${SHA_TAG}\`, \`ghcr.io/nosremekk/lectoria:stable\` |"
+            echo "| **Digest** | \`${IMAGE_DIGEST}\` |"
+            echo "| **Tags versionadas (:vX.Y.Z)** | Preservadas (não sobrescritas em push na main) |"
+            echo "| **Resultado da validação & smoke test** | \`${JOB_STATUS}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  promote-release-tag:
+    name: Promote Immutable Release Tag (:vX.Y.Z, :X.Y.Z, :stable)
+    needs: [preflight]
+    if: needs.preflight.outputs.mode == 'release_tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enforce immutability (refuse overwriting existing release tags)
+        env:
+          RAW_VER: ${{ needs.preflight.outputs.raw_version }}
+          CLEAN_VER: ${{ needs.preflight.outputs.clean_version }}
+        run: |
+          set -euo pipefail
+          for TAG in "${RAW_VER}" "${CLEAN_VER}"; do
+            if docker buildx imagetools inspect "ghcr.io/nosremekk/lectoria:${TAG}" >/dev/null 2>&1; then
+              echo "::error::Tag versionada imutável 'ghcr.io/nosremekk/lectoria:${TAG}' já existe no GHCR. Sobrescrita recusada."
+              exit 1
+            fi
+          done
+          echo "Confirmado: nenhuma tag versionada '${RAW_VER}' / '${CLEAN_VER}' existe previamente no GHCR."
+
+      - name: Locate validated commit digest (:sha-*) without rebuilding
+        id: locate
+        env:
+          SHA_TAG: ${{ needs.preflight.outputs.sha_tag }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if ! docker buildx imagetools inspect "ghcr.io/nosremekk/lectoria:${SHA_TAG}" >/dev/null 2>&1; then
+            echo "::error::Imagem validada 'ghcr.io/nosremekk/lectoria:${SHA_TAG}' não encontrada no GHCR. Aguarde a conclusão bem-sucedida do workflow da main para este commit antes de criar/promover a tag."
+            exit 1
+          fi
+
+          DIGEST="$(docker buildx imagetools inspect "ghcr.io/nosremekk/lectoria:${SHA_TAG}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          IMAGE_REF="ghcr.io/nosremekk/lectoria@${DIGEST}"
+          docker pull "${IMAGE_REF}"
+
+          ACTUAL_REV="$(docker image inspect --format='{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE_REF}")"
+          if [ "${ACTUAL_REV}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::Divergência de rastreabilidade: imagem '${SHA_TAG}' possui revision '${ACTUAL_REV}', mas a tag aponta para '${EXPECTED_SHA}'."
+            exit 1
+          fi
+
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Digest validado localizado para promoção sem rebuild: ${DIGEST}"
+
+      - name: Run smoke test against promoted digest
+        env:
+          IMAGE_DIGEST: ${{ steps.locate.outputs.digest }}
+          CLEAN_VER: ${{ needs.preflight.outputs.clean_version }}
+        run: |
+          set -euo pipefail
+          IMAGE_REF="ghcr.io/nosremekk/lectoria@${IMAGE_DIGEST}"
+          docker run -d --name lectoria-release-smoke -p 18765:8765 "${IMAGE_REF}"
+          trap 'docker rm -f lectoria-release-smoke >/dev/null 2>&1 || true' EXIT
+
+          HEALTH_OK=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18765/api/health > /tmp/health.json 2>/dev/null; then
+              HEALTH_OK=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "${HEALTH_OK}" -ne 1 ]; then
+            docker logs lectoria-release-smoke || true
+            echo "::error::Smoke test falhou para o digest '${IMAGE_DIGEST}'. Promoção da release abortada."
+            exit 1
+          fi
+
+          cat /tmp/health.json
+          python3 -c "import json, os; data = json.load(open('/tmp/health.json')); expected = os.environ['CLEAN_VER']; assert data.get('status') == 'healthy', data; assert data.get('version') == expected, data; print('Verified release /api/health:', data)"
+
+      - name: Promote digest to immutable release tags (:vX.Y.Z, :X.Y.Z) and :stable
+        env:
+          IMAGE_DIGEST: ${{ steps.locate.outputs.digest }}
+          RAW_VER: ${{ needs.preflight.outputs.raw_version }}
+          CLEAN_VER: ${{ needs.preflight.outputs.clean_version }}
+        run: |
+          set -euo pipefail
+          IMAGE_REF="ghcr.io/nosremekk/lectoria@${IMAGE_DIGEST}"
+          docker buildx imagetools create \
+            -t "ghcr.io/nosremekk/lectoria:${RAW_VER}" \
+            -t "ghcr.io/nosremekk/lectoria:${CLEAN_VER}" \
+            -t "ghcr.io/nosremekk/lectoria:stable" \
+            "${IMAGE_REF}"
+
+          for TAG in "${RAW_VER}" "${CLEAN_VER}" "stable"; do
+            CHECK="$(docker buildx imagetools inspect "ghcr.io/nosremekk/lectoria:${TAG}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+            test "${CHECK}" = "${IMAGE_DIGEST}"
+          done
+
+      - name: Publish release step summary
+        if: always()
+        env:
+          IMAGE_DIGEST: ${{ steps.locate.outputs.digest }}
+          RAW_VER: ${{ needs.preflight.outputs.raw_version }}
+          CLEAN_VER: ${{ needs.preflight.outputs.clean_version }}
+          SHA_TAG: ${{ needs.preflight.outputs.sha_tag }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "## Promoção de Release Imutável — Lectoria ${RAW_VER}"
+            echo ""
+            echo "| Campo | Valor |"
+            echo "| :--- | :--- |"
+            echo "| **Commit SHA** | \`${GITHUB_SHA}\` |"
+            echo "| **Referência Git** | \`${GITHUB_REF}\` |"
+            echo "| **Versão da Aplicação** | \`${CLEAN_VER}\` |"
+            echo "| **Origem (sem rebuild)** | \`ghcr.io/nosremekk/lectoria:${SHA_TAG}\` |"
+            echo "| **Tags Docker promovidas** | \`${RAW_VER}\`, \`${CLEAN_VER}\`, \`stable\` |"
+            echo "| **Digest promovido** | \`${IMAGE_DIGEST}\` |"
+            echo "| **Resultado da validação & smoke test** | \`${JOB_STATUS}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

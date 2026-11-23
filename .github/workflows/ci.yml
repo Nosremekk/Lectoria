@@ -1,41 +1,23 @@
 name: CI
 
-'on':
+on:
   push:
-    branches: [ "main", "feat/*", "fix/*" ]
+    branches:
+      - "feat/*"
+      - "fix/*"
+      - "refactor/*"
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - "main"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends sqlite3
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          playwright install --with-deps chromium
-
-      - name: Run automated test suite
-        run: |
-          pytest -v tests/
-
-      - name: Run environment diagnostics
-        run: |
-          python scripts/diagnose.py --json
-
+    name: Test Suite
+    uses: ./.github/workflows/_test-suite.yml
