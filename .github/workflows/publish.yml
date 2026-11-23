@@ -35,6 +35,7 @@ jobs:
       short_sha: ${{ steps.meta.outputs.short_sha }}
       sha_tag: ${{ steps.meta.outputs.sha_tag }}
       build_date: ${{ steps.meta.outputs.build_date }}
+      is_main_head: ${{ steps.meta.outputs.is_main_head }}
 
     steps:
       - name: Checkout repository (full history for ancestry check)
@@ -73,6 +74,7 @@ jobs:
           fi
 
           CLEAN_VERSION="${RAW_VERSION#v}"
+          IS_MAIN_HEAD="false"
 
           if [ "$MODE" = "release_tag" ]; then
             if ! [[ "$RAW_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -89,6 +91,10 @@ jobs:
               echo "::error::Commit '${COMMIT_SHA}' não está integrado em origin/main. Promoção de tag recusada."
               exit 1
             fi
+            MAIN_HEAD_SHA="$(git rev-parse origin/main)"
+            if [ "$COMMIT_SHA" = "$MAIN_HEAD_SHA" ]; then
+              IS_MAIN_HEAD="true"
+            fi
           fi
 
           echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
@@ -98,6 +104,7 @@ jobs:
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
           echo "build_date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
+          echo "is_main_head=${IS_MAIN_HEAD}" >> "$GITHUB_OUTPUT"
 
   test:
     name: Mandatory Test Suite
@@ -251,12 +258,20 @@ jobs:
         run: |
           set -euo pipefail
           for TAG in "${RAW_VER}" "${CLEAN_VER}"; do
-            if docker buildx imagetools inspect "ghcr.io/nosremekk/lectoria:${TAG}" >/dev/null 2>&1; then
+            set +e
+            INSPECT_OUT="$(docker buildx imagetools inspect "ghcr.io/nosremekk/lectoria:${TAG}" 2>&1)"
+            INSPECT_RC=$?
+            set -e
+            if [ "${INSPECT_RC}" -eq 0 ]; then
               echo "::error::Tag versionada imutável 'ghcr.io/nosremekk/lectoria:${TAG}' já existe no GHCR. Sobrescrita recusada."
               exit 1
             fi
+            if ! echo "${INSPECT_OUT}" | grep -qiE "not found|manifest unknown"; then
+              echo "::error::Falha transitória/autenticação ao inspecionar 'ghcr.io/nosremekk/lectoria:${TAG}' (fail-closed): ${INSPECT_OUT}"
+              exit 1
+            fi
           done
-          echo "Confirmado: nenhuma tag versionada '${RAW_VER}' / '${CLEAN_VER}' existe previamente no GHCR."
+          echo "Confirmado (fail-closed): nenhuma tag versionada '${RAW_VER}' / '${CLEAN_VER}' existe previamente no GHCR."
 
       - name: Locate validated commit digest (:sha-*) without rebuilding
         id: locate
@@ -311,21 +326,33 @@ jobs:
           cat /tmp/health.json
           python3 -c "import json, os; data = json.load(open('/tmp/health.json')); expected = os.environ['CLEAN_VER']; assert data.get('status') == 'healthy', data; assert data.get('version') == expected, data; print('Verified release /api/health:', data)"
 
-      - name: Promote digest to immutable release tags (:vX.Y.Z, :X.Y.Z) and :stable
+      - name: Promote digest to immutable release tags (:vX.Y.Z, :X.Y.Z) and conditionally :stable
         env:
           IMAGE_DIGEST: ${{ steps.locate.outputs.digest }}
           RAW_VER: ${{ needs.preflight.outputs.raw_version }}
           CLEAN_VER: ${{ needs.preflight.outputs.clean_version }}
+          IS_MAIN_HEAD: ${{ needs.preflight.outputs.is_main_head }}
         run: |
           set -euo pipefail
           IMAGE_REF="ghcr.io/nosremekk/lectoria@${IMAGE_DIGEST}"
-          docker buildx imagetools create \
-            -t "ghcr.io/nosremekk/lectoria:${RAW_VER}" \
-            -t "ghcr.io/nosremekk/lectoria:${CLEAN_VER}" \
-            -t "ghcr.io/nosremekk/lectoria:stable" \
-            "${IMAGE_REF}"
+          TAGS_TO_VERIFY=("${RAW_VER}" "${CLEAN_VER}")
 
-          for TAG in "${RAW_VER}" "${CLEAN_VER}" "stable"; do
+          if [ "${IS_MAIN_HEAD}" = "true" ]; then
+            docker buildx imagetools create \
+              -t "ghcr.io/nosremekk/lectoria:${RAW_VER}" \
+              -t "ghcr.io/nosremekk/lectoria:${CLEAN_VER}" \
+              -t "ghcr.io/nosremekk/lectoria:stable" \
+              "${IMAGE_REF}"
+            TAGS_TO_VERIFY+=("stable")
+          else
+            echo "::warning::Commit da tag não é o HEAD atual de origin/main; publicando apenas tags versionadas sem regredir :stable."
+            docker buildx imagetools create \
+              -t "ghcr.io/nosremekk/lectoria:${RAW_VER}" \
+              -t "ghcr.io/nosremekk/lectoria:${CLEAN_VER}" \
+              "${IMAGE_REF}"
+          fi
+
+          for TAG in "${TAGS_TO_VERIFY[@]}"; do
             CHECK="$(docker buildx imagetools inspect "ghcr.io/nosremekk/lectoria:${TAG}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
             test "${CHECK}" = "${IMAGE_DIGEST}"
           done
@@ -337,6 +364,7 @@ jobs:
           RAW_VER: ${{ needs.preflight.outputs.raw_version }}
           CLEAN_VER: ${{ needs.preflight.outputs.clean_version }}
           SHA_TAG: ${{ needs.preflight.outputs.sha_tag }}
+          IS_MAIN_HEAD: ${{ needs.preflight.outputs.is_main_head }}
           JOB_STATUS: ${{ job.status }}
         run: |
           {
@@ -348,7 +376,7 @@ jobs:
             echo "| **Referência Git** | \`${GITHUB_REF}\` |"
             echo "| **Versão da Aplicação** | \`${CLEAN_VER}\` |"
             echo "| **Origem (sem rebuild)** | \`ghcr.io/nosremekk/lectoria:${SHA_TAG}\` |"
-            echo "| **Tags Docker promovidas** | \`${RAW_VER}\`, \`${CLEAN_VER}\`, \`stable\` |"
+            echo "| **Tags Docker promovidas** | \`${RAW_VER}\`, \`${CLEAN_VER}\` (stable atualizado: \`${IS_MAIN_HEAD}\`) |"
             echo "| **Digest promovido** | \`${IMAGE_DIGEST}\` |"
             echo "| **Resultado da validação & smoke test** | \`${JOB_STATUS}\` |"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -124,12 +124,16 @@ def test_v192_scenarios_d_f_h_tag_promotion_immutability_and_smoke_gate():
     assert "docker buildx imagetools create" in rel_block
     assert 'org.opencontainers.image.revision' in rel_block
 
-    # Cenário F: recusa explícita se :vX.Y.Z ou :X.Y.Z já existir no GHCR
+    # Cenário F: recusa explícita e fail-closed se :vX.Y.Z ou :X.Y.Z já existir (ou erro transitório) no GHCR
     immut_pos = rel_block.index("Enforce immutability")
     rel_promote_pos = rel_block.index("Promote digest to immutable release tags")
     assert immut_pos < rel_promote_pos
     assert "imagetools inspect" in rel_block
     assert "Sobrescrita recusada" in rel_block
+    assert "not found|manifest unknown" in rel_block
+    # Proteção contra regressão de :stable quando tag aponta para commit anterior ao HEAD de main
+    assert "is_main_head" in rel_block
+    assert 'if [ "${IS_MAIN_HEAD}" = "true" ]; then' in rel_block
 
     # Smoke test na promoção de release também precede criação das tags
     rel_smoke_pos = rel_block.index("Run smoke test against promoted digest")
