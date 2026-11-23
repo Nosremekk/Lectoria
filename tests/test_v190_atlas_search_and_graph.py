@@ -538,23 +538,32 @@ def test_v190_phase6_quantitative_scale_and_explain_query_plan(client):
     uid = user["id"]
     now_iso = "2026-11-21 15:00:00"
 
-    # Verifica EXPLAIN QUERY PLAN das consultas críticas do grafo e da busca
-    with database.get_db() as conn:
-        cur = conn.cursor()
+    # Verifica EXPLAIN QUERY PLAN das consultas reais do grafo (UNION ALL) e da busca FTS5
+    def _assert_graph_and_search_plans(cur, label: str) -> None:
         cur.execute(
             """
             EXPLAIN QUERY PLAN
-            SELECT * FROM knowledge_links
-            WHERE user_id = ?
-              AND ((source_type = 'concept' AND source_id = 'c_0')
-                   OR (target_type = 'concept' AND target_id = 'c_0'))
+            SELECT * FROM (
+                SELECT * FROM knowledge_links
+                WHERE user_id = ?
+                  AND source_type = 'concept' AND source_id = 'c_0'
+                UNION ALL
+                SELECT * FROM knowledge_links
+                WHERE user_id = ?
+                  AND target_type = 'concept' AND target_id = 'c_0'
+            )
             ORDER BY created_at DESC, id ASC;
             """,
-            (uid,),
+            (uid, uid),
         )
-        plan_graph = " | ".join(str(dict(r)) for r in cur.fetchall())
-        assert "SEARCH" in plan_graph.upper()
-        assert "IDX_KLINKS" in plan_graph.upper()
+        plan_graph_rows = [str(r["detail"]) for r in cur.fetchall()]
+        plan_graph = " | ".join(plan_graph_rows).upper()
+        # Garante acesso indexado seletivo (sem SCAN integral) independente do nome do índice escolhido pelo SQLite
+        assert "SCAN KNOWLEDGE_LINKS" not in plan_graph, f"[{label}] Varredura linear indevida: {plan_graph}"
+        assert plan_graph.count("SEARCH KNOWLEDGE_LINKS USING INDEX") >= 2, (
+            f"[{label}] Esperado SEARCH indexado em source e target: {plan_graph}"
+        )
+        assert "USER_ID=?" in plan_graph, f"[{label}] Índice deve filtrar por user_id: {plan_graph}"
 
         cur.execute(
             """
@@ -569,9 +578,14 @@ def test_v190_phase6_quantitative_scale_and_explain_query_plan(client):
             """,
             (uid,),
         )
-        plan_search = " | ".join(str(dict(r)) for r in cur.fetchall())
-        assert "VIRTUAL TABLE INDEX" in plan_search.upper()
-        assert "SEARCH C EXISTS USING INDEX" in plan_search.upper()
+        plan_search = " | ".join(str(r["detail"]) for r in cur.fetchall()).upper()
+        assert "VIRTUAL TABLE INDEX" in plan_search, f"[{label}] FTS5 nao utilizado: {plan_search}"
+        assert "SEARCH C" in plan_search and "USING INDEX" in plan_search, (
+            f"[{label}] Autorizacao relacional sem indice: {plan_search}"
+        )
+
+    with database.get_db() as conn:
+        _assert_graph_and_search_plans(conn.cursor(), "empty_schema")
 
     # Semeia Cenário B completo (10.000 conceitos, 2.000 reflexões, 10.000 anotações, 50.000 conexões)
     # Desativamos temporariamente os triggers de FTS apenas durante o bulk seed de 22k linhas que não têm o termo alvo,
@@ -690,6 +704,10 @@ def test_v190_phase6_quantitative_scale_and_explain_query_plan(client):
             """,
             link_rows,
         )
+        # Revalida o plano de execução com 50.000 links populados (antes e depois de ANALYZE)
+        _assert_graph_and_search_plans(cur, "populated_50k_before_analyze")
+        cur.execute("ANALYZE;")
+        _assert_graph_and_search_plans(cur, "populated_50k_after_analyze")
 
     # 1. Mede latência da pesquisa FTS5 no volume de 10k conceitos + 2k reflexões + 10k notas + 50k links
     t0 = time.perf_counter()
