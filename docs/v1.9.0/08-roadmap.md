@@ -23,7 +23,7 @@ flowchart TD
     F6["Fase 6: Pesquisa Integrada FTS5 e Mapa de Conhecimento no Atlas (Concluída)"]
     F7["Fase 7: Portabilidade (Exportação ZIP/JSON/CSV) e Estabilização (Concluída)"]
     F8["Fase 8: Infraestrutura, Desempenho, Auditoria VPS e Backups (8.A–8.D Concluídas)"]
-    F9["Fase 9: 9.A (CONDITIONAL GO) → 9.B Versionamento 1.9.0 (CONDITIONAL GO) → 9.C Release Controlada (Próxima)"]
+    F9["Fase 9: 9.A (CONDITIONAL GO) → 9.B (1.9.0) → 9.C Release & Deploy em Produção (DEPLOY_SUCCESS)"]
 
     F0 -->|"KD-001..KD-011 APPROVED"| F1
     F1 --> F2 --> F3 --> F4 --> F5 --> F6 --> F7 --> F8 --> F9
@@ -186,7 +186,10 @@ flowchart TD
   - Sincronizados `config.APP_VERSION = "1.9.0"`, `data-app-version="1.9.0"`, `LECTORIA_FRONTEND_VERSION = "1.9.0"`, cache-busting `?v=1.9.0` e `test_v151_frontend_backend_version_alignment` (preservando `SCHEMA_VERSION = 13`).
   - Atualizados `CHANGELOG.md`, `README.md`, `AGENTS.md`, `docs/ARCHITECTURE.md`, `DATABASE.md`, `API.md`, `AUTHORIZATION.md`, `FRONTEND.md`, `READER.md` e `docker-compose.v190-candidate.yml` (alinhado aos bind mounts `/storage/*`, `127.0.0.1:8765:8765`, `mem_limit: 1g`, sem `cpus: 1.5`).
   - Reexecutados todos os **359/359 testes automatizados** (`305` unitários/integração em `326,21s` + `54` E2E Playwright em `232,48s`, zero falhas, zero skips).
-- **Fase 9.C — Publicação Controlada e Deploy Supervisionado (Próxima — Aguardando Aprovação)**:
+- **Fase 9.C — Publicação e Atualização Automática (`DEPLOY_SUCCESS`, `docs/v1.9.0/38-phase-9c-deployment-report.md`)**:
+  - Merge na `main` (`c919050`) + 2 hotfixes de CI (`8f2eb43` caminhos portáveis de artefatos E2E e `9ff89cd` plano `UNION ALL` compatível com SQLite 3.45/3.53).
+  - Workflows `CI` (`#45195460278`) e `Publish Docker Image (GHCR)` (`#45195460137`) aprovados com **359/359 testes** e smoke test `python:3.12-slim` (v1.9.0 / Schema v13 / FTS5).
+  - Atualização automática concluída na VPS às `2026-11-23 14:57:38 UTC`: `/api/health` = `healthy` (`1.9.0`), `schema_version = 13`, `PRAGMA integrity_check = ok`, backup pré-migração `lectoria_pre_migration_v12_to_v13.db.bak` (`5,5 MB`), `238` livros e `37 MB` de capas preservados, `73,9 MiB` RAM (`0` OOM), `lectoria-backup.timer` ativo e `nosreme-restic-backup.timer` desativado.
   - Sincronizar `config.APP_VERSION = "1.9.0"`, `data-app-version="1.9.0"` e strings de cache-busting `?v=1.9.0` (`test_v151_frontend_backend_version_alignment`).
   - Atualizar `AGENTS.md`, `README.md`, `CHANGELOG.md` e documentação técnica (`docs/DATABASE.md`, `docs/API.md`, `docs/ARCHITECTURE.md`, `docs/AUTHORIZATION.md`, `docs/FRONTEND.md`, `docs/READER.md`).
   - Executar bateria final completa de testes (unitários, integração, API, segurança e E2E) e produzir o relatório de prontidão para release (`Release Readiness`).
