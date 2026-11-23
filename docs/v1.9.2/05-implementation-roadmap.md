@@ -8,7 +8,7 @@ Planejamento sequencial e mensurável derivado da Auditoria de Infraestrutura ([
 
 ## Ciclo `v1.9.2` — Estabilização de Infraestrutura, Segurança e Deploy Resiliente
 
-### Fase 11.2 — CI/CD e Versionamento *(Implementada em `refactor/v1.9.2-ci-cd-hardening`, CI remoto validado via PR #1 na Fase 11.2.1, auditoria pré-merge na 11.2.2/11.2.3 e correção Docker/OCI do auto-update na 11.2.4 — aguardando autorização de instalação/merge; ver [`06`](./06-phase-11.2-ci-cd-implementation.md)–[`10`](./10-phase-11.2.4-docker-oci-updater-fix.md))*
+### Fase 11.2 — CI/CD e Versionamento *(Implementada em `refactor/v1.9.2-ci-cd-hardening`, CI remoto + integração Docker real validados com 384/384 testes via PR #1 nas Fases 11.2.1–11.2.5 — `READY_FOR_CONTROLLED_INSTALL`, aguardando autorização de instalação na VPS e merge; ver [`06`](./06-phase-11.2-ci-cd-implementation.md)–[`11`](./11-phase-11.2.5-docker-integration-validation.md))*
 - **Escopo**:
   - Extrair job de testes para workflow reutilizável `_test-suite.yml` eliminando execução duplicada entre `ci.yml` e `publish.yml` em pushes na `main`.
   - Garantir imutabilidade de tags Docker (`push` em `main` publica `:stable` + `:sha-<shortsha>`; `push` de tag `vX.Y.Z` valida igualdade com `config.APP_VERSION`, bloqueia sobrescrita de tag existente e publica/promove `:vX.Y.Z`, `:X.Y.Z` e `:stable` com o mesmo digest).
