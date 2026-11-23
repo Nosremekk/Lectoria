@@ -7,6 +7,24 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.9.1] - 2026-11-23
+
+### Corrigido (`Fixed`)
+- **Travamento e esgotamento de memória (OOM) ao digitar `# ` nas reflexões do Atlas (`static/js/knowledge-api.js`, `static/js/knowledge.js`, `static/css/style.css`)**:
+  - Eliminado o loop infinito síncrono em `renderSafeMarkdownToDom` causado pela assimetria entre a regex de detecção de título (`/^\s*(#{1,4})\s+(.+)$/`) e a condição de parada do bloco de parágrafo (`/^\s*#{1,4}\s+/`), que deixava o índice de linha estagnado ao digitar `# `, `## `, `### ` ou `#### `.
+  - Unificadas as expressões regulares de blocos Markdown, expandido o suporte completo a títulos **H1–H6** (`# ` a `###### `, incluindo estilização `.atlas-md-h5` e `.atlas-md-h6`), adicionadas garantias matemáticas de progresso no parser de blocos e no tokenizador inline, além de memoização leve no preview (`dataset.lastRenderedMd`).
+  - Mantida integralmente a construção 100% DOM (zero `innerHTML`) e todas as defesas contra XSS.
+
+### Adicionado (`Added`)
+- **Regressão E2E e Documentação da Fase 10.1 (`tests/e2e/test_v191_markdown_heading_regression.py`, `docs/v1.9.1/`)**:
+  - Nova suíte automatizada Playwright validando digitação real `# `..`###### `, H1–H6, `#` sem espaço, `# ` + `Enter`, Unicode, alternância de modos, escala linear (250 títulos = 500 nós DOM), persistência e proteção XSS (`360/360` testes aprovados).
+  - Relatórios técnicos de diagnóstico do bug, auditoria geral de qualidade, roadmap priorizado (`P0`–`P3`) e validação.
+
+### Alterado (`Changed`)
+- **Sincronização de Versão (`1.9.1`)**: atualizado `config.APP_VERSION`, `data-app-version`, cache-busting `?v=1.9.1` em `static/index.html` e `static/reader.html` e `window.LECTORIA_FRONTEND_VERSION`, preservando `SCHEMA_VERSION = 13` sem migração de banco.
+
+---
+
 ## [1.9.0] - 2026-11-23
 
 ### Adicionado (`Added`)

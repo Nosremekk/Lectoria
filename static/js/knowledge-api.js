@@ -565,6 +565,10 @@
     let match;
 
     while ((match = INLINE_TOKEN_RE.exec(src)) !== null) {
+      if (match[0].length === 0) {
+        INLINE_TOKEN_RE.lastIndex++;
+        continue;
+      }
       if (match.index > lastIndex) {
         parentEl.appendChild(document.createTextNode(src.slice(lastIndex, match.index)));
       }
@@ -622,10 +626,18 @@
       return;
     }
 
+    const HEADING_RE = /^\s*(#{1,6})\s+(.*)$/;
+    const HEADING_PREFIX_RE = /^\s*#{1,6}\s+/;
+    const HR_RE = /^(-{3,}|\*{3,})$/;
+    const QUOTE_RE = /^\s*>\s?/;
+    const UL_RE = /^\s*[-*]\s+/;
+    const OL_RE = /^\s*\d+\.\s+/;
+
     const lines = raw.split("\n");
     let i = 0;
 
     while (i < lines.length) {
+      const startIndex = i;
       const line = lines[i];
       const trimmed = line.trim();
 
@@ -651,28 +663,31 @@
       }
 
       // Linha horizontal --- ou ***
-      if (/^(-{3,}|\*{3,})$/.test(trimmed)) {
+      if (HR_RE.test(trimmed)) {
         container.appendChild(createEl("hr", "atlas-md-hr"));
         i++;
         continue;
       }
 
-      // Títulos # a ####
-      const headingMatch = line.match(/^\s*(#{1,4})\s+(.+)$/);
+      // Títulos # a ###### (H1–H6), incluindo estado intermediário "# " durante digitação
+      const headingMatch = line.match(HEADING_RE);
       if (headingMatch) {
-        const level = Math.min(4, Math.max(1, headingMatch[1].length));
+        const level = Math.min(6, Math.max(1, headingMatch[1].length));
         const hEl = createEl(`h${level}`, `atlas-md-h${level}`);
-        appendInlineMarkdownNodes(hEl, headingMatch[2].trim());
+        const headingText = headingMatch[2].trim();
+        if (headingText) {
+          appendInlineMarkdownNodes(hEl, headingText);
+        }
         container.appendChild(hEl);
         i++;
         continue;
       }
 
       // Citação >
-      if (/^\s*>\s?/.test(line)) {
+      if (QUOTE_RE.test(line)) {
         const quoteLines = [];
-        while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
-          quoteLines.push(lines[i].replace(/^\s*>\s?/, ""));
+        while (i < lines.length && QUOTE_RE.test(lines[i])) {
+          quoteLines.push(lines[i].replace(QUOTE_RE, ""));
           i++;
         }
         const bq = createEl("blockquote", "atlas-md-blockquote");
@@ -682,11 +697,11 @@
       }
 
       // Lista não ordenada (- ou *)
-      if (/^\s*[-*]\s+/.test(line)) {
+      if (UL_RE.test(line)) {
         const ul = createEl("ul", "atlas-md-list");
-        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+        while (i < lines.length && UL_RE.test(lines[i])) {
           const li = createEl("li", "atlas-md-li");
-          appendInlineMarkdownNodes(li, lines[i].replace(/^\s*[-*]\s+/, ""));
+          appendInlineMarkdownNodes(li, lines[i].replace(UL_RE, ""));
           ul.appendChild(li);
           i++;
         }
@@ -695,11 +710,11 @@
       }
 
       // Lista ordenada (1. )
-      if (/^\s*\d+\.\s+/.test(line)) {
+      if (OL_RE.test(line)) {
         const ol = createEl("ol", "atlas-md-list");
-        while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        while (i < lines.length && OL_RE.test(lines[i])) {
           const li = createEl("li", "atlas-md-li");
-          appendInlineMarkdownNodes(li, lines[i].replace(/^\s*\d+\.\s+/, ""));
+          appendInlineMarkdownNodes(li, lines[i].replace(OL_RE, ""));
           ol.appendChild(li);
           i++;
         }
@@ -713,15 +728,22 @@
         i < lines.length &&
         lines[i].trim() !== "" &&
         !lines[i].trim().startsWith("```") &&
-        !/^(-{3,}|\*{3,})$/.test(lines[i].trim()) &&
-        !/^\s*#{1,4}\s+/.test(lines[i]) &&
-        !/^\s*>\s?/.test(lines[i]) &&
-        !/^\s*[-*]\s+/.test(lines[i]) &&
-        !/^\s*\d+\.\s+/.test(lines[i])
+        !HR_RE.test(lines[i].trim()) &&
+        !HEADING_PREFIX_RE.test(lines[i]) &&
+        !QUOTE_RE.test(lines[i]) &&
+        !UL_RE.test(lines[i]) &&
+        !OL_RE.test(lines[i])
       ) {
         paraLines.push(lines[i].trim());
         i++;
       }
+
+      // Garantia defensiva de progresso: impede qualquer loop infinito mesmo diante de sintaxe inesperada
+      if (i === startIndex) {
+        paraLines.push(trimmed);
+        i++;
+      }
+
       const p = createEl("p", "atlas-md-p");
       appendInlineMarkdownNodes(p, paraLines.join(" "));
       container.appendChild(p);

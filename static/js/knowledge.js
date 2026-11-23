@@ -1910,7 +1910,10 @@
         dom.editorWordCounter.textContent = `${words} palavra(s) · ${bodyText.length}/50000`;
       }
       if (dom.editorPreviewBox && (editorMode === "preview" || editorMode === "split")) {
-        renderSafeMarkdownToDom(dom.editorPreviewBox, bodyText);
+        if (dom.editorPreviewBox.dataset.lastRenderedMd !== bodyText) {
+          renderSafeMarkdownToDom(dom.editorPreviewBox, bodyText);
+          dom.editorPreviewBox.dataset.lastRenderedMd = bodyText;
+        }
       }
     }
 

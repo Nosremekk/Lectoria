@@ -6516,7 +6516,9 @@ body {
 .atlas-md-h1,
 .atlas-md-h2,
 .atlas-md-h3,
-.atlas-md-h4 {
+.atlas-md-h4,
+.atlas-md-h5,
+.atlas-md-h6 {
   margin: 0.9rem 0 0.4rem;
   line-height: 1.3;
   color: var(--text-primary);
