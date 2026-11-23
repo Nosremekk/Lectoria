@@ -104,7 +104,9 @@ CMD ["sh", "-c", "trap 'exit 0' TERM INT; while true; do sleep 1; done"]
 """,
             encoding="utf-8",
         )
-        _run(["docker", "build", "-f", str(df), "-t", image_ref, str(build_dir)], timeout=120)
+        ver_ref = f"127.0.0.1:{reg_port}/lectoria-test:{version_tag}"
+        _run(["docker", "build", "-f", str(df), "-t", ver_ref, str(build_dir)], timeout=120)
+        _run(["docker", "tag", ver_ref, image_ref], timeout=30)
         _run(["docker", "push", image_ref], timeout=60)
 
     def get_ctr_id() -> str:
@@ -201,4 +203,5 @@ CMD ["sh", "-c", "trap 'exit 0' TERM INT; while true; do sleep 1; done"]
         # Limpeza cirúrgica apenas dos recursos descartáveis deste teste (sem prune global)
         subprocess.run(["docker", "compose", "-f", str(compose_file), "down"], capture_output=True)
         subprocess.run(["docker", "rm", "-f", ctr_name, reg_name], capture_output=True)
-        subprocess.run(["docker", "rmi", "-f", image_ref], capture_output=True)
+        for tag in ("stable", "v1", "v2", "v3-unhealthy"):
+            subprocess.run(["docker", "rmi", "-f", f"127.0.0.1:{reg_port}/lectoria-test:{tag}"], capture_output=True)

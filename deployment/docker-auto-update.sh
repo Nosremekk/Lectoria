@@ -102,7 +102,10 @@ EOF
 compute_image_metadata() {
   local image_ref="$1"
   local inspect_json
-  inspect_json="$("${DOCKER_BIN}" image inspect "${image_ref}" 2>/dev/null)" || return 1
+  if ! inspect_json="$("${DOCKER_BIN}" image inspect "${image_ref}" 2>&1)"; then
+    err "docker image inspect falhou para '${image_ref}': ${inspect_json}"
+    return 1
+  fi
 
   "${PYTHON_BIN}" -c '
 import hashlib, json, sys
