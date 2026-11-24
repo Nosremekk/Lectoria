@@ -20,7 +20,7 @@ Planejamento sequencial e mensurável derivado da Auditoria de Infraestrutura ([
 - **Critérios de Aceitação**: `ci.yml` + `publish.yml` executam suíte 1 vez por push; tentativa simulada de tag divergente de `APP_VERSION` falha; `GITHUB_STEP_SUMMARY` exibe SHA + digest.
 - **Plano de Reversão**: `git revert` dos arquivos em `.github/workflows/` e `Dockerfile`.
 
-### Fase 11.3 — Segurança HTTP e Dependências
+### Fase 11.3 — Segurança HTTP e Dependências *(Implementada e validada localmente em `refactor/v1.9.2-http-security` — `PHASE_11_3_READY_FOR_REVIEW`; ver [`13-phase-11.3-http-security.md`](./13-phase-11.3-http-security.md))*
 - **Escopo**:
   - Implementar `LECTORIA_SECURE_COOKIES` (`auto` | `true` | `false`, padrão `auto` respeitando `x-forwarded-proto == https`) em `config.py` e aplicá-lo em `lectoria_session` e `lectoria_csrf`.
   - Restringir emissão do cookie `lectoria_csrf` a páginas HTML (`/` e `/reader`) e `/api/auth/csrf`, removendo `Set-Cookie` de `/static/*`.
