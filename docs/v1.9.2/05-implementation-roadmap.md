@@ -8,7 +8,8 @@ Planejamento sequencial e mensurável derivado da Auditoria de Infraestrutura ([
 
 ## Ciclo `v1.9.2` — Estabilização de Infraestrutura, Segurança e Deploy Resiliente
 
-### Fase 11.2 — CI/CD e Versionamento *(Implementada em `refactor/v1.9.2-ci-cd-hardening`, CI remoto + integração Docker real validados com 384/384 testes via PR #1 nas Fases 11.2.1–11.2.5 — `READY_FOR_CONTROLLED_INSTALL`, aguardando autorização de instalação na VPS e merge; ver [`06`](./06-phase-11.2-ci-cd-implementation.md)–[`11`](./11-phase-11.2.5-docker-integration-validation.md))*
+### Fase 11.2 — CI/CD e Versionamento — **`PHASE_11_2_COMPLETED`** *(2026-11-24)*
+- **Concluída integralmente (Fases 11.2 a 11.2.6)**: PR #1 integrado em `main` (`9527470`), desduplicação do CI e imutabilidade GHCR validados em execução real ([Run #45461385371](https://github.com/Nosremekk/Lectoria/actions/runs/45461385371)), atualizador Docker/OCI (`deployment/docker-auto-update.sh`) validado com 384/384 testes + Docker Engine real e instalado na VPS com validação real dos 3 cenários (`NO_EXECUTABLE_CHANGE` no incidente OCI Index, `UPDATE_SUCCESS` no deploy controlado e `NO_EXECUTABLE_CHANGE` no disparo automático do timer). Relatório final: [`12-phase-11.2.6-controlled-install-and-merge.md`](./12-phase-11.2.6-controlled-install-and-merge.md).
 - **Escopo**:
   - Extrair job de testes para workflow reutilizável `_test-suite.yml` eliminando execução duplicada entre `ci.yml` e `publish.yml` em pushes na `main`.
   - Garantir imutabilidade de tags Docker (`push` em `main` publica `:stable` + `:sha-<shortsha>`; `push` de tag `vX.Y.Z` valida igualdade com `config.APP_VERSION`, bloqueia sobrescrita de tag existente e publica/promove `:vX.Y.Z`, `:X.Y.Z` e `:stable` com o mesmo digest).
@@ -32,16 +33,19 @@ Planejamento sequencial e mensurável derivado da Auditoria de Infraestrutura ([
 - **Critérios de Aceitação**: 360+ testes verdes; zero violações CSP em todos os 55 testes E2E (PDF, EPUB, Atlas); `curl -I /static/js/app.js` sem `Set-Cookie`; `Set-Cookie` com `Secure` atrás de HTTPS/proxy; build Docker reproduzível a partir de versões fixadas.
 - **Plano de Reversão**: Reverter commit da Fase 11.3 ou definir `LECTORIA_SECURE_COOKIES=false` e remover header `CSP-Report-Only`.
 
-### Fase 11.4 — Deploy Resiliente e Rollback na VPS
-- **Escopo**:
-  - Com autorização administrativa na VPS, inspecionar `/usr/local/sbin/lectoria-auto-update`.
-  - Evoluir o script de auto-update com: (1) verificação prévia de digest (idempotente), (2) snapshot SQLite pré-update (`lectoria_pre_update_*.db`, retenção 5 cópias) + registro de `PRE_SCHEMA_VERSION`, (3) validação de `/api/health` pós-start (até 45 s), (4) rollback automático seguro para `OLD_IMAGE_ID` (tratando explicitamente o Caso A sem migração vs. Caso B com migração de schema).
-  - Aplicar endurecimento do `compose.yaml` na VPS preservando 100% os bind mounts `/storage/*`: `mem_limit: 1g`, `pids_limit: 128`, `no-new-privileges:true`, `LECTORIA_SECURE_COOKIES: "true"`, rotação `json-file` (`10m × 3`) e `healthcheck` em `/api/health`.
-- **Dependências**: Fases 11.2 e 11.3.
-- **Complexidade**: Média.
+### Fase 11.4 — Revisão Operacional Complementar e Hardening do Compose na VPS
+- **Itens já antecipados e concluídos na Fase 11.2 (não repetir)**:
+  - Atualizador Docker/OCI versionado (`deployment/docker-auto-update.sh`) com comparação por `exec_fp`, lock `flock`, backup preventivo obrigatório (`lectoria-backup.service`), escrita atômica de `blocked` e `last-good.json` com referências imutáveis e tratamento *fail-closed* preservando schema SQLite.
+  - Resolução do incidente de OCI Index e validação operacional do `lectoria-auto-update.timer` na VPS.
+- **Escopo remanescente para a Fase 11.4**:
+  - Aplicar endurecimento do `compose.yaml` na VPS preservando 100% os bind mounts `/storage/*`: `mem_limit: 1g`, `pids_limit: 128`, `no-new-privileges:true`, `LECTORIA_SECURE_COOKIES: "true"`, `LECTORIA_FORWARDED_ALLOW_IPS` restrito, rotação `json-file` (`10m × 3`) e `healthcheck` em `/api/health`.
+  - Executar teste controlado de restauração completa de backup em ambiente descartável/isolado (além da verificação estrutural `PRAGMA integrity_check`).
+  - Documentar procedimento operacional consolidado de rollback assistido para releases com migração de schema SQLite.
+- **Dependências**: Fase 11.3 (`LECTORIA_SECURE_COOKIES` e `LECTORIA_FORWARDED_ALLOW_IPS`).
+- **Complexidade**: Baixa–Média (reduzida após antecipação do atualizador na Fase 11.2).
 - **Riscos**: Erro de permissão ou sintaxe no `compose.yaml` derrubar o container momentaneamente.
-- **Critérios de Aceitação**: Teste controlado de dry-run/rollback validado; container sobe `healthy` preservando 238 livros, 5 usuários, Schema v13 e `lectoria-backup.timer` ativo; zero processos Restic/Rclone.
-- **Plano de Reversão**: Restaurar cópia `compose.yaml.bak` e `/usr/local/sbin/lectoria-auto-update.bak` + `docker compose up -d`.
+- **Critérios de Aceitação**: Container sobe `healthy` com Compose endurecido preservando 238 livros, 5 usuários, Schema v13 e `lectoria-backup.timer` ativo; zero processos Restic/Rclone; restauração de backup validada em ambiente isolado.
+- **Plano de Reversão**: Restaurar cópia `compose.yaml.bak` + `docker compose up -d`.
 
 ### Fase 11.5 — Validação e Release `v1.9.2`
 - **Escopo**:
