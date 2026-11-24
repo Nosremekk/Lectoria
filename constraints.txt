@@ -1,0 +1,14 @@
+# ==============================================================================
+# Lectoria — Constraints de Dependências de Produção (Reprodutibilidade)
+# Fixa versões validadas das dependências diretas e transitivas puras Python
+# utilizadas pelo Dockerfile (Python 3.12), CI e instalações independentes.
+# ==============================================================================
+fastapi==0.162.0
+starlette==1.10.0
+pydantic==2.14.2
+uvicorn==0.54.0
+pypdf==6.21.4
+anyio==4.15.1
+click==8.5.0
+h11==0.16.0
+idna==3.20

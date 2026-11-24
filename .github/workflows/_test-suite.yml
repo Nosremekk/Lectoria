@@ -23,6 +23,7 @@ jobs:
           cache: "pip"
           cache-dependency-path: |
             requirements.txt
+            constraints.txt
             requirements-dev.txt
 
       - name: Install system, Python, and Playwright dependencies
@@ -30,7 +31,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends sqlite3
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          pip install -r requirements-dev.txt -c constraints.txt
           playwright install --with-deps chromium
 
       - name: Verify Python bytecode compilation

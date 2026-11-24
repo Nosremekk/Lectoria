@@ -13,6 +13,10 @@ services:
       - LECTORIA_DATA_DIR=/app/data
       - LECTORIA_LIBRARY_DIR=/app/books
       - LECTORIA_BACKUPS_DIR=/app/backups
+      - LECTORIA_SECURE_COOKIES=auto
+      - LECTORIA_FORWARDED_ALLOW_IPS=127.0.0.1,::1
+      - LECTORIA_CSP_MODE=report-only
+      - LECTORIA_HSTS_ENABLED=false
       - TZ=America/Sao_Paulo
     volumes:
       # Dados da aplicação: banco SQLite, capas extraídas e sessões
