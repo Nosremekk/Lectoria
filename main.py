@@ -16,7 +16,6 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response, status
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -247,6 +246,70 @@ app = FastAPI(
 CSRF_COOKIE_NAME = "lectoria_csrf"
 SAFE_HTTP_METHODS = {"GET", "HEAD", "OPTIONS"}
 
+DEFAULT_HTML_CSP = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; "
+    "font-src 'self' data: blob:; "
+    "connect-src 'self' blob:; "
+    "worker-src 'self' blob:; "
+    "frame-src 'self' blob:; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "frame-ancestors 'self'; "
+    "form-action 'self'"
+)
+DEFAULT_PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+
+
+def is_effective_https_request(request: Request) -> bool:
+    """
+    Determina se a requisição efetiva do cliente utilizou HTTPS.
+    Confia em X-Forwarded-Proto exclusivamente quando o peer imediato pertence
+    a config.FORWARDED_ALLOW_IPS (impedindo spoofing por clientes não confiáveis).
+    """
+    if request.url.scheme.lower() == "https":
+        return True
+    peer_host = request.client.host if request.client else None
+    if not config.is_trusted_proxy_ip(peer_host):
+        return False
+    raw_proto = request.headers.get("x-forwarded-proto", "")
+    if not raw_proto:
+        return False
+    first_proto = raw_proto.split(",")[0].strip().lower()
+    return first_proto == "https"
+
+
+def should_use_secure_cookies(request: Request) -> bool:
+    """Resolve o atributo Secure dos cookies conforme LECTORIA_SECURE_COOKIES."""
+    mode = config.SECURE_COOKIES_MODE
+    if mode == "true":
+        return True
+    if mode == "false":
+        return False
+    return is_effective_https_request(request)
+
+
+def get_effective_client_ip(request: Request, allow_testclient_remote_hint: bool = False) -> Optional[str]:
+    """
+    Retorna o IP efetivo do cliente respeitando X-Forwarded-For somente quando
+    proveniente de proxy explicitamente autorizado em config.FORWARDED_ALLOW_IPS.
+    """
+    peer_host = request.client.host if request.client else None
+    raw_xff = request.headers.get("x-forwarded-for", "").strip()
+    if raw_xff:
+        first_ip = raw_xff.split(",")[0].strip()
+        if config.is_trusted_proxy_ip(peer_host):
+            return first_ip or peer_host
+        if (
+            allow_testclient_remote_hint
+            and peer_host == "testclient"
+            and first_ip not in ("127.0.0.1", "::1", "localhost")
+        ):
+            return first_ip
+    return peer_host
+
 
 @app.middleware("http")
 async def csrf_and_security_middleware(request: Request, call_next):
@@ -254,7 +317,8 @@ async def csrf_and_security_middleware(request: Request, call_next):
     Middleware de segurança:
     1. Valida correspondência de Host com Origin/Referer em requisições mutantes para barrar CSRF cross-origin.
     2. Aplica validação Double Submit Cookie CSRF caso o cookie lectoria_csrf esteja presente.
-    3. Emite cookie lectoria_csrf transparente para clientes em navegação (GET/HEAD).
+    3. Aplica cabeçalhos defensivos (Permissions-Policy, CSP configurável e HSTS opcional em HTTPS).
+    4. Emite cookie lectoria_csrf transparente apenas em páginas HTML (nunca em /static/*).
     """
     # 1. Proteção de Origem e CSRF para métodos que modificam estado
     if request.method not in SAFE_HTTP_METHODS:
@@ -305,18 +369,32 @@ async def csrf_and_security_middleware(request: Request, call_next):
 
     response = await call_next(request)
 
+    path = request.url.path
+    is_html_page = (
+        request.method in SAFE_HTTP_METHODS
+        and not path.startswith("/api/")
+        and not path.startswith("/static/")
+    )
+
     # 3. Cabeçalhos fundamentais de proteção contra MIME sniffing, clickjacking, vazamento de referer e cache privado de conhecimento
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    if request.url.path.startswith("/api/knowledge"):
+    if path.startswith("/api/knowledge"):
         response.headers["Cache-Control"] = "private, no-store"
 
-    # 4. Emissão transparente do cookie CSRF em navegação de páginas HTML (fora de /api/)
-    is_html_page = (
-        request.method in SAFE_HTTP_METHODS
-        and not request.url.path.startswith("/api/")
-    )
+    if is_html_page:
+        response.headers.setdefault("Permissions-Policy", DEFAULT_PERMISSIONS_POLICY)
+        csp_mode = config.CSP_MODE
+        if csp_mode == "report-only":
+            response.headers.setdefault("Content-Security-Policy-Report-Only", DEFAULT_HTML_CSP)
+        elif csp_mode == "enforce":
+            response.headers.setdefault("Content-Security-Policy", DEFAULT_HTML_CSP)
+
+    if config.HSTS_ENABLED and is_effective_https_request(request):
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
+    # 4. Emissão transparente do cookie CSRF apenas em páginas HTML (nunca em /static/* nem /api/*)
     if is_html_page and CSRF_COOKIE_NAME not in request.cookies:
         new_csrf = secrets.token_urlsafe(32)
         response.set_cookie(
@@ -324,6 +402,7 @@ async def csrf_and_security_middleware(request: Request, call_next):
             value=new_csrf,
             httponly=False,  # Legível pelo JavaScript para inclusão no cabeçalho X-CSRF-Token
             samesite="lax",
+            secure=should_use_secure_cookies(request),
             path="/",
         )
 
@@ -1253,7 +1332,7 @@ def auth_status(request: Request):
 
 
 @app.post("/api/auth/setup")
-def setup_initial_admin(payload: SetupPayload, response: Response):
+def setup_initial_admin(payload: SetupPayload, request: Request, response: Response):
     """Configura o primeiro administrador do sistema quando nenhum existir."""
     if has_admin_user():
         raise HTTPException(
@@ -1274,6 +1353,7 @@ def setup_initial_admin(payload: SetupPayload, response: Response):
             value=token,
             httponly=True,
             samesite="lax",
+            secure=should_use_secure_cookies(request),
             path="/",
             max_age=7 * 24 * 3600,
         )
@@ -1285,7 +1365,7 @@ def setup_initial_admin(payload: SetupPayload, response: Response):
 @app.post("/api/auth/login")
 def login(payload: LoginPayload, request: Request, response: Response):
     """Autentica o usuário e inicializa cookie de sessão HTTP seguro."""
-    client_ip = request.client.host if request.client else ""
+    client_ip = get_effective_client_ip(request) or ""
     try:
         user = authenticate_user(payload.username, payload.password, client_ip=client_ip)
         token = create_session(user["id"])
@@ -1294,6 +1374,7 @@ def login(payload: LoginPayload, request: Request, response: Response):
             value=token,
             httponly=True,
             samesite="lax",
+            secure=should_use_secure_cookies(request),
             path="/",
             max_age=7 * 24 * 3600,
         )
@@ -1314,7 +1395,13 @@ def logout(request: Request, response: Response):
     if token:
         destroy_session(token)
 
-    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=should_use_secure_cookies(request),
+    )
     return {"status": "success", "message": "Sessão finalizada com sucesso."}
 
 
@@ -1336,6 +1423,7 @@ def get_csrf_token_endpoint(request: Request, response: Response):
             value=token,
             httponly=False,
             samesite="lax",
+            secure=should_use_secure_cookies(request),
             path="/",
         )
     return {"csrf_token": token}
@@ -1418,8 +1506,7 @@ def browse_sources_directories_endpoint(request: Request, path: Optional[str] = 
     Permite explorar pastas autorizadas sem digitar caminhos manualmente.
     """
     require_admin(request)
-    forwarded_for = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-    client_host = forwarded_for or (request.client.host if request.client else None)
+    client_host = get_effective_client_ip(request, allow_testclient_remote_hint=True)
     try:
         return browse_server_directories(raw_path=path, client_host=client_host)
     except InvalidSourceError as e:
@@ -1436,8 +1523,7 @@ def pick_native_directory_endpoint(
     Bloqueado para acessos remotos ou ambientes sem sessão gráfica.
     """
     require_admin(request)
-    forwarded_for = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-    client_host = forwarded_for or (request.client.host if request.client else None)
+    client_host = get_effective_client_ip(request, allow_testclient_remote_hint=True)
     initial_dir = payload.initial_dir if payload else None
     try:
         return pick_directory_native(client_host=client_host, initial_dir=initial_dir)
