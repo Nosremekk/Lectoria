@@ -1,6 +1,6 @@
 services:
   lectoria:
-    image: ghcr.io/nosremekk/lectoria:latest
+    image: ghcr.io/nosremekk/lectoria:stable
     # Para compilar localmente em vez de usar a imagem do registro, descomente a linha abaixo:
     # build: .
     container_name: lectoria
@@ -22,7 +22,7 @@ services:
       # Backups automáticos de segurança e integridade
       - lectoria_backups:/app/backups
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/books', timeout=2)"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=4)"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -21,9 +21,16 @@ RUN python -m venv /opt/venv \
 # Estágio 2: Imagem final enxuta de execução
 FROM python:3.12-slim
 
+ARG VCS_REF="unknown"
+ARG APP_VERSION="dev"
+ARG BUILD_DATE="unknown"
+
 LABEL org.opencontainers.image.title="Lectoria" \
       org.opencontainers.image.description="Servidor pessoal auto-hospedado para gerenciamento e leitura de livros digitais (PDF/EPUB)" \
       org.opencontainers.image.source="https://github.com/Nosremekk/Lectoria" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.licenses="MIT"
 
 ENV PATH="/opt/venv/bin:$PATH" \
