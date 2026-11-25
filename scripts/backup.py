@@ -22,6 +22,7 @@ from backup_service import (
     list_backups,
     prune_backups,
     restore_backup,
+    restore_snapshot_to_directory,
     verify_sqlite_integrity,
     BackupError,
 )
@@ -62,7 +63,18 @@ def main():
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Ignora a confirmação interativa na restauração",
+        help="Ignora a confirmação interativa e autoriza sobrescrita na restauração",
+    )
+    parser.add_argument(
+        "--target-dir",
+        type=str,
+        metavar="DIR",
+        help="Diretório de dados alternativo para restauração isolada (suporta snapshots com covers.tar.gz)",
+    )
+    parser.add_argument(
+        "--keep-sessions",
+        action="store_true",
+        help="Preserva sessões existentes no backup (por padrão, sessões são invalidadas na restauração)",
     )
 
     args = parser.parse_args()
@@ -124,8 +136,11 @@ def main():
 
     elif args.restore:
         target_file = args.restore
-        print(f"[ATENÇÃO] Você solicitou restaurar o banco a partir de: {target_file}")
-        print("          Isso substituirá o banco atual 'data/lectoria.db'.")
+        target_path_obj = Path(target_file)
+        use_snapshot_mode = bool(args.target_dir) or target_path_obj.is_dir()
+        dest_desc = args.target_dir or str(config.DATA_DIR)
+        print(f"[ATENÇÃO] Você solicitou restaurar o backup a partir de: {target_file}")
+        print(f"          Diretório de dados de destino: {dest_desc}")
 
         if not args.force:
             confirm = input("Tem certeza de que deseja prosseguir com a restauração? (s/N): ").strip().lower()
@@ -134,12 +149,26 @@ def main():
                 sys.exit(0)
 
         try:
-            res = restore_backup(target_file)
+            if use_snapshot_mode:
+                res = restore_snapshot_to_directory(
+                    target_path_obj,
+                    Path(args.target_dir) if args.target_dir else config.DATA_DIR,
+                    allow_overwrite=bool(args.force),
+                    invalidate_sessions=not args.keep_sessions,
+                )
+            else:
+                res = restore_backup(
+                    target_file,
+                    allow_overwrite=True,
+                    invalidate_sessions=not args.keep_sessions,
+                )
             print(f"[OK] Restauração concluída com sucesso!")
             print(f"     Origem: {res['restored_from']}")
             print(f"     Destino: {res['target_path']}")
+            print(f"     Schema restaurado: v{res.get('schema_version')}")
             print(f"     Integridade pós-restauração verificada: {res['verified_integrity']}")
-            print(f"     Capas personalizadas restauradas: {res.get('restored_covers_count', 0)}")
+            print(f"     Capas restauradas: {res.get('restored_covers_count', 0)}")
+            print(f"     Sessões antigas invalidadas: {res.get('invalidated_sessions_count', 0)}")
         except BackupError as e:
             print(f"[ERRO na Restauração] {e}", file=sys.stderr)
             sys.exit(1)
