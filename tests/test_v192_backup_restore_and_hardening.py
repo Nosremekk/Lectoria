@@ -529,6 +529,30 @@ def test_v192_extract_covers_blocks_preexisting_symlinks_and_size_limits(tmp_pat
     assert not clean_dest.exists()
 
 
+def test_v192_extract_covers_normalizes_data_covers_prefix(tmp_path):
+    """
+    Regressão real identificada no drill com snapshot da VPS:
+    archives gerados com `tar -czf covers.tar.gz -C <root> data/covers` possuem
+    entradas `data/covers/<arquivo>` que devem ser extraídas diretamente em `dest_dir/<arquivo>`.
+    """
+    archive = tmp_path / "vps_style_covers.tar.gz"
+    with tarfile.open(archive, "w:gz") as tf:
+        for name, content in (
+            ("data/covers/book1_custom.jpg", b"CUSTOM_JPG"),
+            ("data/covers/book2_extracted.png", b"EXTRACTED_PNG"),
+        ):
+            info = tarfile.TarInfo(name=name)
+            info.size = len(content)
+            tf.addfile(info, io.BytesIO(content))
+
+    dest_covers = tmp_path / "restored_covers"
+    count = backup_service.extract_covers_archive_safely(archive, dest_covers)
+    assert count == 2
+    assert (dest_covers / "book1_custom.jpg").read_bytes() == b"CUSTOM_JPG"
+    assert (dest_covers / "book2_extracted.png").read_bytes() == b"EXTRACTED_PNG"
+    assert not (dest_covers / "data").exists()
+
+
 def test_v192_restore_rolls_back_db_and_covers_on_covers_swap_failure(tmp_path, monkeypatch):
     """
     Confirma que falha intermediária após substituição do banco (durante a troca de capas)

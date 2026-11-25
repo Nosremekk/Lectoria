@@ -137,8 +137,10 @@ def _normalize_safe_tar_member_relpath(raw_name: str) -> Optional[Path]:
     if parts and ":" in parts[0]:
         raise BackupError(f"Prefixo de unidade rejeitado no arquivo de capas: {raw_name!r}")
 
-    # Aceita tanto 'covers/<arquivo>' quanto './<arquivo>' ou '<arquivo>'
-    if parts and parts[0] == "covers":
+    # Aceita 'data/covers/<arquivo>', 'covers/<arquivo>', './<arquivo>' ou '<arquivo>'
+    if len(parts) >= 2 and parts[0] == "data" and parts[1] == "covers":
+        parts = parts[2:]
+    elif parts and parts[0] == "covers":
         parts = parts[1:]
     if not parts:
         return None
