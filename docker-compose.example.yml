@@ -1,8 +1,15 @@
 services:
   lectoria:
-    image: ghcr.io/nosremekk/lectoria:latest
+    image: ghcr.io/nosremekk/lectoria:stable
     container_name: lectoria
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
     ports:
       - "8765:8765"
     environment:
@@ -11,13 +18,17 @@ services:
       - LECTORIA_DATA_DIR=/app/data
       - LECTORIA_LIBRARY_DIR=/app/books
       - LECTORIA_BACKUPS_DIR=/app/backups
+      - LECTORIA_SECURE_COOKIES=auto
+      - LECTORIA_FORWARDED_ALLOW_IPS=127.0.0.1,::1
+      - LECTORIA_CSP_MODE=report-only
+      - LECTORIA_HSTS_ENABLED=false
       - TZ=America/Sao_Paulo
     volumes:
       - lectoria_data:/app/data
       - /caminho/para/seus/livros:/app/books:ro
       - lectoria_backups:/app/backups
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/books', timeout=2)"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=4)"]
       interval: 30s
       timeout: 5s
       retries: 3
