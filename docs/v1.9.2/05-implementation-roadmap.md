@@ -20,7 +20,8 @@ Planejamento sequencial e mensurável derivado da Auditoria de Infraestrutura ([
 - **Critérios de Aceitação**: `ci.yml` + `publish.yml` executam suíte 1 vez por push; tentativa simulada de tag divergente de `APP_VERSION` falha; `GITHUB_STEP_SUMMARY` exibe SHA + digest.
 - **Plano de Reversão**: `git revert` dos arquivos em `.github/workflows/` e `Dockerfile`.
 
-### Fase 11.3 — Segurança HTTP e Dependências *(Implementada e validada localmente em `refactor/v1.9.2-http-security` — `PHASE_11_3_READY_FOR_REVIEW`; ver [`13-phase-11.3-http-security.md`](./13-phase-11.3-http-security.md))*
+### Fase 11.3 — Segurança HTTP e Dependências — **`PHASE_11_3_COMPLETED`** *(2026-11-25)*
+- **Concluída integralmente**: PR #2 integrado em `main` (`4d682e3`), publicação validada no GHCR ([Run #45679963000](https://github.com/Nosremekk/Lectoria/actions/runs/45679963000), `390 passed`, `:stable` promovida para `sha256:1eac5477...` preservando `:v1.9.1` e `:1.9.1`), deploy controlado via `lectoria-auto-update.service` com `UPDATE_SUCCESS`, cabeçalhos HTTPS reais validados via Tailscale Serve, checklist funcional manual aprovado pelo proprietário no navegador (login/logout, cookies `Secure`/`HttpOnly`/`SameSite`, Biblioteca/capas, Descoberta/Atlas, PDF, EPUB, progresso/anotações e zero violações CSP nos cenários testados) e execução automática subsequente do timer confirmada com `NO_EXECUTABLE_CHANGE` (`2026-11-25 19:29:43–19:29:44 UTC`). Relatório final: [`13-phase-11.3-http-security.md`](./13-phase-11.3-http-security.md).
 - **Escopo**:
   - Implementar `LECTORIA_SECURE_COOKIES` (`auto` | `true` | `false`, padrão `auto` respeitando `x-forwarded-proto == https`) em `config.py` e aplicá-lo em `lectoria_session` e `lectoria_csrf`.
   - Restringir emissão do cookie `lectoria_csrf` a páginas HTML (`/` e `/reader`) e `/api/auth/csrf`, removendo `Set-Cookie` de `/static/*`.

@@ -1,8 +1,8 @@
 # Lectoria — Fase 11.3: Segurança HTTP, Proxies Confiáveis, CSP e Dependências
 
-- **Status**: **`PHASE_11_3_READY_FOR_REVIEW`** *(implementado e validado localmente na branch `refactor/v1.9.2-http-security`; sem push, sem merge em `main`, sem alteração na VPS, `APP_VERSION = "1.9.1"`, `SCHEMA_VERSION = 13`)*
-- **Data**: `2026-11-24`
-- **Branch**: `refactor/v1.9.2-http-security` (derivada de `origin/main` @ `9527470`)
+- **Status**: **`PHASE_11_3_COMPLETED`** *(integrada em `main`, publicada em `:stable`, implantada de forma controlada na VPS e validada via testes automatizados, HTTPS real e checklist funcional manual do proprietário; `APP_VERSION = "1.9.1"`, `SCHEMA_VERSION = 13`)*
+- **Data**: `2026-11-24` (implementação e CI) · `2026-11-25` (merge, publicação, deploy controlado e encerramento)
+- **Branch / PR / Commit em `main`**: `refactor/v1.9.2-http-security` @ `d207614` → [PR #2](https://github.com/Nosremekk/Lectoria/pull/2) integrado em `main` no commit `4d682e3d2c611b3e67062a51f07c922a20aadecf` (sem tag Git nem release)
 
 ---
 
@@ -68,6 +68,10 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 - **Revisão de isolamento do leitor EPUB (`static/js/reader.js:4789-4794`)**:
   - Confirmado `allowScriptedContent: false` no `epubBook.renderTo(...)` (aplica `sandbox` sem `allow-scripts` no iframe do capítulo) + interceptação bloqueando `javascript:`, `data:` e `vbscript:` em links internos. *Nota de risco residual*: ausência de violações CSP não substitui o `sandbox` do iframe; manter `allowScriptedContent: false` obrigatório e nunca injetar HTML de EPUB diretamente no documento principal.
 - **Resultado da suíte local**: **389 passed, 1 skipped (Docker Engine ausente no host local), 0 failed** — `333` unitários/API + `56` E2E Playwright (`253,73 s`), além de `py_compile` e sintaxe JS (V8) aprovados.
+- **Resultado do CI remoto (GitHub Actions `ubuntu-latest`, Python 3.12 + `-c constraints.txt`)**:
+  - **[Run #45488808181](https://github.com/Nosremekk/Lectoria/actions/runs/45488808181)** (`CI` · `push` @ `d207614`): **`completed / success`** (`702 s`) — **`390 passed, 3 warnings in 664.75s (0:11:04)`**, incluindo `test_v192_docker_real_integration_end_to_end PASSED`, `test_v192_csp_enforce_zero_violations_across_library_atlas_pdf_epub PASSED` e 5/5 de `test_v192_http_security.py`.
+  - **[Run #45488816924](https://github.com/Nosremekk/Lectoria/actions/runs/45488816924)** (`CI` · `pull_request` @ `d207614`): **`completed / success`** (`846 s`, `390 passed, 0 failed`).
+  - **[Run #45679963000](https://github.com/Nosremekk/Lectoria/actions/runs/45679963000)** (`Publish Docker Image (GHCR)` · `push` em `main` @ `4d682e3`): **`completed / success`** (`18:55:01Z` → `19:05:52Z`) — `Preflight` (`success`), `Mandatory Test Suite` (**`390 passed, 3 warnings in 557.01s`**), build `:sha-4d682e3`, smoke test no digest imutável (`/api/health` = `healthy`, `1.9.1`) e promoção para `:stable` (`sha256:1eac54772ffeb00e60aed00adb41b2597d7fd0950495fb299fe862e2f9fd51cd`). Tags versionadas `:v1.9.1` e `:1.9.1` permaneceram intactas (`sha256:da4dca9cac06d28817d62b0d48224c5063a3e993e115b39682d2e766c1b6a253`).
 - **Auditoria de dependências (`2026-11-24`, venv temporário descartável em `/tmp`)**:
   - **`pip check`**: `No broken requirements found.`
   - **`pip-audit 2.10.1`** (`-r requirements.txt` com `-c constraints.txt`, auditando 14 pacotes fixados + `pydantic-core==2.50.2`): **`No known vulnerabilities found`** (`exit 0`).
@@ -75,34 +79,30 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 
 ---
 
-## 6. Topologia Real da VPS e Plano Operacional Conciso de Integração (NÃO EXECUTAR AGORA)
+## 6. Integração Controlada em Produção e Encerramento (`2026-11-25`)
 
-### Topologia Observada na VPS (`lectoria-vps`, leitura sem `sudo` em `2026-11-24`)
-- **Porta publicada**: `127.0.0.1:8765` (escuta **exclusiva em loopback**, sem exposição direta em `eth0` `187.41.126.101` ou `tailscale0` `100.82.105.34`).
-- **Único caminho de acesso externo**: `tailscale serve` (`100.82.105.34:443` / `https://srv2137600.tailf5c3ce.ts.net`, tailnet-only) → proxy `http://127.0.0.1:8765`.
-- **Bridges Docker `UP` no host**: `br-f037bd487a0f` (`172.18.0.1/16`), `br-a3631ebb936e` (`172.19.0.1/16`), `br-beac29fe2d58` (`172.20.0.1/16`).
-- **Limitação (sem `sudo`)**: para identificar exatamente qual gateway pertence ao container `lectoria` (evitando adotar `172.16.0.0/12` amplo), executar antes da integração:
-  ```bash
-  sudo docker inspect lectoria --format '{{range .NetworkSettings.Networks}}Gateway={{.Gateway}} IP={{.IPAddress}}{{end}}'
-  ```
-- **Configuração recomendada para a VPS**: `LECTORIA_SECURE_COOKIES: "true"` (adequado porque o único acesso é HTTPS via Tailscale Serve, preservando `auto` como padrão genérico da aplicação), `LECTORIA_FORWARDED_ALLOW_IPS: "127.0.0.1,::1,<GATEWAY_EXATO>"` (ex.: `127.0.0.1,::1,172.18.0.1`), `LECTORIA_CSP_MODE: "report-only"`, `LECTORIA_HSTS_ENABLED: "false"`.
+### 6.1 Verificações Automatizadas (CI, GHCR, Deploy Controlado e HTTPS Real)
+- **Momento A (Preparação na VPS, `2026-11-24`)**: `lectoria-auto-update.timer` pausado (`inactive`), backup de `compose.yaml` em `/root/lectoria-compose-backup-20261124T213055Z/compose.yaml`, backup preventivo em `/srv/nosreme/lectoria/backups/2026-11-24T21-30-56Z` (`integrity=ok`, `schema=13`, `covers.tar.gz` com `213` entradas), gateway real identificado (`lectoria_default`, `172.19.0.1`) e 4 variáveis de segurança configuradas no `compose.yaml` (`LECTORIA_SECURE_COOKIES="true"`, `LECTORIA_FORWARDED_ALLOW_IPS="127.0.0.1,::1,172.19.0.1"`, `LECTORIA_CSP_MODE="report-only"`, `LECTORIA_HSTS_ENABLED="false"`).
+- **Momento B (Merge, Publicação e Deploy Controlado, `2026-11-25`)**:
+  - PR #2 integrado em `main` no commit `4d682e3d2c611b3e67062a51f07c922a20aadecf` (sem tag Git nem release).
+  - `publish.yml` (`Run #45679963000`): `390 passed`, smoke test `@digest` aprovado, `:stable` e `:sha-4d682e3` em `sha256:1eac54772ffeb00e60aed00adb41b2597d7fd0950495fb299fe862e2f9fd51cd`, `:v1.9.1` e `:1.9.1` intactas (`sha256:da4dca9c...`).
+  - `lectoria-auto-update.service` (`19:14:01–19:14:21 UTC`): `SVC_EXIT_CODE=0`, `EXECUTABLE_CHANGE_DETECTED` (`51fc906f...` → `9ee4b453...`), backup obrigatório `/srv/nosreme/lectoria/backups/2026-11-25T19-14-08Z` (`41 MB`, `integrity=ok`, `schema=13`, `238` livros, `5` usuários, `213` capas), `UPDATE_SUCCESS`, novo container `c49acdfd29f4ae75857f8438bacb6e5c66e27e825a2fc9d6587ebd2123d67071`, `OCI_REVISION_MATCH=YES`, `Health=healthy`, `Restarts=0`, `BLOCKED_AFTER=NO`.
+  - Integridade SQLite (WAL / `mode=ro`) preservada com contagens idênticas antes/depois (`books=238`, `users=5`, `reading_progress=54`, `highlights=0`, `notes=19`, `reading_clubs=1`, `concepts=4`, `reflections=1`, `knowledge_links=4`).
+  - Cabeçalhos HTTPS reais via Tailscale Serve (`https://srv2137600.tailf5c3ce.ts.net/`): `Content-Security-Policy-Report-Only`, `Permissions-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, `Set-Cookie: lectoria_csrf=...; Path=/; SameSite=lax; Secure` em `/`, **sem `Set-Cookie`** em `/static/js/app.js?v=1.9.1`, **sem HSTS** (`LECTORIA_HSTS_ENABLED=false`).
+- **Momento C (Execução Automática Pós-Reativação, `2026-11-25`)**:
+  - `lectoria-auto-update.timer` reativado (`enabled/active`), disparou automaticamente em `19:29:43–19:29:44 UTC` (`Result=success`, `ExecMainStatus=0`), confirmando `NO_EXECUTABLE_CHANGE`, preservação do container `c49acdfd...`, ausência de backup extra desnecessário, `lectoria-backup.timer` `enabled/active` e `nosreme-restic-backup.timer` `disabled/inactive`.
 
-### Plano Conciso de Integração Controlada (11 Passos — Aguardar Autorização)
-1. Pausar temporariamente `lectoria-auto-update.timer` na VPS (`sudo systemctl stop lectoria-auto-update.timer`).
-2. Fazer backup de `/srv/nosreme/lectoria/compose.yaml` (`compose.yaml.bak.<TS>`).
-3. Executar backup preventivo dos dados (`sudo systemctl start lectoria-backup.service`) e validar `PRAGMA integrity_check = ok`.
-4. Identificar `<GATEWAY_EXATO>` via `docker inspect` e configurar `LECTORIA_SECURE_COOKIES=true`, `LECTORIA_FORWARDED_ALLOW_IPS=127.0.0.1,::1,<GATEWAY_EXATO>` e `LECTORIA_CSP_MODE=report-only` no `compose.yaml` **antes** do merge.
-5. Confirmar compatibilidade das novas variáveis com a imagem atual (`docker compose config` sem erros; a `v1.9.1` atual apenas ignora as novas variáveis).
-6. Executar merge autorizado do PR #2 em `main` (sem criar tag).
-7. Acompanhar `publish.yml` no GHCR (`preflight` → 390 testes → `:sha-*` → smoke test → `:stable`), confirmando `:v1.9.1` intacta.
-8. Executar deploy controlado (`sudo systemctl start lectoria-auto-update.service`) e confirmar `UPDATE_SUCCESS`.
-9. Validar no navegador real via `https://srv2137600.tailf5c3ce.ts.net`: login, logout, CSRF, cookies com `Secure`, PDF, EPUB, Atlas e zero violações CSP no console.
-10. Reativar `lectoria-auto-update.timer` e confirmar execução automática com `NO_EXECUTABLE_CHANGE`.
-11. **Recuperação em caso de falha**: restaurar `compose.yaml.bak.<TS>` e fixar o digest anterior `ghcr.io/nosremekk/lectoria@sha256:6659b146d3205d9b5543eeb58b973a1c8c7cae1b3a0691533a7c0ad4cd200cce` (`docker compose up -d`), mantendo o timer pausado (sem impacto em Schema v13).
+### 6.2 Verificações Manuais Confirmadas pelo Proprietário (Navegador Real)
+Confirmadas pelo proprietário em `https://srv2137600.tailf5c3ce.ts.net` (escopo restrito aos fluxos efetivamente exercitados):
+- Login e logout funcionais.
+- Cookies `lectoria_session` (`Secure`, `HttpOnly`, `SameSite=Lax`) e `lectoria_csrf` (`Secure`, `SameSite=Lax`) presentes com os atributos esperados.
+- Biblioteca, capas, Descoberta e Atlas funcionais.
+- Leitores PDF e EPUB operacionais, com preservação de progresso e anotações.
+- Zero violações CSP observadas no Console durante os cenários testados.
 
 ---
 
 ## 7. Procedimento de Reversão e Riscos Residuais
 
-- **Reversão**: `git revert` dos commits da Fase 11.3 ou override imediato via variáveis de ambiente (`LECTORIA_SECURE_COOKIES=false`, `LECTORIA_CSP_MODE=off`, `LECTORIA_HSTS_ENABLED=false`) sem qualquer impacto em schema SQLite (`13`).
-- **Riscos residuais**: (1) EPUBs de terceiros com scripts/recursos exóticos embutidos ainda devem ser observados em `report-only` no uso real antes de mudar o padrão para `enforce`; (2) `style-src 'unsafe-inline'` permanece necessário até eventual refatoração futura dos atributos `style="..."`; (3) auditoria formal de CVEs com `pip-audit` pendente.
+- **Reversão**: `git revert` dos commits da Fase 11.3 ou override imediato via variáveis de ambiente (`LECTORIA_SECURE_COOKIES=false`, `LECTORIA_CSP_MODE=off`, `LECTORIA_HSTS_ENABLED=false`), ou retorno à imagem imutável anterior `ghcr.io/nosremekk/lectoria@sha256:6659b146d3205d9b5543eeb58b973a1c8c7cae1b3a0691533a7c0ad4cd200cce` com `/root/lectoria-compose-backup-20261124T213055Z/compose.yaml`, sem qualquer impacto em Schema v13.
+- **Riscos residuais**: (1) EPUBs de terceiros com recursos embutidos não cobertos pelos cenários testados ainda devem ser observados em `report-only` no uso cotidiano antes de promover o padrão para `enforce` (não se declara ausência universal de violações CSP fora dos cenários efetivamente testados); (2) `style-src 'unsafe-inline'` permanece necessário até eventual refatoração futura dos atributos `style="..."`; (3) `pip-audit` confirmou ausência de vulnerabilidades conhecidas na data da auditoria (`2026-11-24`), o que não garante ausência universal de vulnerabilidades futuras ou não catalogadas.
