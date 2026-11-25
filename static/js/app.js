@@ -5417,6 +5417,13 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
   } catch (_) {}
+  // Previne submit nativo sem inline onsubmit (compatível com CSP script-src 'self')
+  ["auth-form", "details-edit-form"].forEach((formId) => {
+    const formEl = document.getElementById(formId);
+    if (formEl) {
+      formEl.addEventListener("submit", (e) => e.preventDefault());
+    }
+  });
   setMainTab(currentMainTab, Object.assign({}, initialTabOpts, { skipLoad: true }));
   initAuth(initialTabOpts);
 });

@@ -4,6 +4,7 @@ Mantém parâmetros de porta, diretórios e nome do sistema centralizados, port�
 via variáveis de ambiente ou arquivo local .env (sem dependências externas).
 """
 
+import ipaddress
 import os
 from pathlib import Path
 from typing import Optional
@@ -98,6 +99,121 @@ try:
     PORT = int(os.getenv("LECTORIA_PORT", os.getenv("PORT", "8765")))
 except ValueError:
     PORT = 8765
+
+
+# =========================================================================
+# SEGURANÇA HTTP, COOKIES, PROXIES CONFIÁVEIS E CSP (Fase 11.3)
+# =========================================================================
+VALID_SECURE_COOKIES_MODES = ("auto", "true", "false")
+VALID_CSP_MODES = ("off", "report-only", "enforce")
+DEFAULT_FORWARDED_ALLOW_IPS = "127.0.0.1,::1"
+
+
+def parse_secure_cookies_mode(raw: Optional[str]) -> str:
+    """Valida LECTORIA_SECURE_COOKIES (auto | true | false)."""
+    val = (raw if raw is not None else "auto").strip().lower()
+    if not val:
+        return "auto"
+    if val not in VALID_SECURE_COOKIES_MODES:
+        raise ValueError(
+            f"LECTORIA_SECURE_COOKIES inválido: {raw!r}. "
+            f"Valores permitidos: {', '.join(VALID_SECURE_COOKIES_MODES)}."
+        )
+    return val
+
+
+def parse_csp_mode(raw: Optional[str]) -> str:
+    """Valida LECTORIA_CSP_MODE (off | report-only | enforce)."""
+    val = (raw if raw is not None else "report-only").strip().lower()
+    if not val:
+        return "report-only"
+    if val not in VALID_CSP_MODES:
+        raise ValueError(
+            f"LECTORIA_CSP_MODE inválido: {raw!r}. "
+            f"Valores permitidos: {', '.join(VALID_CSP_MODES)}."
+        )
+    return val
+
+
+def parse_bool_env(name: str, raw: Optional[str], default: bool = False) -> bool:
+    """Valida variáveis booleanas explícitas (true/false/1/0/yes/no)."""
+    if raw is None or not raw.strip():
+        return default
+    val = raw.strip().lower()
+    if val in ("true", "1", "yes", "on"):
+        return True
+    if val in ("false", "0", "no", "off"):
+        return False
+    raise ValueError(f"{name} inválido: {raw!r}. Use 'true' ou 'false'.")
+
+
+def parse_forwarded_allow_ips(raw: Optional[str]) -> list[str]:
+    """
+    Valida LECTORIA_FORWARDED_ALLOW_IPS: lista separada por vírgulas de IPs,
+    CIDRs (ex.: 127.0.0.1,::1,172.16.0.0/12) ou '*' (não recomendado em produção).
+    """
+    text = (raw if raw is not None else DEFAULT_FORWARDED_ALLOW_IPS).strip()
+    if not text:
+        return ["127.0.0.1", "::1"]
+    entries = [item.strip() for item in text.split(",") if item.strip()]
+    if not entries:
+        return ["127.0.0.1", "::1"]
+    validated: list[str] = []
+    for entry in entries:
+        if entry == "*":
+            validated.append("*")
+            continue
+        try:
+            if "/" in entry:
+                ipaddress.ip_network(entry, strict=False)
+            else:
+                ipaddress.ip_address(entry)
+        except ValueError as exc:
+            raise ValueError(
+                f"LECTORIA_FORWARDED_ALLOW_IPS contém entrada inválida {entry!r}: "
+                "informe IPs (ex.: 127.0.0.1, ::1), CIDRs (ex.: 172.16.0.0/12) ou '*'."
+            ) from exc
+        validated.append(entry)
+    return validated
+
+
+def is_trusted_proxy_ip(
+    client_host: Optional[str],
+    allow_list: Optional[list[str]] = None,
+) -> bool:
+    """Retorna True somente se client_host corresponder a um proxy explicitamente confiado."""
+    if not client_host:
+        return False
+    allowed = allow_list if allow_list is not None else FORWARDED_ALLOW_IPS
+    if "*" in allowed:
+        return True
+    host_str = client_host.strip()
+    try:
+        addr = ipaddress.ip_address(host_str)
+    except ValueError:
+        return False
+    for entry in allowed:
+        if "/" in entry:
+            net = ipaddress.ip_network(entry, strict=False)
+            if addr.version == net.version and addr in net:
+                return True
+        else:
+            try:
+                if addr == ipaddress.ip_address(entry):
+                    return True
+            except ValueError:
+                continue
+    return False
+
+
+SECURE_COOKIES_MODE = parse_secure_cookies_mode(os.getenv("LECTORIA_SECURE_COOKIES"))
+FORWARDED_ALLOW_IPS_RAW = os.getenv(
+    "LECTORIA_FORWARDED_ALLOW_IPS",
+    os.getenv("FORWARDED_ALLOW_IPS", DEFAULT_FORWARDED_ALLOW_IPS),
+)
+FORWARDED_ALLOW_IPS = parse_forwarded_allow_ips(FORWARDED_ALLOW_IPS_RAW)
+CSP_MODE = parse_csp_mode(os.getenv("LECTORIA_CSP_MODE"))
+HSTS_ENABLED = parse_bool_env("LECTORIA_HSTS_ENABLED", os.getenv("LECTORIA_HSTS_ENABLED"), default=False)
 
 
 def ensure_runtime_directories() -> None:

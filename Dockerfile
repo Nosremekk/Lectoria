@@ -12,11 +12,11 @@ ENV PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /build
-COPY requirements.txt ./
+COPY requirements.txt constraints.txt ./
 
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --upgrade pip \
-    && /opt/venv/bin/pip install -r requirements.txt
+    && /opt/venv/bin/pip install -r requirements.txt -c constraints.txt
 
 # Estágio 2: Imagem final enxuta de execução
 FROM python:3.12-slim
@@ -41,7 +41,11 @@ ENV PATH="/opt/venv/bin:$PATH" \
     LECTORIA_PORT="8765" \
     LECTORIA_DATA_DIR="/app/data" \
     LECTORIA_LIBRARY_DIR="/app/books" \
-    LECTORIA_BACKUPS_DIR="/app/backups"
+    LECTORIA_BACKUPS_DIR="/app/backups" \
+    LECTORIA_SECURE_COOKIES="auto" \
+    LECTORIA_FORWARDED_ALLOW_IPS="127.0.0.1,::1" \
+    LECTORIA_CSP_MODE="report-only" \
+    LECTORIA_HSTS_ENABLED="false"
 
 # Instala sqlite3 CLI para inspeção e rotinas de backup/integridade
 RUN apt-get update \
@@ -58,7 +62,7 @@ COPY *.py ./
 COPY static ./static
 COPY scripts ./scripts
 COPY deployment ./deployment
-COPY requirements.txt .env.example LICENSE README.md CHANGELOG.md ./
+COPY requirements.txt constraints.txt .env.example LICENSE README.md CHANGELOG.md ./
 
 # Pré-compila bytecode e garante a estrutura de diretórios para volumes persistentes
 RUN python -m compileall -q /app \
@@ -73,4 +77,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=4)"]
 
 # 1 worker: SQLite opera em modo WAL com escritor único e tarefas agendadas no processo
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8765", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# Proxies confiáveis controlados via LECTORIA_FORWARDED_ALLOW_IPS (padrão conservador: loopback)
+CMD ["sh", "-c", "exec uvicorn main:app --host \"${LECTORIA_HOST:-0.0.0.0}\" --port \"${LECTORIA_PORT:-8765}\" --workers 1 --proxy-headers --forwarded-allow-ips \"${LECTORIA_FORWARDED_ALLOW_IPS:-127.0.0.1,::1}\""]
