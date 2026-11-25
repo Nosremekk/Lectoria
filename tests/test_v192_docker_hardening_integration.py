@@ -93,12 +93,19 @@ def test_v192_real_docker_nonroot_and_hardening_runtime(tmp_path):
             timeout=30,
         )
 
-        # 1. Verifica usuário efetivo não-root
+        # 1. Verifica usuário efetivo não-root, cap_drop=ALL (CapEff=0) e NoNewPrivs=1
         who = subprocess.run(
             ["docker", "exec", ctr_name, "id", "-u"],
             check=True, capture_output=True, text=True, timeout=10,
         ).stdout.strip()
         assert int(who) == uid and int(who) != 0
+
+        proc_status = subprocess.run(
+            ["docker", "exec", ctr_name, "cat", "/proc/1/status"],
+            check=True, capture_output=True, text=True, timeout=10,
+        ).stdout
+        assert "NoNewPrivs:\t1" in proc_status
+        assert "CapEff:\t0000000000000000" in proc_status
 
         # 2. Aguarda /api/health responder 200 healthy
         health_ok = False
@@ -114,7 +121,7 @@ def test_v192_real_docker_nonroot_and_hardening_runtime(tmp_path):
                 time.sleep(0.5)
         assert health_ok, "Container endurecido não respondeu /api/health em 15s"
 
-        # 3. Confirma que rootfs (/app) e /app/books são somente-leitura
+        # 3. Confirma que rootfs (/app) e /app/books são somente-leitura, e /tmp é gravável porém noexec
         ro_app = subprocess.run(
             ["docker", "exec", ctr_name, "sh", "-c", "touch /app/should_fail 2>/dev/null"],
             capture_output=True, text=True, timeout=10,
@@ -125,8 +132,38 @@ def test_v192_real_docker_nonroot_and_hardening_runtime(tmp_path):
             capture_output=True, text=True, timeout=10,
         )
         assert ro_books.returncode != 0
+        tmp_check = subprocess.run(
+            ["docker", "exec", ctr_name, "sh", "-c", "echo '#!/bin/sh' > /tmp/t.sh && chmod +x /tmp/t.sh && /tmp/t.sh 2>/dev/null"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert tmp_check.returncode != 0
 
-        # 4. Confirma criação de backup e verificação SQLite dentro do container não-root
+        # 4. Confirma operação funcional real: setup, login, CSRF, Atlas + exportação (usa /tmp), backup e restauração isolada
+        func_res = subprocess.run(
+            [
+                "docker", "exec", ctr_name, "python3", "-c",
+                "import http.cookiejar, json, urllib.request; "
+                "cj = http.cookiejar.CookieJar(); "
+                "op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj)); "
+                "csrf = json.loads(op.open('http://127.0.0.1:8765/api/auth/csrf').read())['csrf_token']; "
+                "req = urllib.request.Request('http://127.0.0.1:8765/api/auth/setup', "
+                "  data=json.dumps({'username':'dockadmin','password':'DockPassword!2026','display_name':'Dock'}).encode(), "
+                "  headers={'Content-Type':'application/json','x-csrf-token':csrf}); "
+                "assert op.open(req).status in (200, 201); "
+                "csrf2 = json.loads(op.open('http://127.0.0.1:8765/api/auth/csrf').read())['csrf_token']; "
+                "req_c = urllib.request.Request('http://127.0.0.1:8765/api/knowledge/concepts', "
+                "  data=json.dumps({'name':'DockerHardening','description':'ok'}).encode(), "
+                "  headers={'Content-Type':'application/json','x-csrf-token':csrf2}); "
+                "assert op.open(req_c).status in (200, 201); "
+                "exp = op.open('http://127.0.0.1:8765/api/knowledge/export?format=json'); "
+                "assert exp.status == 200 and b'DockerHardening' in exp.read(); "
+                "print('DOCKER_FUNCTIONAL_OK')",
+            ],
+            check=True, capture_output=True, text=True, timeout=30,
+        )
+        assert "DOCKER_FUNCTIONAL_OK" in func_res.stdout
+
+        # 5. Confirma criação de backup, verificação SQLite e restauração isolada dentro do container não-root
         bkp = subprocess.run(
             ["docker", "exec", ctr_name, "python3", "scripts/backup.py", "--backup"],
             check=True, capture_output=True, text=True, timeout=30,
@@ -137,6 +174,15 @@ def test_v192_real_docker_nonroot_and_hardening_runtime(tmp_path):
             check=True, capture_output=True, text=True, timeout=30,
         )
         assert "PRAGMA integrity_check: ok" in vrf.stdout
+        rst = subprocess.run(
+            [
+                "docker", "exec", ctr_name, "sh", "-c",
+                "BKP=$(ls -1t /app/backups/*.db | head -n 1) && "
+                "python3 scripts/backup.py --restore \"$BKP\" --target-dir /app/backups/isolated_restore_check --force",
+            ],
+            check=True, capture_output=True, text=True, timeout=30,
+        )
+        assert "Restauração concluída com sucesso" in rst.stdout
 
     finally:
         subprocess.run(["docker", "rm", "-f", ctr_name], capture_output=True)

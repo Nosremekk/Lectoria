@@ -482,6 +482,102 @@ def test_v192_restore_rejects_invalid_and_unsafe_covers_tar(tmp_path):
     with pytest.raises(backup_service.BackupError, match="inseguro"):
         backup_service.restore_snapshot_to_directory(base_snap, target_dir)
 
+    # (e) Hardlink malicioso
+    with tarfile.open(base_snap / "covers.tar.gz", "w:gz") as tf:
+        info = tarfile.TarInfo(name="covers/hardlink.png")
+        info.type = tarfile.LNKTYPE
+        info.linkname = "/etc/passwd"
+        tf.addfile(info)
+    with pytest.raises(backup_service.BackupError, match="inseguro"):
+        backup_service.restore_snapshot_to_directory(base_snap, target_dir)
+
+    # (f) Entradas duplicadas / colisão de caminhos
+    with tarfile.open(base_snap / "covers.tar.gz", "w:gz") as tf:
+        for raw_name in ("covers/dup.png", "./dup.png"):
+            info = tarfile.TarInfo(name=raw_name)
+            data = b"same"
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    with pytest.raises(backup_service.BackupError, match="duplicada"):
+        backup_service.restore_snapshot_to_directory(base_snap, target_dir)
+
+
+def test_v192_extract_covers_blocks_preexisting_symlinks_and_size_limits(tmp_path, monkeypatch):
+    # (a) Destino preexistente contendo symlink apontando para fora
+    outside_target = tmp_path / "outside_secret.txt"
+    outside_target.write_text("KEEP_ME", encoding="utf-8")
+    dest_covers = tmp_path / "dest_covers"
+    dest_covers.mkdir()
+    (dest_covers / "cover1.png").symlink_to(outside_target)
+
+    archive = tmp_path / "valid_covers.tar.gz"
+    with tarfile.open(archive, "w:gz") as tf:
+        info = tarfile.TarInfo(name="covers/cover1.png")
+        payload = b"OVERWRITE_ATTEMPT"
+        info.size = len(payload)
+        tf.addfile(info, io.BytesIO(payload))
+
+    with pytest.raises(backup_service.BackupError, match="symlink inseguro"):
+        backup_service.extract_covers_archive_safely(archive, dest_covers)
+    assert outside_target.read_text(encoding="utf-8") == "KEEP_ME"
+
+    # (b) Limite proporcional de consumo de espaço (rejeita arquivo acima do limite)
+    clean_dest = tmp_path / "clean_dest_covers"
+    monkeypatch.setattr(backup_service, "MAX_TOTAL_COVERS_BYTES", 8)
+    with pytest.raises(backup_service.BackupError, match="limite total"):
+        backup_service.extract_covers_archive_safely(archive, clean_dest)
+    assert not clean_dest.exists()
+
+
+def test_v192_restore_rolls_back_db_and_covers_on_covers_swap_failure(tmp_path, monkeypatch):
+    """
+    Confirma que falha intermediária após substituição do banco (durante a troca de capas)
+    reverte tanto o SQLite quanto o diretório de capas anterior.
+    """
+    target_dir = tmp_path / "existing_full"
+    target_dir.mkdir()
+    existing_db = target_dir / "lectoria.db"
+    _make_valid_db(existing_db)
+    c = sqlite3.connect(str(existing_db))
+    c.execute("UPDATE users SET display_name = 'BEFORE_SWAP' WHERE id = 1;")
+    c.commit()
+    c.close()
+    existing_covers = target_dir / "covers"
+    existing_covers.mkdir()
+    (existing_covers / "old_cover.png").write_bytes(b"OLD_COVER_BYTES")
+
+    snap_dir = tmp_path / "snap_with_covers"
+    snap_dir.mkdir()
+    _make_valid_db(snap_dir / "lectoria.db")
+    c = sqlite3.connect(str(snap_dir / "lectoria.db"))
+    c.execute("UPDATE users SET display_name = 'NEW_SNAPSHOT' WHERE id = 1;")
+    c.commit()
+    c.close()
+    with tarfile.open(snap_dir / "covers.tar.gz", "w:gz") as tf:
+        info = tarfile.TarInfo(name="covers/new_cover.png")
+        data = b"NEW_COVER_BYTES"
+        info.size = len(data)
+        tf.addfile(info, io.BytesIO(data))
+
+    orig_rename = Path.rename
+
+    def _fail_on_stage_rename(self, target):
+        if self.name == "covers" and ".lectoria_restore_stage_" in str(self.parent):
+            raise OSError("falha simulada na troca de capas")
+        return orig_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", _fail_on_stage_rename)
+    with pytest.raises(backup_service.BackupError, match="Falha durante a restauração"):
+        backup_service.restore_snapshot_to_directory(snap_dir, target_dir, allow_overwrite=True)
+
+    # Tanto o banco quanto a capa anterior foram preservados integralmente
+    c = sqlite3.connect(str(existing_db))
+    val = c.execute("SELECT display_name FROM users WHERE id = 1;").fetchone()[0]
+    c.close()
+    assert val == "BEFORE_SWAP"
+    assert (existing_covers / "old_cover.png").read_bytes() == b"OLD_COVER_BYTES"
+    assert not (existing_covers / "new_cover.png").exists()
+
 
 def test_v192_restore_protects_existing_destination_and_recovers_on_mid_failure(tmp_path, monkeypatch):
     # Prepara destino já existente com registro distinto

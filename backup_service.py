@@ -23,6 +23,11 @@ _backup_lock = threading.Lock()
 # Tabelas estruturais mínimas exigidas para considerar um banco SQLite um backup válido do Lectoria
 REQUIRED_CORE_TABLES = ("schema_migrations", "users", "books", "reading_progress")
 
+# Limites proporcionais de segurança para extração de covers.tar.gz (evita tar-bomb / consumo excessivo)
+MAX_COVERS_ARCHIVE_FILES = 10_000
+MAX_SINGLE_COVER_BYTES = 25 * 1024 * 1024      # 25 MiB por arquivo de capa (upload limite é 5 MiB)
+MAX_TOTAL_COVERS_BYTES = 512 * 1024 * 1024     # 512 MiB descompactados no total
+
 
 class BackupError(Exception):
     """Exceção levantada quando ocorre um erro na criação ou restauração de backup."""
@@ -140,18 +145,36 @@ def _normalize_safe_tar_member_relpath(raw_name: str) -> Optional[Path]:
     return Path(*parts)
 
 
+def _assert_no_symlinks_under(base_dir: Path, rel_path: Path) -> None:
+    """Garante que nem base_dir nem qualquer componente até base_dir/rel_path seja um symlink."""
+    if base_dir.is_symlink():
+        raise BackupError(f"Destino inseguro: '{base_dir}' é um symlink.")
+    cur = base_dir
+    for part in rel_path.parts:
+        cur = cur / part
+        if cur.is_symlink():
+            raise BackupError(f"Destino contém symlink inseguro: '{cur}'.")
+
+
 def extract_covers_archive_safely(archive_path: Path, dest_dir: Path) -> int:
     """
-    Extrai um arquivo covers.tar.gz de forma segura e atômica (staging):
+    Extrai um arquivo covers.tar.gz de forma segura com staging no mesmo filesystem do destino:
     - Rejeita arquivo corrompido ou não-tar;
     - Pré-valida TODOS os membros antes de gravar qualquer arquivo no destino;
-    - Rejeita symlinks, hardlinks, dispositivos, FIFOs, caminhos absolutos e '..';
-    - Extrai primeiro para um diretório temporário e só aplica ao destino se 100% válido.
+    - Rejeita symlinks, hardlinks, dispositivos, FIFOs, caminhos absolutos, '..',
+      entradas duplicadas/colisões e excesso de arquivos ou bytes;
+    - Verifica ausência de symlinks preexistentes em dest_dir;
+    - Faz staging no diretório pai de dest_dir (evitando pressão sobre tmpfs /tmp).
     """
     if not archive_path.exists() or not archive_path.is_file():
         raise BackupError(f"Arquivo de capas não encontrado: '{archive_path}'.")
+    if dest_dir.is_symlink():
+        raise BackupError(f"Diretório de destino de capas é um symlink inseguro: '{dest_dir}'.")
 
     validated_files: List[tuple[tarfile.TarInfo, Path]] = []
+    seen_rel_paths: set[Path] = set()
+    declared_total_bytes = 0
+
     try:
         with tarfile.open(archive_path, mode="r:*") as tf:
             members = tf.getmembers()
@@ -169,11 +192,39 @@ def extract_covers_archive_safely(archive_path: Path, dest_dir: Path) -> int:
                     )
                 if rel is None:
                     continue
+                if rel in seen_rel_paths:
+                    raise BackupError(
+                        f"Entrada duplicada ou colisão de caminho rejeitada no arquivo de capas: '{rel}'."
+                    )
+                seen_rel_paths.add(rel)
+
+                if len(validated_files) + 1 > MAX_COVERS_ARCHIVE_FILES:
+                    raise BackupError(
+                        f"Arquivo de capas excede o limite máximo de {MAX_COVERS_ARCHIVE_FILES} arquivos."
+                    )
+                if member.size < 0 or member.size > MAX_SINGLE_COVER_BYTES:
+                    raise BackupError(
+                        f"Arquivo '{rel}' excede o limite máximo permitido ({MAX_SINGLE_COVER_BYTES} bytes)."
+                    )
+                declared_total_bytes += member.size
+                if declared_total_bytes > MAX_TOTAL_COVERS_BYTES:
+                    raise BackupError(
+                        f"Arquivo de capas excede o limite total de extração ({MAX_TOTAL_COVERS_BYTES} bytes)."
+                    )
                 validated_files.append((member, rel))
 
-            with tempfile.TemporaryDirectory(prefix="lectoria_covers_stage_") as stage_tmp:
-                stage_root = Path(stage_tmp).resolve()
+            # Verifica symlinks preexistentes no destino antes de extrair
+            if dest_dir.exists():
+                for _, rel in validated_files:
+                    _assert_no_symlinks_under(dest_dir, rel)
+
+            # Staging no mesmo filesystem do destino (evita estourar tmpfs /tmp em backups grandes)
+            dest_dir.parent.mkdir(parents=True, exist_ok=True)
+            stage_tmp_dir = tempfile.mkdtemp(prefix=".lectoria_covers_stage_", dir=str(dest_dir.parent))
+            try:
+                stage_root = Path(stage_tmp_dir).resolve()
                 staged_pairs: List[tuple[Path, Path]] = []
+                actual_total_bytes = 0
                 for member, rel in validated_files:
                     staged_path = (stage_root / rel).resolve()
                     if not staged_path.is_relative_to(stage_root):
@@ -182,19 +233,37 @@ def extract_covers_archive_safely(archive_path: Path, dest_dir: Path) -> int:
                     src_f = tf.extractfile(member)
                     if src_f is None:
                         raise BackupError(f"Falha ao ler membro '{member.name}' do arquivo de capas.")
+                    file_written = 0
                     with src_f, open(staged_path, "wb") as dst_f:
-                        shutil.copyfileobj(src_f, dst_f)
+                        while True:
+                            chunk = src_f.read(65536)
+                            if not chunk:
+                                break
+                            file_written += len(chunk)
+                            actual_total_bytes += len(chunk)
+                            if file_written > MAX_SINGLE_COVER_BYTES:
+                                raise BackupError(
+                                    f"Arquivo '{rel}' excedeu o limite real de {MAX_SINGLE_COVER_BYTES} bytes."
+                                )
+                            if actual_total_bytes > MAX_TOTAL_COVERS_BYTES:
+                                raise BackupError(
+                                    f"Extração de capas excedeu o limite total real de {MAX_TOTAL_COVERS_BYTES} bytes."
+                                )
+                            dst_f.write(chunk)
                     staged_pairs.append((staged_path, rel))
 
                 dest_root = dest_dir.resolve()
                 dest_root.mkdir(parents=True, exist_ok=True)
                 for staged_path, rel in staged_pairs:
+                    _assert_no_symlinks_under(dest_root, rel)
                     final_path = (dest_root / rel).resolve()
                     if not final_path.is_relative_to(dest_root):
                         raise BackupError(f"Caminho final fora do destino: '{rel}'.")
                     final_path.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(staged_path, final_path)
                 return len(staged_pairs)
+            finally:
+                shutil.rmtree(stage_tmp_dir, ignore_errors=True)
     except BackupError:
         raise
     except (tarfile.TarError, OSError, EOFError) as exc:
@@ -521,7 +590,10 @@ def restore_snapshot_to_directory(
         else:
             raise BackupError(f"Origem de backup inválida: '{src}'.")
 
-        # 1. Proteção contra sobrescrita sem confirmação explícita
+        # 1. Proteção contra symlinks inseguros e sobrescrita sem confirmação explícita
+        if dst_dir.is_symlink() or dst_db.is_symlink() or dst_covers.is_symlink():
+            raise BackupError("Destino de restauração contém symlink inseguro.")
+
         has_original_db = dst_db.exists() and dst_db.is_file()
         if has_original_db and not allow_overwrite:
             raise BackupError(
@@ -532,8 +604,13 @@ def restore_snapshot_to_directory(
         # 2. Valida banco SQLite da origem em modo somente-leitura
         validation = validate_backup_sqlite(src_db)
 
-        # 3. Pré-valida e extrai capas em staging ANTES de tocar no destino
-        with tempfile.TemporaryDirectory(prefix="lectoria_restore_stage_") as stage_root_str:
+        # 3. Prepara destino e staging no MESMO filesystem do destino (evita tmpfs /tmp e permite rollback limpo)
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        stage_root_str = tempfile.mkdtemp(prefix=".lectoria_restore_stage_", dir=str(dst_dir))
+        covers_pre_backup: Optional[Path] = None
+        db_replaced = False
+        covers_swapped = False
+        try:
             stage_root = Path(stage_root_str)
             stage_covers = stage_root / "covers"
             staged_covers_count = 0
@@ -547,8 +624,7 @@ def restore_snapshot_to_directory(
                         shutil.copy2(item, stage_covers / item.name)
                         staged_covers_count += 1
 
-            # 4. Prepara destino e cópia de segurança se estiver sobrescrevendo
-            dst_dir.mkdir(parents=True, exist_ok=True)
+            # 4. Cópia de segurança WAL-safe do banco anterior (se existir)
             safety_backup_path = dst_dir / "lectoria_pre_restore.db.bak"
             if has_original_db:
                 src_safety: Optional[sqlite3.Connection] = None
@@ -581,38 +657,62 @@ def restore_snapshot_to_directory(
 
             invalidated_sessions_count = 0
             try:
+                # Substituição atômica do arquivo SQLite + limpeza imediata de WAL/SHM anteriores
                 temp_target.replace(dst_db)
+                db_replaced = True
                 for ext in ("-wal", "-shm"):
                     wal_file = dst_db.with_name(dst_db.name + ext)
                     wal_file.unlink(missing_ok=True)
 
                 if not verify_sqlite_integrity(dst_db):
-                    if has_original_db and safety_backup_path.exists():
-                        shutil.copy2(safety_backup_path, dst_db)
-                    raise BackupError("Integridade falhou após substituição; banco original preservado.")
+                    raise BackupError("Integridade falhou após substituição do banco.")
 
                 database.init_db(dst_db)
 
                 if invalidate_sessions:
                     invalidated_sessions_count = _invalidate_sessions(dst_db)
 
+                # Troca controlada do diretório de capas com preservação da versão anterior para rollback
                 if staged_covers_count > 0 and stage_covers.exists():
-                    dst_covers.mkdir(parents=True, exist_ok=True)
-                    for root_p, _, files in os.walk(stage_covers):
-                        rel_dir = Path(root_p).relative_to(stage_covers)
-                        (dst_covers / rel_dir).mkdir(parents=True, exist_ok=True)
-                        for fname in files:
-                            shutil.copy2(Path(root_p) / fname, dst_covers / rel_dir / fname)
-            except BackupError:
-                raise
+                    if dst_covers.exists():
+                        covers_pre_backup = dst_dir / ".lectoria_covers_pre_restore_bak"
+                        if covers_pre_backup.exists():
+                            shutil.rmtree(covers_pre_backup, ignore_errors=True)
+                        dst_covers.rename(covers_pre_backup)
+                    stage_covers.rename(dst_covers)
+                    covers_swapped = True
+                    if covers_pre_backup is not None and covers_pre_backup.exists():
+                        shutil.rmtree(covers_pre_backup, ignore_errors=True)
+                        covers_pre_backup = None
             except Exception as exc:
-                if has_original_db and safety_backup_path.exists():
+                # Rollback coordenado: restaura banco anterior (ou remove parcial em destino novo) e capas anteriores
+                if db_replaced:
+                    for ext in ("-wal", "-shm"):
+                        dst_db.with_name(dst_db.name + ext).unlink(missing_ok=True)
+                    if has_original_db and safety_backup_path.exists():
+                        try:
+                            shutil.copy2(safety_backup_path, dst_db)
+                        except Exception:
+                            pass
+                    elif not has_original_db:
+                        dst_db.unlink(missing_ok=True)
+
+                if covers_pre_backup is not None and covers_pre_backup.exists():
+                    if covers_swapped and dst_covers.exists():
+                        shutil.rmtree(dst_covers, ignore_errors=True)
                     try:
-                        shutil.copy2(safety_backup_path, dst_db)
+                        covers_pre_backup.rename(dst_covers)
                     except Exception:
                         pass
+                elif covers_swapped and dst_covers.exists():
+                    shutil.rmtree(dst_covers, ignore_errors=True)
+
                 temp_target.unlink(missing_ok=True)
+                if isinstance(exc, BackupError):
+                    raise
                 raise BackupError(f"Falha durante a restauração do snapshot: {exc}") from exc
+        finally:
+            shutil.rmtree(stage_root_str, ignore_errors=True)
 
         return {
             "status": "success",
