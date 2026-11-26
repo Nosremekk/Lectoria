@@ -24,6 +24,8 @@ FROM python:3.12-slim
 ARG VCS_REF="unknown"
 ARG APP_VERSION="dev"
 ARG BUILD_DATE="unknown"
+ARG LECTORIA_UID="1000"
+ARG LECTORIA_GID="1000"
 
 LABEL org.opencontainers.image.title="Lectoria" \
       org.opencontainers.image.description="Servidor pessoal auto-hospedado para gerenciamento e leitura de livros digitais (PDF/EPUB)" \
@@ -64,12 +66,17 @@ COPY scripts ./scripts
 COPY deployment ./deployment
 COPY requirements.txt constraints.txt .env.example LICENSE README.md CHANGELOG.md ./
 
-# Pré-compila bytecode e garante a estrutura de diretórios para volumes persistentes
-RUN python -m compileall -q /app \
+# Cria usuário não privilegiado dedicado, pré-compila bytecode e prepara diretórios graváveis
+RUN groupadd --gid "${LECTORIA_GID}" lectoria \
+    && useradd --uid "${LECTORIA_UID}" --gid "${LECTORIA_GID}" --home-dir /app --shell /usr/sbin/nologin --no-create-home lectoria \
+    && python -m compileall -q /app \
     && mkdir -p /app/data /app/data/covers /app/books /app/backups \
-    && chmod +x /app/scripts/*.py /app/deployment/*.sh
+    && chmod +x /app/scripts/*.py /app/deployment/*.sh \
+    && chown lectoria:lectoria /app/data /app/data/covers /app/backups
 
 VOLUME ["/app/data", "/app/books", "/app/backups"]
+
+USER lectoria:lectoria
 
 EXPOSE 8765
 
