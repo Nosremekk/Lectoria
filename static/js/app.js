@@ -1,8 +1,8 @@
 /**
- * Lectoria — Aplicação da Biblioteca (v1.9.1)
+ * Lectoria — Aplicação da Biblioteca (v1.9.2)
  * JavaScript puro (Vanilla ES6), rápido e sem dependências pesadas.
  */
-window.LECTORIA_FRONTEND_VERSION = "1.9.1";
+window.LECTORIA_FRONTEND_VERSION = "1.9.2";
 
 function formatApiError(err, fallbackMsg = "Ocorreu um erro ao processar a solicitação.") {
   if (!err) return fallbackMsg;

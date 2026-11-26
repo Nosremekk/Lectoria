@@ -49,11 +49,11 @@ def _validate_yaml_syntax(path: Path) -> None:
 
 
 def test_v192_phase112_yaml_and_version_invariants():
-    """Valida sintaxe YAML dos workflows/Compose e preservação de APP_VERSION=1.9.1 e SCHEMA_VERSION=13."""
+    """Valida sintaxe YAML dos workflows/Compose e preservação de APP_VERSION=1.9.2 e SCHEMA_VERSION=13."""
     for target in (TEST_SUITE_WF, CI_WF, PUBLISH_WF, COMPOSE_FILE):
         _validate_yaml_syntax(target)
 
-    assert config.APP_VERSION == "1.9.1"
+    assert config.APP_VERSION == "1.9.2"
     assert database.SCHEMA_VERSION == 13
 
 
