@@ -7,6 +7,47 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.9.2] - 2026-11-26
+
+### Segurança
+- **Container endurecido e execução sem privilégios (`Dockerfile`, `docker-compose.yml`, `docker-compose.example.yml`)**:
+  - Execução dedicada sob usuário não-root `lectoria:lectoria` (`UID 1000 / GID 1000`, configurável via `ARG LECTORIA_UID` / `ARG LECTORIA_GID`), mantendo `/app` e `/opt/venv` de `root:root` somente-leitura e restringindo posse gravável a `/app/data`, `/app/data/covers` e `/app/backups`.
+  - Adicionados `security_opt: [no-new-privileges:true]`, `cap_drop: [ALL]`, `read_only: true`, `tmpfs: [/tmp:rw,noexec,nosuid,size=64m]` e mount do acervo de livros estritamente somente-leitura (`/app/books:ro`).
+- **Segurança HTTP, cookies e proxies confiáveis (`config.py`, `main.py`, `static/index.html`, `static/js/app.js`)**:
+  - `LECTORIA_SECURE_COOKIES=auto|true|false` (padrão `auto`, aplicando `Secure` em HTTPS efetivo) aplicado de forma consistente em `lectoria_session` e `lectoria_csrf`.
+  - `LECTORIA_FORWARDED_ALLOW_IPS` (padrão conservador `127.0.0.1,::1`, suportando IPs e CIDRs), removendo `--forwarded-allow-ips "*"` do `Dockerfile` e protegendo `X-Forwarded-Proto` e `X-Forwarded-For` contra spoofing.
+  - `LECTORIA_CSP_MODE=off|report-only|enforce` (padrão `report-only`), `LECTORIA_HSTS_ENABLED=true|false` (padrão `false`, emitido apenas em HTTPS efetivo), `Permissions-Policy`, remoção de `Set-Cookie: lectoria_csrf` em `/static/*` e remoção dos 2 `onsubmit` inline em `static/index.html`.
+- **Restauração segura de arquivos (`backup_service.py`)**:
+  - Bloqueio de path traversal (`..`), caminhos absolutos, symlinks, hardlinks, dispositivos, FIFOs, entradas duplicadas/colisões, symlinks preexistentes no destino e limites proporcionais contra consumo excessivo de disco na extração de `covers.tar.gz`.
+- **Dependências fixadas (`constraints.txt`)**:
+  - Adicionado `constraints.txt` para reprodutibilidade de build no `Dockerfile`, CI e instalações standalone (`pip check` aprovado; `pip-audit 2.10.1` sem vulnerabilidades conhecidas na data da auditoria).
+
+### Infraestrutura e atualização
+- **Pipeline de CI/CD reformulado (`.github/workflows/_test-suite.yml`, `ci.yml`, `publish.yml`)**:
+  - Desduplicação da suíte de testes, validação de preflight e política de imutabilidade: pushes em `main` publicam `:sha-<commit>`, executam smoke test sobre o digest imutável (`/api/health`) e só então promovem `:stable` sem nunca sobrescrever tags versionadas (`:vX.Y.Z`, `:X.Y.Z`).
+  - Promoção de tags de release reutiliza exatamente o digest já validado (sem reconstrução da imagem) e injeta rótulos OCI (`revision`, `version`, `created`, `source`).
+- **Atualizador automático Docker/OCI (`deployment/docker-auto-update.sh`, `deployment/systemd/`)**:
+  - Comparação por fingerprint executável (`exec_fp` das layers + config relevante), evitando reinícios e backups desnecessários por alterações isoladas de metadados/OCI Index.
+  - Lock exclusivo (`flock`), pré-checagem de saúde, backup preventivo obrigatório antes de atualizações reais, registro de referências imutáveis em `last-good.json` e bloqueio *fail-closed* (`blocked`) em caso de falha.
+
+### Backup e recuperação
+- **Validação estrutural e restauração segura (`backup_service.py`, `scripts/backup.py`)**:
+  - Validação SQLite em `mode=ro` (`PRAGMA integrity_check`, tabelas centrais obrigatórias e compatibilidade de schema sem downgrade automático).
+  - Suporte a restauração isolada de snapshots (`lectoria.db` + `covers.tar.gz` via `--target-dir`), normalização segura de prefixos (`data/covers/`, `covers/`, `./`), staging no mesmo filesystem do destino, rollback coordenado de banco e capas em falha intermediária e **invalidação padrão de sessões antigas** (`DELETE FROM sessions`) na restauração.
+  - Recuperação funcional real validada em ambiente isolado a partir de snapshot completo de produção (preservando banco, metadados, progresso, anotações, Atlas e capas sem alterar a origem). *Nota: backups locais não protegem contra perda física completa do servidor; cópia externa periódica continua recomendada.*
+
+### Compatibilidade e deployment
+- **Suporte preservado e documentação consolidada (`docs/DEPLOYMENT.md`, `docker-compose.yml`, `.env.example`)**:
+  - Compatibilidade mantida com Docker Compose genérico, instalação independente (venv/systemd), Localhost HTTP, LAN HTTP, Tailscale privado HTTP, Tailscale Serve HTTPS e reverse proxy HTTPS.
+  - Procedimento explícito, restrito e reversível de migração de posse (`root` → `1000:1000`) documentado para instalações Docker anteriores que executavam como `root` (sem `chmod 777` e sem alterar permissões da biblioteca original `books/`).
+  - `SCHEMA_VERSION = 13` preservado (sem migração de banco de dados).
+
+### Testes
+- **Suíte automatizada**: **`400` testes aprovados** no CI remoto (`ubuntu-latest`, Python 3.12 + `-c constraints.txt` + Docker Engine real + Playwright Chromium), cobrindo unitários, API, segurança HTTP, CSP `enforce` em E2E (56 testes Playwright), backup/restauração sintética e de falhas, atualizador Docker real e container não-root endurecido real.
+- **Validações manuais**: confirmadas pelo proprietário no navegador real (HTTPS Tailscale Serve, login/logout, cookies, CSRF, Biblioteca/capas, Descoberta, Atlas, leitores PDF/EPUB, escrita no banco e drill real de recuperação via túnel SSH).
+
+---
+
 ## [1.9.1] - 2026-11-23
 
 ### Corrigido (`Fixed`)

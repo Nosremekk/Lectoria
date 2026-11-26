@@ -49,7 +49,8 @@ Planejamento sequencial e mensurável derivado da Auditoria de Infraestrutura ([
 - **Critérios de Aceitação**: Container sobe `healthy` com Compose endurecido preservando 238 livros, 5 usuários, Schema v13 e `lectoria-backup.timer` ativo; zero processos Restic/Rclone; restauração de backup validada em ambiente isolado.
 - **Plano de Reversão**: Restaurar cópia `compose.yaml.bak` + `docker compose up -d`.
 
-### Fase 11.5 — Validação e Release `v1.9.2`
+### Fase 11.5 — Validação e Release `v1.9.2` — **`PHASE_11_5_IN_PROGRESS`** *(2026-11-26)*
+- **Branch de release**: `release/v1.9.2` (base `origin/main` @ `acfc4236`), bump coordenado de `APP_VERSION` para `1.9.2` mantendo `SCHEMA_VERSION = 13`, consolidação de `CHANGELOG.md`, `README.md` e relatório [`15-phase-11.5-release-validation.md`](./15-phase-11.5-release-validation.md). Aguardando validação remota e autorização final para merge, deploy e tag imutável `v1.9.2`.
 - **Escopo**:
   - Bump de versão para `1.9.2` (`config.py`, HTML, cache-busting, `CHANGELOG.md`), suíte completa verde, merge em `main`, tag imutável `v1.9.2`, acompanhamento de CI/GHCR, verificação pós-deploy na VPS e relatório final.
 - **Dependências**: Fases 11.2, 11.3 e 11.4.

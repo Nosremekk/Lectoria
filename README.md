@@ -1,4 +1,4 @@
-# Lectoria — Servidor Pessoal de Livros Digitais, Leitura Colaborativa e Conhecimento Conectado (v1.9.0 — Atlas)
+# Lectoria — Servidor Pessoal de Livros Digitais, Leitura Colaborativa e Conhecimento Conectado (v1.9.2)
 
 O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para organização, identificação inteligente, automação, clubes de leitura, leitura colaborativa e **gestão pessoal de conhecimento conectado (Atlas)** para documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
 
@@ -7,6 +7,12 @@ Foi concebido para operar perfeitamente mesmo em hardware modesto — incluindo 
 ---
 
 ## 1. Principais Recursos
+
+- **Estabilização de Infraestrutura, Segurança HTTP e Backup/Recuperação (v1.9.2 — Schema SQLite v13)**:
+  - **Container endurecido não-root**: execução sob usuário dedicado `lectoria:lectoria` (`UID/GID 1000:1000`), `no-new-privileges:true`, `cap_drop: [ALL]`, `read_only: true`, `tmpfs /tmp:rw,noexec,nosuid,size=64m` e acervo montado somente-leitura (`/app/books:ro`).
+  - **Segurança HTTP configurável**: `LECTORIA_SECURE_COOKIES` (`auto` | `true` | `false`, padrão `auto`), `LECTORIA_FORWARDED_ALLOW_IPS` (padrão `127.0.0.1,::1`), `LECTORIA_CSP_MODE` (padrão `report-only`), `LECTORIA_HSTS_ENABLED` (padrão `false`), `Permissions-Policy` e remoção de `Set-Cookie` em `/static/*`.
+  - **Backup e restauração validados**: validação SQLite `mode=ro` sem downgrade automático de schema, extração segura de `covers.tar.gz` em staging, invalidação padrão de sessões antigas na restauração, suporte a `--target-dir` e guia operacional consolidado em [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) (incluindo migração controlada de permissões para instalações antigas em `root`).
+  - **CI/CD imutável e atualizador OCI**: imagens `:sha-*` verificadas por smoke test antes de promover `:stable`, tags versionadas imutáveis (`:vX.Y.Z` / `:X.Y.Z`) e atualizador `deployment/docker-auto-update.sh` baseado em fingerprint executável (`exec_fp`) com backup obrigatório e modo *fail-closed*.
 
 - **Atlas — Conhecimento Conectado (v1.9.0 — Schema SQLite v13)**:
   - **Conceitos Pessoais (`concepts`) e Reflexões Autorais (`reflections`)**: entidades estritamente privadas por usuário, com editor Markdown seguro construído 100% via DOM, controle otimista de concorrência (`HTTP 409`) e inserção assistida de referências canônicas por UUIDs estáveis.
