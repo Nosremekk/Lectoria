@@ -1,10 +1,10 @@
 # Lectoria — Fase 11.4: Restauração de Backups e Hardening Residual da Infraestrutura
 
-- **Status**: **`PHASE_11_4_READY_FOR_REVIEW`** *(implementada e validada localmente em branch dedicada com dados sintéticos representativos; sem deploy em produção, sem alterações na VPS, sem push/merge/tag; `APP_VERSION = "1.9.1"`, `SCHEMA_VERSION = 13`)*
-- **Data**: `2026-11-25`
-- **Branch**: `refactor/v1.9.2-backup-and-container-hardening` (baseada em `origin/main` @ `4d682e3d2c611b3e67062a51f07c922a20aadecf`)
+- **Status**: **`PHASE_11_4_COMPLETED`** *(PR #3 integrado em `main` em `acfc42364e6ed60d78b202191db1f97f0c2d05a8`, publicado em `:stable` com 400/400 testes e smoke test, implantado na VPS com migração restrita `root` → `1000:1000` em 8 s de indisponibilidade, validado técnica e funcionalmente e atualizador reativado com `NO_EXECUTABLE_CHANGE`; `APP_VERSION = "1.9.1"`, `SCHEMA_VERSION = 13`)*
+- **Data**: `2026-11-25` (implementação) · `2026-11-26` (correção `data/covers/`, drill real aprovado, merge, deploy controlado e encerramento)
+- **Branch / PR / Merge em `main`**: `refactor/v1.9.2-backup-and-container-hardening` @ `11ba9e5` → [PR #3](https://github.com/Nosremekk/Lectoria/pull/3) integrado em `main` no commit `acfc42364e6ed60d78b202191db1f97f0c2d05a8` (`2026-11-26T18:41:44Z`, sem tag Git nem release)
 
-> **Transparência de validação**: Todos os testes de restauração executados nesta etapa utilizaram **dados sintéticos representativos** em ambiente 100% isolado. A recuperação funcional a partir do backup real da VPS (`/srv/nosreme/lectoria/backups/2026-11-25T19-14-08Z`) **não foi executada** e aguarda autorização expressa do proprietário conforme o procedimento privado da Seção 11.
+> **Validação real executada**: A restauração funcional a partir do backup real da VPS (`/srv/nosreme/lectoria/backups/2026-11-25T19-14-08Z`) foi executada em ambiente privado, descartável e isolado (`127.0.0.1:18765`, `UID 1000`, `--read-only --cap-drop ALL --dns 127.0.0.1`, tarefas agendadas desativadas no banco descartável), encontrando e corrigindo o bug real de prefixo `data/covers/` em `covers.tar.gz` (`11ba9e5`) e confirmando `212` capas na raiz de `covers/`, `238` livros, `5` usuários, `0` sessões antigas, imutabilidade da origem e aprovação manual via túnel SSH pelo proprietário.
 
 ---
 
@@ -109,12 +109,19 @@ Preservados integralmente: Docker Compose genérico, instalação independente (
 
 ---
 
-## 10. Resultados dos Testes
+## 10. Resultados dos Testes (Local e CI Remoto)
 
-- **Suíte local completa (`pytest -q`, Python 3.14.9 + Playwright Chromium)**: **`395 passed, 2 skipped, 0 failed, 3 warnings in 582.23s (0:09:42)`**
-  - Inclui 100% da suíte anterior (389 testes unitários/API + 56 E2E Playwright) + 6 novos testes da Fase 11.4 (`tests/test_v192_backup_restore_and_hardening.py`: restauração sintética ponta a ponta, isolamento entre usuários, invalidação de sessões, todos os cenários de falha/segurança de SQLite e `covers.tar.gz`, arquivos de livros ausentes e invariantes de hardening/portabilidade).
-  - Os 3 warnings são avisos legados pré-existentes de deprecação do Starlette TestClient (`httpx` / `per-request cookies`), sem relação com a Fase 11.4.
-- **Testes Docker reais (`test_v192_docker_auto_update_integration.py` e `test_v192_docker_hardening_integration.py`)**: **`2 skipped`** localmente por ausência de Docker Engine neste host (explicitamente **não** declarados como aprovados localmente; serão executados integralmente no runner `ubuntu-latest` do GitHub Actions na validação remota).
+- **Suíte local completa (`pytest -q`, Python 3.14.9 + Playwright Chromium)**: `395 passed, 2 skipped, 0 failed, 3 warnings in 582.23s (0:09:42)` (pré-revisão) + `18 passed, 1 skipped, 0 failed in 1.29s` nos testes de backup/restauração/hardening após as correções da revisão direcionada.
+- **CI remoto no GitHub Actions (`ubuntu-latest`, Python 3.12 + `-c constraints.txt` + Docker Engine real + Playwright Chromium)**:
+  - **[Run #45698754259](https://github.com/Nosremekk/Lectoria/actions/runs/45698754259)** (`CI` · `push` @ `11ba9e5`): **`completed / success`** — **`400 passed, 0 skipped, 0 failed, 3 warnings in 818.00s (0:13:37)`**.
+  - **[Run #45698770112](https://github.com/Nosremekk/Lectoria/actions/runs/45698770112)** (`CI` · `pull_request` @ `11ba9e5`): **`completed / success`** — **`400 passed, 0 skipped, 0 failed, 3 warnings in 832.10s (0:13:52)`**.
+  - **Testes Docker reais aprovados em ambos os eventos**:
+    - `tests/test_v192_docker_auto_update_integration.py::test_v192_docker_real_integration_end_to_end PASSED`
+    - `tests/test_v192_docker_hardening_integration.py::test_v192_real_docker_nonroot_and_hardening_runtime PASSED` (verificou `id -u != 0`, `NoNewPrivs: 1`, `CapEff: 0000000000000000`, `/app` e `/app/books` somente-leitura, `/tmp` gravável e `noexec`, `/api/health`, `/api/auth/setup`, CSRF, Atlas + exportação JSON usando `/tmp`, `scripts/backup.py --backup`, `--verify` e `--restore --target-dir`).
+  - **Regressão real do drill coberta**: `tests/test_v192_backup_restore_and_hardening.py::test_v192_extract_covers_normalizes_data_covers_prefix PASSED`.
+  - **Suíte E2E Playwright (56/56)**: aprovada integralmente, incluindo `test_v192_csp_enforce_zero_violations_across_library_atlas_pdf_epub PASSED`.
+  - **Natureza dos 3 warnings**: (1) `StarletteDeprecationWarning: Using httpx with starlette.testclient is deprecated` em `tests/conftest.py:21`; (2 e 3) 2 `DeprecationWarning: Setting per-request cookies=<...>` em `tests/test_audit_v140.py::test_admin_queue_endpoints_require_admin` — todos legados e não bloqueantes.
+  - **Publicação GHCR**: zero execuções de `publish.yml`; `:stable` permanece inalterado em `sha256:1eac54772ffeb00e60aed00adb41b2597d7fd0950495fb299fe862e2f9fd51cd`.
 
 ---
 
@@ -128,7 +135,7 @@ Para validar funcionalmente o backup real `/srv/nosreme/lectoria/backups/2026-11
 (
 set -euo pipefail
 
-COMMIT_SHA="<COMMIT_VALIDADO_NO_CI>"
+COMMIT_SHA="7f16d5fbe63cc3c6f5eb510e87d3ececb3a14e4f"
 SNAP_DIR="/srv/nosreme/lectoria/backups/2026-11-25T19-14-08Z"
 BOOKS_DIR="/srv/nosreme/lectoria/books"
 DRILL_ID="drill-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -218,22 +225,15 @@ sudo docker rm -f "${DRILL_CTR}" && sudo docker rmi -f "${DRILL_IMG}" && sudo rm
 
 ---
 
-## 12. Plano Conciso de Migração de Permissões e Integração em Produção (11 Passos — Aguardar Autorização)
+## 12. Integração Controlada em Produção e Encerramento (`2026-11-26`)
 
-> **Não fazer merge antes da migração de permissões**: o `lectoria-auto-update.timer` está ativo na VPS e os arquivos internos de `/srv/nosreme/lectoria/data/` pertencem atualmente a `root:root`.
-
-1. **Pausar o timer**: `sudo systemctl stop lectoria-auto-update.timer`.
-2. **Confirmar serviço inativo**: verificar `lectoria-auto-update.service` = `inactive` e `BLOCKED_EXISTS=NO`.
-3. **Preservar configuração e permissões anteriores**: salvar cópia de `/srv/nosreme/lectoria/compose.yaml` e registrar `stat -c '%u:%g %a %n'` de `/srv/nosreme/lectoria/data` e seus arquivos internos em `/root/`.
-4. **Criar backup preventivo**: `sudo systemctl start lectoria-backup.service` e validar `PRAGMA integrity_check = ok`.
-5. **Preparar permissões estritamente necessárias**: parar o container (`docker compose stop lectoria`) e aplicar `sudo chown 1000:1000 /srv/nosreme/lectoria/data/lectoria.db* /srv/nosreme/lectoria/data/lectoria_pre_migration_*.db.bak` e `sudo chown -R 1000:1000 /srv/nosreme/lectoria/data/covers` (**nunca** alterar `/srv/nosreme/lectoria/books` e **nunca** usar `chmod 777`).
-6. **Atualizar `/srv/nosreme/lectoria/compose.yaml`**: manter `/storage/*`, `mem_limit: 768m` e as 4 variáveis da Fase 11.3; adicionar `./books:/storage/books:ro`, `security_opt: [no-new-privileges:true]`, `cap_drop: [ALL]`, `read_only: true`, `tmpfs: [/tmp:rw,noexec,nosuid,size=64m]`.
-7. **Validar configuração**: `docker compose config --quiet` (sem recriar o container com a imagem antiga ainda).
-8. **Merge autorizado do PR #3 em `main`** (sem criar tag).
-9. **Publicação (`publish.yml`) e deploy controlado**: executar `sudo systemctl start lectoria-auto-update.service`, confirmar `UPDATE_SUCCESS`, `id -u == 1000`, `CapEff == 0`, `Health=healthy`, SQLite `integrity=ok` e contagens preservadas.
-10. **Validação funcional**: HTTPS Tailscale Serve + checklist no navegador (login, PDF/EPUB, escrita SQLite, exportação Atlas).
-11. **Reativação do timer**: `sudo systemctl start lectoria-auto-update.timer` e confirmação de `NO_EXECUTABLE_CHANGE`.
-- **Recuperação em caso de falha**: manter o timer pausado, restaurar o `compose.yaml` anterior, fixar o digest imutável anterior (`ghcr.io/nosremekk/lectoria@sha256:1eac54772ffeb00e60aed00adb41b2597d7fd0950495fb299fe862e2f9fd51cd`) e, se necessário, restaurar a posse anterior (`root:root`) registrada no passo 3 — **nunca** restaurar o banco automaticamente.
+- **Momento A (`PHASE_11_4_MOMENT_A_COMPLETED`)**: `lectoria-auto-update.timer` pausado (`inactive`), artefatos preservados em `/root/lectoria-phase114-prep-20261126T183733Z/` (`compose.yaml.orig` SHA-256 `2017f3a8...`, `permissions-inventory.tsv` SHA-256 `c03e4dd7...`, `compose.yaml.candidate` SHA-256 `5f3daa49...`), backup preventivo `/srv/nosreme/lectoria/backups/2026-11-26T18-37-33Z` validado (`integrity=ok`, `schema=13`).
+- **Momento B (`PHASE_11_4_MOMENT_B_COMPLETED`)**:
+  - PR #3 integrado em `main` (`acfc42364e6ed60d78b202191db1f97f0c2d05a8`); `publish.yml` ([Run #45877971972](https://github.com/Nosremekk/Lectoria/actions/runs/45877971972)): `400 passed`, smoke test `@digest` aprovado, `:stable` e `:sha-acfc423` promovidos para `sha256:130be101114b8845892a169a9a601744d78fd9cdbf849a2221ab440f1261a3fd` (`linux/amd64` `sha256:cd964910...`, config `sha256:0c69ab35...`, `:v1.9.1` e `:1.9.1` intactas em `sha256:da4dca9c...`).
+  - **Deploy manual controlado por digest imutável** (necessário pela parada prévia para migração de posse SQLite, sem alterar `docker-auto-update.sh`): backup final `/srv/nosreme/lectoria/backups/2026-11-26T19-11-55Z`, parada controlada, inventário definitivo `permissions-inventory-stopped.tsv` (`222` itens migrados incluindo `-wal`/`-shm`, `0` symlinks, log de rollback `migrated-items.tsv` SHA-256 `29d732ff...`), ativação de `compose.yaml.candidate` e subida do container `8497625b252b5100d58e7c5a094006d2e59f868a362c2e65c7763fa7e0702a47` com **`DOWNTIME_SECONDS=8`**.
+  - Validação técnica pós-deploy: `UID=1000`, `GID=1000`, `CapEff=0000000000000000`, `NoNewPrivs=1`, `ReadonlyRootfs=true`, `BOOKS_RW=false`, `MEM_BYTES=805306368`, `127.0.0.1:8765`, `tmpfs /tmp:rw,noexec,nosuid,size=64m`, `WRITABLE_PROBES_OK=YES`, `RESTARTS=0`, `BLOCKED=NO`, `PERM_ERRORS=0`, `DB_AND_COVERS_COUNTS_MATCH=YES` (`books=238`, `users=5`, `reading_progress=54`, `notes=22`, `highlights=1`, `collections=0`, `concepts=5`, `reflections=1`, `knowledge_links=6`, `covers=212`), backup pós-deploy compatível (`2026-11-26T19-12-05Z`, `POST_DEPLOY_BKP_OK=YES`) e HTTPS real Tailscale Serve validado.
+- **Momento C (`PHASE_11_4_COMPLETED`)**:
+  - `lectoria-auto-update.timer` reativado (`enabled/active`); execução de convergência `lectoria-auto-update.service` (`19:15:11–19:15:12 UTC`, `Result=success`, `ExecMainStatus=0`) confirmou `NO_EXECUTABLE_CHANGE` (`exec_fp=sha256:22c61bba...`), `CONTAINER_PRESERVED=YES`, `NO_EXTRA_BACKUP=YES`, `lectoria-backup.timer` `enabled/active`, `nosreme-restic-backup.timer` `disabled/inactive` e `BLOCKED_EXISTS=NO`.
 
 ---
 

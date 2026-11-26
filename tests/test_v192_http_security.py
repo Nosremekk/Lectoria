@@ -8,7 +8,7 @@ Cobre:
 - Cabeçalhos defensivos, Permissions-Policy, CSP (off | report-only | enforce) e HSTS condicional.
 - Ausência de Set-Cookie espúrio em /static/*.
 - Preservação de Range 206, Content-Disposition e CSP próprio das capas SVG.
-- Invariantes de Dockerfile, constraints.txt, ausência de onsubmit inline, APP_VERSION=1.9.1 e SCHEMA_VERSION=13.
+- Invariantes de Dockerfile, constraints.txt, ausência de onsubmit inline, APP_VERSION=1.9.2 e SCHEMA_VERSION=13.
 """
 
 from pathlib import Path
@@ -235,7 +235,7 @@ def test_v192_security_headers_csp_modes_hsts_and_static_no_set_cookie(test_env,
 
 
 def test_v192_phase113_invariants_dockerfile_constraints_and_no_inline_handlers():
-    assert config.APP_VERSION == "1.9.1"
+    assert config.APP_VERSION == "1.9.2"
     assert database.SCHEMA_VERSION == 13
 
     df = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
