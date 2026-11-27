@@ -4509,6 +4509,98 @@ document.addEventListener("DOMContentLoaded", () => {
         `).join("");
       }
     }
+
+    await loadAdminOptimizationStatus();
+  }
+
+  async function loadAdminOptimizationStatus() {
+    const summaryEl = document.getElementById("admin-opt-summary");
+    if (!summaryEl) return;
+    try {
+      const res = await fetch("/api/admin/optimization/status");
+      if (!res.ok) return;
+      const d = await res.json();
+      const cfg = d.config || {};
+      const counts = d.counts || {};
+      const qpdf = d.qpdf || {};
+      const storage = d.storage || {};
+      const modeSel = document.getElementById("admin-opt-mode-select");
+      const winStart = document.getElementById("admin-opt-window-start");
+      const winEnd = document.getElementById("admin-opt-window-end");
+      const maxMb = document.getElementById("admin-opt-max-mb");
+      if (modeSel && cfg.mode) modeSel.value = cfg.mode;
+      if (winStart && cfg.schedule_window_start) winStart.value = cfg.schedule_window_start;
+      if (winEnd && cfg.schedule_window_end) winEnd.value = cfg.schedule_window_end;
+      if (maxMb && cfg.max_storage_mb != null) maxMb.value = cfg.max_storage_mb;
+
+      const qpdfLabel = qpdf.available
+        ? `Disponível (${escapeHtml(qpdf.version || "qpdf")})`
+        : "Indisponível (fallback automático ao original)";
+      summaryEl.innerHTML = `
+        <div class="admin-stat-row"><span>Binário QPDF</span><strong>${qpdfLabel}</strong></div>
+        <div class="admin-stat-row"><span>Estado da Fila</span><strong>${d.paused ? "Pausada" : escapeHtml(cfg.mode || "disabled")} · ${counts.pending || 0} pendentes · ${counts.optimized || 0} otimizados</strong></div>
+        <div class="admin-stat-row"><span>Derivados em Disco</span><strong>${formatBytes(storage.used_bytes || 0)} / ${storage.max_storage_mb || 0} MB (${storage.files_count || 0} arqs)</strong></div>
+      `;
+    } catch (_) {
+      // Silencioso para não bloquear a aba de manutenção
+    }
+  }
+
+  const btnAdminOptSave = document.getElementById("btn-admin-opt-save");
+  if (btnAdminOptSave) {
+    btnAdminOptSave.addEventListener("click", async () => {
+      const mode = document.getElementById("admin-opt-mode-select")?.value || "disabled";
+      const schedule_window_start = document.getElementById("admin-opt-window-start")?.value || "02:00";
+      const schedule_window_end = document.getElementById("admin-opt-window-end")?.value || "05:00";
+      const max_storage_mb = parseInt(document.getElementById("admin-opt-max-mb")?.value || "1024", 10);
+      await fetch("/api/admin/optimization/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode, schedule_window_start, schedule_window_end, max_storage_mb }),
+      });
+      await loadAdminOptimizationStatus();
+    });
+  }
+
+  const btnAdminOptEnqueue = document.getElementById("btn-admin-opt-enqueue");
+  if (btnAdminOptEnqueue) {
+    btnAdminOptEnqueue.addEventListener("click", async () => {
+      await fetch("/api/admin/optimization/enqueue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      await loadAdminOptimizationStatus();
+    });
+  }
+
+  const btnAdminOptPause = document.getElementById("btn-admin-opt-pause");
+  if (btnAdminOptPause) {
+    btnAdminOptPause.addEventListener("click", async () => {
+      await fetch("/api/admin/optimization/pause", { method: "POST" });
+      await loadAdminOptimizationStatus();
+    });
+  }
+
+  const btnAdminOptResume = document.getElementById("btn-admin-opt-resume");
+  if (btnAdminOptResume) {
+    btnAdminOptResume.addEventListener("click", async () => {
+      await fetch("/api/admin/optimization/resume", { method: "POST" });
+      await loadAdminOptimizationStatus();
+    });
+  }
+
+  const btnAdminOptCleanup = document.getElementById("btn-admin-opt-cleanup");
+  if (btnAdminOptCleanup) {
+    btnAdminOptCleanup.addEventListener("click", async () => {
+      if (!confirm("Remover todos os derivados PDF otimizados? Os arquivos originais não serão alterados.")) return;
+      await fetch("/api/admin/optimization/cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "all" }),
+      });
+      await loadAdminOptimizationStatus();
+    });
   }
 
   const btnAdminClearApiCache = document.getElementById("btn-admin-clear-api-cache");
