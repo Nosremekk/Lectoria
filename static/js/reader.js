@@ -5044,7 +5044,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const bookCoverMini = document.getElementById("reader-book-cover");
     if (bookCoverMini) {
-      bookCoverMini.src = bookData.cover_url || `/api/books/${encodeURIComponent(bookId)}/cover`;
+      const rawCoverUrl = bookData.cover_url || `/api/books/${encodeURIComponent(bookId)}/cover`;
+      bookCoverMini.decoding = "async";
+      bookCoverMini.src = rawCoverUrl + (rawCoverUrl.includes("?") ? "&" : "?") + "variant=card";
       bookCoverMini.style.display = "block";
     }
 

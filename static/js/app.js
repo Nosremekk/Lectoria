@@ -667,6 +667,12 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentRenderedIndex = 0;
   let scrollSentinelObserver = null;
 
+  function appendCoverVariant(url, variant) {
+    if (!url || !variant || !url.includes("/cover")) return url;
+    if (url.includes("variant=")) return url;
+    return url + (url.includes("?") ? "&" : "?") + "variant=" + encodeURIComponent(variant);
+  }
+
   function generateBookCardHtml(book) {
     const percentage = book.progress_percentage || 0;
     const isCompleted = isBookCompleted(book);
@@ -674,6 +680,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const total = book.page_count || book.progress_total_pages || 1;
     const page = book.current_page || 1;
     const coverUrl = book.cover_url || `/api/books/${encodeURIComponent(book.id)}/cover`;
+    const cardCoverUrl = appendCoverVariant(coverUrl, "card");
     const bookFormat = (book.format || (book.filename && book.filename.toLowerCase().endsWith(".epub") ? "epub" : "pdf")).toUpperCase();
 
     const collectionsChipsHtml = (book.collections || []).map(c => `
@@ -700,9 +707,12 @@ document.addEventListener("DOMContentLoaded", () => {
           <a href="/reader/${book.id}" class="book-cover" title="Ler ${escapeHtml(book.title)}">
             <img
               class="book-cover-img"
-              src="${escapeHtml(coverUrl)}"
+              src="${escapeHtml(cardCoverUrl)}"
               alt="Capa de ${escapeHtml(book.title)}"
               loading="lazy"
+              decoding="async"
+              width="180"
+              height="255"
             >
             <div class="book-cover-badges">
               <span class="tag-badge tag-format tag-format-${bookFormat.toLowerCase()}">${bookFormat}</span>
@@ -2047,13 +2057,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
       shelvesContainer.innerHTML = shelves.map(shelf => {
         const booksHtml = (shelf.books || []).map(b => {
-          const coverUrl = b.cover_url || `/api/books/${encodeURIComponent(b.id)}/cover`;
+          const coverUrl = appendCoverVariant(b.cover_url || `/api/books/${encodeURIComponent(b.id)}/cover`, "card");
           const bookFormat = (b.format || "pdf").toUpperCase();
           const primaryCat = (b.taxonomy && b.taxonomy.categories && b.taxonomy.categories[0]) || "";
           return `
             <div class="shelf-card" data-id="${b.id}" tabindex="0" role="button" aria-label="Abrir detalhes de ${escapeHtml(b.title)}">
               <div class="shelf-cover-wrapper">
-                <img class="shelf-cover-img" src="${escapeHtml(coverUrl)}" alt="Capa de ${escapeHtml(b.title)}" loading="lazy">
+                <img class="shelf-cover-img" src="${escapeHtml(coverUrl)}" alt="Capa de ${escapeHtml(b.title)}" loading="lazy" decoding="async" width="160" height="225">
                 <div class="book-cover-badges">
                   <span class="tag-badge tag-format tag-format-${bookFormat.toLowerCase()}">${bookFormat}</span>
                 </div>
@@ -2309,7 +2319,8 @@ document.addEventListener("DOMContentLoaded", () => {
       activeBookForDetails = book;
 
       if (detailsCoverImg) {
-        detailsCoverImg.src = book.cover_url || `/api/books/${encodeURIComponent(book.id)}/cover`;
+        detailsCoverImg.decoding = "async";
+        detailsCoverImg.src = appendCoverVariant(book.cover_url || `/api/books/${encodeURIComponent(book.id)}/cover`, "detail");
       }
       if (detailsFormatBadge) {
         const fmt = (book.format || "pdf").toUpperCase();
