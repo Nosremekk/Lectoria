@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 import pytest
 
+import auth_service
 import config
 import main
 from http_cache_service import (
@@ -73,6 +74,16 @@ def _setup_admin_and_login(client: TestClient, username: str = "admin122", passw
             json={"username": username, "password": password},
             headers={"X-CSRF-Token": csrf},
         )
+        if login_res.status_code != 200:
+            try:
+                auth_service.create_user(username=username, password=password, display_name="Admin 122", role="admin")
+            except auth_service.UserAlreadyExistsError:
+                pass
+            login_res = client.post(
+                "/api/auth/login",
+                json={"username": username, "password": password},
+                headers={"X-CSRF-Token": csrf},
+            )
         assert login_res.status_code == 200, login_res.text
     else:
         assert setup_res.status_code in (200, 201), setup_res.text
