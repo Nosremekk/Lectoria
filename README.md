@@ -1,4 +1,4 @@
-# Lectoria — Servidor Pessoal de Livros Digitais, Leitura Colaborativa e Conhecimento Conectado (v1.9.2)
+# Lectoria — Servidor Pessoal de Livros Digitais, Leitura Colaborativa e Conhecimento Conectado (v1.10.0)
 
 O **Lectoria** é um servidor pessoal auto-hospedado (*self-hosted*) para organização, identificação inteligente, automação, clubes de leitura, leitura colaborativa e **gestão pessoal de conhecimento conectado (Atlas)** para documentos PDF e livros digitais EPUB, projetado com foco em sobriedade estética editorial, velocidade e consumo mínimo de recursos de CPU, memória RAM e I/O de disco.
 
@@ -7,6 +7,12 @@ Foi concebido para operar perfeitamente mesmo em hardware modesto — incluindo 
 ---
 
 ## 1. Principais Recursos
+
+- **Otimização de Desempenho, Cache Imutável, Miniaturas e Linearização Opcional (v1.10.0 — Schema SQLite v13)**:
+  - **Camada HTTP e Cache**: compressão seletiva GZip (`SelectiveGZipMiddleware`), manifestos SHA-256 com estáticos `immutable`, `ETag`/`If-None-Match` (`304`), `If-Range` RFC 9110 e `Vary: Cookie`.
+  - **Miniaturas WebP/JPEG de Capas**: variantes `card` (360px) e `detail` (600px) geradas sob demanda em `data/covers/thumbs/` (excluídas de backups obrigatórios), reduzindo drasticamente o tráfego na Descoberta e Biblioteca.
+  - **Frontend Seletivo e Leitores Ágeis**: carregamento lazy de módulos (Atlas/Clubes/Conhecimento) sob `CSP enforce`, payloads compactos (`compact=1`), carregamento condicional de PDF.js/EPUB.js e fixação imutável de representação por sessão de leitura (`?rep=<rep_id>`).
+  - **Otimização Automática de PDFs em Segundo Plano (opcional, `disabled` por padrão)**: linearização não destrutiva via `qpdf` em `data/optimized/pdf/` (preservando 100% os arquivos originais e `/api/books/{id}/download`), validação estrutural e geométrica estrita, guarda anti-regressão de tamanho (> +15%), limites de recursos sem `preexec_fn` (`scripts/bounded_exec.py`), modos `immediate`/`scheduled`/`adaptive` (com suporte a janela noturna) e coordenação com backups e leitura ativa. EPUBs passam apenas por validação estrutural sem reescrita.
 
 - **Estabilização de Infraestrutura, Segurança HTTP e Backup/Recuperação (v1.9.2 — Schema SQLite v13)**:
   - **Container endurecido não-root**: execução sob usuário dedicado `lectoria:lectoria` (`UID/GID 1000:1000`), `no-new-privileges:true`, `cap_drop: [ALL]`, `read_only: true`, `tmpfs /tmp:rw,noexec,nosuid,size=64m` e acervo montado somente-leitura (`/app/books:ro`).

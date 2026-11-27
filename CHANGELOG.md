@@ -7,6 +7,35 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.10.0] - 2026-11-27
+
+### Desempenho e Experiência de Leitura
+- **Camada HTTP, Compressão Seletiva e Cache Imutável (`http_cache_service.py`, `main.py`)**:
+  - `SelectiveGZipMiddleware` (nível 5) para payloads textuais/JSON/SVG/JS/CSS sem desperdiçar CPU em PDFs/EPUBs/WebP/JPEG já comprimidos.
+  - `AssetManifest` com hashes SHA-256 de conteúdo e `HashedStaticFiles` servindo estáticos com `Cache-Control: public, max-age=31536000, immutable`.
+  - Validação condicional RFC 9110 (`ETag`, `If-None-Match` -> `304 Not Modified`, `If-Range`), `Vary: Cookie` em rotas autenticadas e `Clear-Site-Data: "cache"` no logout.
+- **Pipeline de Miniaturas de Capas (`thumbnail_service.py`, `covers_service.py`)**:
+  - Geração sob demanda de miniaturas WebP/JPEG (`card` 360px e `detail` 600px, Pillow 12.3.0 com suporte WebP verificado, limite de 25 MP e `BoundedSemaphore(1)`) em `<DATA_DIR>/covers/thumbs/` (excluídas de backups obrigatórios).
+  - Eliminação da leitura/descompressão redundante no caminho quente de entrega de capas.
+- **Otimização do Frontend e Leitores PDF/EPUB (`static/index.html`, `static/reader.html`, `static/js/app.js`, `static/js/reader.js`)**:
+  - Carregamento seletivo sob demanda de módulos JS (Atlas, Clubes, Conhecimento do Livro) compatível com `CSP enforce`, `initAuth()` em paralelo, prateleiras da Descoberta orientadas à viewport (`IntersectionObserver`), `compact=1` em `/api/books` e `/api/discovery/shelves`, e abertura instantânea do modal de detalhes.
+  - Carregamento condicional de PDF.js / EPUB.js (EPUB não carrega `pdf.min.js`), adiamento de requisições secundárias do leitor e progresso real via `loadingTask.onProgress`.
+- **Otimização Automática de Documentos em Segundo Plano (`document_optimization_service.py`, `scripts/bounded_exec.py`, `Dockerfile`)**:
+  - Linearização opcional de PDFs via `qpdf` (`12.2.0` na imagem Docker; degradação graciosa quando ausente) em `<DATA_DIR>/optimized/pdf/`, preservando 100% os arquivos originais (`/app/books:ro`) e mantendo `SCHEMA_VERSION=13` (estado atômico em `<DATA_DIR>/optimized/state.json`, excluído de backups obrigatórios).
+  - Padrão conservador `disabled`, com suporte a modos `immediate`, `scheduled` (janela/fuso/dias) e `adaptive` (ociosidade de leitura + janela noturna opcional + coordenação com backups e enriquecimento), guarda anti-regressão de tamanho (> +15%) e análise estrutural somente-leitura para EPUBs.
+  - Subprocessos executados via `scripts/bounded_exec.py` (sem `preexec_fn`, com `shell=False`, `RLIMIT_AS`/`RLIMIT_CPU`, timeout e cancelamento real).
+  - Fixação imutável de representação por sessão de leitura (`GET /api/books/{id}/reader-representation` + `?rep=<rep_id>`), protegendo derivados em uso contra limpeza/LRU e retornando `HTTP 409 Conflict` se a representação expirar ou o original mudar (sem jamais misturar intervalos de bytes). `/api/books/{id}/download` continua entregando sempre o arquivo original.
+  - Novo card administrativo em Manutenção (`/api/admin/optimization/*`) para política, enfileiramento, pausa/retomada e limpeza.
+
+### Resultados Medidos (Staging Isolado VPS via Túnel SSH, Playwright real sem mocks de rede)
+- Descoberta (primeiras 8 capas): mediana `677 ms` frio (`606,8 KiB`) / `405 ms` quente (`113,4 KiB`).
+- Biblioteca (primeiras 12 capas): mediana `389 ms` frio (`303,6 KiB`) / `363 ms` quente (`31,5 KiB`).
+- Modal de detalhes: mediana `34 ms` frio / `24 ms` quente.
+- Leitor PDF médio (15 MB): 1ª página renderizada em `~757 ms` (derivado linearizado `qpdf 12.2.0` com `-11,1%` em `range_bytes`).
+- Leitor EPUB (1,74 MB): 1ª seção renderizada em `594 ms` frio / `338 ms` quente.
+
+---
+
 ## [1.9.2] - 2026-11-26
 
 ### Segurança
