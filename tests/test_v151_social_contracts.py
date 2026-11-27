@@ -25,9 +25,9 @@ def _login_user(client: TestClient, username: str, password: str) -> dict:
 
 def test_v151_frontend_backend_version_alignment(client):
     """Confirma que backend, index.html, reader.html e app.js declaram e servem a versão da aplicação em sincronia."""
-    allowed_versions = ("1.5.1", "1.5.2", "1.6.0", "1.6.1", "1.6.2", "1.6.3", "1.7.0", "1.8.0", "1.9.0", "1.9.1", "1.9.2")
+    allowed_versions = ("1.5.1", "1.5.2", "1.6.0", "1.6.1", "1.6.2", "1.6.3", "1.7.0", "1.8.0", "1.9.0", "1.9.1", "1.9.2", "1.10.0")
     assert config.APP_VERSION in allowed_versions
-    assert config.APP_VERSION == "1.9.2"
+    assert config.APP_VERSION == "1.10.0"
 
     status_res = client.get("/api/auth/status")
     assert status_res.status_code == 200

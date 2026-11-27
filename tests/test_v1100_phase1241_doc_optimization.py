@@ -42,21 +42,20 @@ def _create_pdf(path: Path, num_pages: int = 3, pad_bytes: int = 0) -> Path:
 
 
 def _create_fake_linearized_pdf(path: Path, num_pages: int = 2) -> Path:
-    """Cria PDF válido com marcador /Linearized e /L exato para testar validação e detecção."""
+    """Cria PDF válido com objeto de dicionário /Linearized e /L exato (fora de comentários)."""
     tmp = path.with_suffix(".raw.pdf")
     _create_pdf(tmp, num_pages=num_pages, pad_bytes=2048)
     body = tmp.read_bytes()
     tmp.unlink()
-    # Injeta comentário /Linearized + /L placeholder logo após %PDF-1.3\n (mantendo PDF válido para pypdf!)
     header_end = body.find(b"\n") + 1
     prefix = body[:header_end]
     rest = body[header_end:]
-    # Calcula tamanho exato com /L com largura fixa de 10 dígitos
-    comment_len = len(f"% /Linearized 1 /L {0:010d} /E 0000010000\n".encode("ascii"))
-    total_len = len(prefix) + comment_len + len(rest)
-    comment = f"% /Linearized 1 /L {total_len:010d} /E 0000010000\n".encode("ascii")
-    final_bytes = prefix + comment + rest
-    path.write_bytes(final_bytes)
+    # Objeto PDF real (não comentário) de dicionário de linearização para testes sem binário qpdf local
+    obj_tpl = "999 0 obj\n<< /Linearized 1 /L {length:010d} /E 0000010000 /N {pages} /T 0000010000 >>\nendobj\n"
+    sample = obj_tpl.format(length=0, pages=num_pages).encode("ascii")
+    total_len = len(prefix) + len(sample) + len(rest)
+    lin_obj = obj_tpl.format(length=total_len, pages=num_pages).encode("ascii")
+    path.write_bytes(prefix + lin_obj + rest)
     return path
 
 
@@ -166,7 +165,7 @@ def test_phase1241_qpdf_lifecycle_validation_timeout_and_preservation(test_env):
 
     # 2. Timeout de subprocesso -> failed + sem sobra de arquivo temporário
     with patch.object(dos, "get_qpdf_info", return_value={"available": True, "path": "/usr/bin/qpdf", "version": "qpdf 11.9.0"}), \
-         patch("document_optimization_service.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["qpdf"], timeout=10)):
+         patch.object(dos, "_run_bounded_subprocess", side_effect=subprocess.TimeoutExpired(cmd=["qpdf"], timeout=10)):
         r_to = dos.optimize_single_book("book_opt_1", orig_pdf, force=True)
         assert r_to["state"] == "failed"
         assert "timeout" in r_to["reason"]
@@ -174,14 +173,14 @@ def test_phase1241_qpdf_lifecycle_validation_timeout_and_preservation(test_env):
 
     # 3. Execução bem-sucedida simulando QPDF gerando derivado linearizado válido
     def _fake_qpdf_run(cmd, **kwargs):
-        if "--check" in cmd:
+        if "--check" in cmd or "--check-linearization" in cmd:
             return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
         out_path = Path(cmd[-1])
         _create_fake_linearized_pdf(out_path, num_pages=3)
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     with patch.object(dos, "get_qpdf_info", return_value={"available": True, "path": "/usr/bin/qpdf", "version": "qpdf 11.9.0"}), \
-         patch("document_optimization_service.subprocess.run", side_effect=_fake_qpdf_run):
+         patch.object(dos, "_run_bounded_subprocess", side_effect=_fake_qpdf_run):
         r_ok = dos.optimize_single_book("book_opt_1", orig_pdf, force=True)
         assert r_ok["state"] == "optimized", r_ok
         assert r_ok["derivative_filename"]
@@ -277,13 +276,13 @@ def test_phase1241_api_admin_rbac_range_etag_and_original_download(test_env):
 
         # Otimiza o livro via endpoint admin com QPDF mockado
         def _fake_qpdf_run(cmd, **kwargs):
-            if "--check" in cmd:
+            if "--check" in cmd or "--check-linearization" in cmd:
                 return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
             _create_fake_linearized_pdf(Path(cmd[-1]), num_pages=2)
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
         with patch.object(dos, "get_qpdf_info", return_value={"available": True, "path": "/usr/bin/qpdf", "version": "qpdf 11.9.0"}), \
-             patch("document_optimization_service.subprocess.run", side_effect=_fake_qpdf_run):
+             patch.object(dos, "_run_bounded_subprocess", side_effect=_fake_qpdf_run):
             r_opt = client.post(f"/api/admin/optimization/books/{bid}", headers=admin_headers)
             assert r_opt.status_code == 200
             assert r_opt.json()["result"]["state"] == "optimized"
