@@ -69,9 +69,16 @@ Atualmente, `main.py` **não possui `GZipMiddleware`** (nem compressão no Tails
 
 ---
 
-## 4. Impacto da Ausência de Cache Imutável em Recarregamento Quente
+## 4. Impacto da Ausência de Cache Imutável e Nota Metodológica (Fase 12.2)
 
-Nos testes Playwright (Cenários S01, S02, S11):
-- Em `S02` (shell não autenticado, `page.reload()`): **668 KB** de estáticos foram re-transferidos integralmente, levando **1,95–2,18 s** mesmo em cache quente.
-- Em `S11` (leitor PDF `DOC-PDF-S` e `DOC-PDF-M`, `page.reload()`): **1,83 MB** de estáticos + **614–939 KB** de chunks PDF foram re-transferidos, mantendo o tempo quente em **9,4–11,3 s** — praticamente idêntico ao tempo frio (**9,4–10,6 s**)!
-- **Observação metodológica:** `page.reload()` envia `Cache-Control: max-age=0` (simulando F5 do usuário), o que expõe a falta de `immutable` e `304` rápido; na navegação normal entre abas/páginas (`warm_nav`), um `Cache-Control: public, max-age=31536000, immutable` elimina completamente o tráfego de rede dos estáticos (**0 bytes transferidos, 0 ms de rede**).
+Nos testes Playwright da Fase 12.1 (Cenários S01, S02, S11, S12), o uso de `context.route("**/*", ...)` como trava somente-leitura contra produção ativou o domínio CDP `Fetch.enable`, **desabilitando o cache HTTP do Chromium** nos ensaios `warm` e `warm_nav` daquela rodada. Em validação complementar isolada (Fase 12.2, sem `context.route()` e com telemetria CDP):
+
+| Cenário no Chromium (v1.9.2 sem `Cache-Control` em `/static/*`) | Com `context.route()` (cache desabilitado) | Sem `context.route()` (cache real do navegador) |
+| :--- | :--- | :--- |
+| **Cache frio** | 6/6 `HTTP 200`, 668.564 B | 6/6 `HTTP 200`, 668.564 B |
+| **Navegação quente (mesma aba)** | 6/6 `HTTP 200`, 668.564 B | 6/6 servidos do cache (`0 B` de rede) |
+| **Nova aba no mesmo contexto** | 6/6 `HTTP 200`, 668.564 B | 6/6 `fromDiskCache=True` (`0 B` de rede, via frescor heurístico de `Last-Modified`) |
+| **Reload convencional (F5)** | 6/6 `HTTP 200`, 668.564 B | Revalidação condicional (`If-None-Match` / `304`, sem corpo) |
+| **Hard reload (`ignoreCache=True`)** | 6/6 `HTTP 200`, 668.564 B | 6/6 `HTTP 200`, 668.564 B |
+
+**Conclusão refinada:** O problema real de `/static/*` na v1.9.2 não é incapacidade absoluta de cachear, mas sim depender de **frescor heurístico frágil** (ausência de `Cache-Control: public, max-age=31536000, immutable` com hash de conteúdo), que (1) força revalidações condicionais (`304`) em reloads e após janelas curtas de idade do arquivo (especialmente logo após deploys recentes!) e (2) não invalida de forma garantida assets quando dois builds compartilham o mesmo `APP_VERSION`. Já os **tempos frios** (e a ausência total de `gzip`) permanecem 100% confirmados.
