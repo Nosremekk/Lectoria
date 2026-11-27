@@ -58,6 +58,11 @@ EXCLUDED_PATH_SUFFIXES = (
 
 # Assets carregados dinamicamente por JS/Workers (expostos via <meta> CSP-safe no HTML)
 DYNAMIC_ASSET_PATHS = (
+    "/static/js/knowledge-api.js",
+    "/static/js/book-knowledge.js",
+    "/static/js/knowledge.js",
+    "/static/js/shared_reading.js",
+    "/static/vendor/pdfjs/pdf.min.js",
     "/static/vendor/pdfjs/pdf.worker.min.js",
     "/static/vendor/epubjs/jszip.min.js",
     "/static/vendor/epubjs/epub.min.js",

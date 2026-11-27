@@ -467,6 +467,7 @@ def get_books(
     uncategorized: bool = False,
     collective_read_only: bool = False,
     user_id: int = 1,
+    compact: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Retorna a lista de livros disponíveis, enriquecida com progresso, coleções,
@@ -895,6 +896,15 @@ def get_books(
                     "subjects": tinfo["subjects"],
                 }
 
+        if compact:
+            # Projeção compacta para cards/prateleiras: omite campos pesados usados apenas no modal de detalhes
+            for b in books:
+                b.pop("description", None)
+                b.pop("manual_lock_fields", None)
+                b.pop("last_error_reason", None)
+                b.pop("reviewed_by", None)
+                b.pop("reviewed_at", None)
+
         return books
 
 
@@ -1152,7 +1162,7 @@ def get_discovery_shelves(user_id: int = 1) -> List[Dict[str, Any]]:
     """
     shelves: List[Dict[str, Any]] = []
     try:
-        all_books = get_books(sort_by="title", order="asc", user_id=user_id)
+        all_books = get_books(sort_by="title", order="asc", user_id=user_id, compact=True)
     except Exception as e:
         logger.error("Erro ao consultar livros para prateleiras de descoberta: %s", e)
         return []

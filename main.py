@@ -1643,6 +1643,7 @@ def list_books(
     want_to_read_only: bool = False,
     uncategorized: bool = False,
     collective_read_only: bool = False,
+    compact: bool = False,
 ):
     """Lista todos os livros disponíveis com filtros multidimensionais, coleções e ordenação."""
     user = require_user(request)
@@ -1668,6 +1669,7 @@ def list_books(
         uncategorized=uncategorized,
         collective_read_only=collective_read_only,
         user_id=user["id"],
+        compact=compact,
     )
     return {"books": books, "count": len(books)}
 
