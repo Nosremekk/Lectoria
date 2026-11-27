@@ -289,8 +289,9 @@ def test_phase122_immutable_cache_and_same_version_invalidation(test_env, tmp_pa
             assert r_dyn.headers.get("cache-control") == "public, max-age=31536000, immutable"
             assert r_dyn.headers.get("content-encoding") == "gzip"
 
-        # pdf.min.js referenciado no HTML também recebe hash e immutable
-        pdf_js_url = _extract_asset_url(r_reader.text, "/static/vendor/pdfjs/pdf.min.js")
+        # pdf.min.js no manifesto dinâmico também recebe hash e immutable
+        pdf_js_url = dyn["/static/vendor/pdfjs/pdf.min.js"]
+        assert f"?v={config.APP_VERSION}&h=" in pdf_js_url
         r_pdfjs = client.get(pdf_js_url, headers={"Accept-Encoding": "gzip"})
         assert r_pdfjs.status_code == 200
         assert r_pdfjs.headers.get("cache-control") == "public, max-age=31536000, immutable"
