@@ -1,8 +1,8 @@
 /**
- * Lectoria — Aplicação da Biblioteca (v1.9.2)
+ * Lectoria — Aplicação da Biblioteca (v1.10.0)
  * JavaScript puro (Vanilla ES6), rápido e sem dependências pesadas.
  */
-window.LECTORIA_FRONTEND_VERSION = "1.9.2";
+window.LECTORIA_FRONTEND_VERSION = "1.10.0";
 
 function formatApiError(err, fallbackMsg = "Ocorreu um erro ao processar a solicitação.") {
   if (!err) return fallbackMsg;
@@ -4523,23 +4523,26 @@ document.addEventListener("DOMContentLoaded", () => {
       const cfg = d.config || {};
       const counts = d.counts || {};
       const qpdf = d.qpdf || {};
-      const storage = d.storage || {};
       const modeSel = document.getElementById("admin-opt-mode-select");
       const winStart = document.getElementById("admin-opt-window-start");
       const winEnd = document.getElementById("admin-opt-window-end");
+      const tzInput = document.getElementById("admin-opt-timezone");
       const maxMb = document.getElementById("admin-opt-max-mb");
+      const adaptiveWin = document.getElementById("admin-opt-adaptive-window");
       if (modeSel && cfg.mode) modeSel.value = cfg.mode;
-      if (winStart && cfg.schedule_window_start) winStart.value = cfg.schedule_window_start;
-      if (winEnd && cfg.schedule_window_end) winEnd.value = cfg.schedule_window_end;
+      if (winStart && cfg.window_start) winStart.value = cfg.window_start;
+      if (winEnd && cfg.window_end) winEnd.value = cfg.window_end;
+      if (tzInput && cfg.timezone) tzInput.value = cfg.timezone;
       if (maxMb && cfg.max_storage_mb != null) maxMb.value = cfg.max_storage_mb;
+      if (adaptiveWin) adaptiveWin.checked = Boolean(cfg.adaptive_use_window);
 
       const qpdfLabel = qpdf.available
         ? `Disponível (${escapeHtml(qpdf.version || "qpdf")})`
         : "Indisponível (fallback automático ao original)";
       summaryEl.innerHTML = `
         <div class="admin-stat-row"><span>Binário QPDF</span><strong>${qpdfLabel}</strong></div>
-        <div class="admin-stat-row"><span>Estado da Fila</span><strong>${d.paused ? "Pausada" : escapeHtml(cfg.mode || "disabled")} · ${counts.pending || 0} pendentes · ${counts.optimized || 0} otimizados</strong></div>
-        <div class="admin-stat-row"><span>Derivados em Disco</span><strong>${formatBytes(storage.used_bytes || 0)} / ${storage.max_storage_mb || 0} MB (${storage.files_count || 0} arqs)</strong></div>
+        <div class="admin-stat-row"><span>Estado da Fila</span><strong>${d.paused ? "Pausada" : escapeHtml(cfg.mode || "disabled")} · ${counts.pending || 0} pendentes · ${counts.optimized || 0} otimizados · ${d.active_pinned_sessions || 0} sessões ativas</strong></div>
+        <div class="admin-stat-row"><span>Derivados em Disco</span><strong>${formatBytes(d.storage_used_bytes || 0)} / ${d.storage_limit_mb || 0} MB (${d.storage_files_count || 0} arqs)</strong></div>
       `;
     } catch (_) {
       // Silencioso para não bloquear a aba de manutenção
@@ -4550,13 +4553,15 @@ document.addEventListener("DOMContentLoaded", () => {
   if (btnAdminOptSave) {
     btnAdminOptSave.addEventListener("click", async () => {
       const mode = document.getElementById("admin-opt-mode-select")?.value || "disabled";
-      const schedule_window_start = document.getElementById("admin-opt-window-start")?.value || "02:00";
-      const schedule_window_end = document.getElementById("admin-opt-window-end")?.value || "05:00";
+      const window_start = document.getElementById("admin-opt-window-start")?.value || "02:00";
+      const window_end = document.getElementById("admin-opt-window-end")?.value || "05:00";
+      const timezone = document.getElementById("admin-opt-timezone")?.value || "America/Sao_Paulo";
       const max_storage_mb = parseInt(document.getElementById("admin-opt-max-mb")?.value || "1024", 10);
+      const adaptive_use_window = Boolean(document.getElementById("admin-opt-adaptive-window")?.checked);
       await fetch("/api/admin/optimization/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, schedule_window_start, schedule_window_end, max_storage_mb }),
+        body: JSON.stringify({ mode, window_start, window_end, timezone, max_storage_mb, adaptive_use_window }),
       });
       await loadAdminOptimizationStatus();
     });

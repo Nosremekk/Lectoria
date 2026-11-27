@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="pt-BR" data-theme="dark" data-app-version="1.9.2">
+<html lang="pt-BR" data-theme="dark" data-app-version="1.10.0">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lectoria — Biblioteca Pessoal</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=1.9.2">
+  <link rel="stylesheet" href="/static/css/style.css?v=1.10.0">
 </head>
 <body>
   <header class="app-header">
@@ -760,7 +760,12 @@
             </select>
             <input id="admin-opt-window-start" type="text" class="form-input" value="02:00" maxlength="5" style="max-width: 82px;" title="Início da janela (HH:MM)">
             <input id="admin-opt-window-end" type="text" class="form-input" value="05:00" maxlength="5" style="max-width: 82px;" title="Fim da janela (HH:MM)">
+            <input id="admin-opt-timezone" type="text" class="form-input" value="America/Sao_Paulo" style="max-width: 170px;" title="Fuso horário IANA">
             <input id="admin-opt-max-mb" type="number" class="form-input" value="1024" min="64" max="50000" style="max-width: 110px;" title="Limite de cache (MB)">
+            <label style="display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; color: var(--text-muted);">
+              <input id="admin-opt-adaptive-window" type="checkbox">
+              <span>Restringir adaptativo à janela</span>
+            </label>
             <button id="btn-admin-opt-save" type="button" class="btn btn-primary">Salvar Política</button>
           </div>
           <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
@@ -1808,6 +1813,6 @@
     </div>
   </div>
 
-  <script src="/static/js/app.js?v=1.9.2"></script>
+  <script src="/static/js/app.js?v=1.10.0"></script>
 </body>
 </html>

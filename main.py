@@ -233,13 +233,16 @@ async def lifespan(app: FastAPI):
     init_db()
     # Recupera tarefas em segundo plano que foram interrompidas por reinício anterior
     automation_service.recover_interrupted_jobs_on_startup()
+    document_optimization_service.recover_on_startup()
     # Executa uma varredura inicial rápida para registrar arquivos existentes
     scan_library()
-    # Inicia loop leve do agendador e monitor de diretórios
+    # Inicia loop leve do agendador e worker cooperativo de otimização de documentos
     automation_service.scheduler_loop.start()
+    document_optimization_service.start_background_worker()
     try:
         yield
     finally:
+        document_optimization_service.stop_background_worker()
         automation_service.scheduler_loop.stop()
 
 
@@ -1416,6 +1419,12 @@ def logout(request: Request, response: Response):
         token = request.headers.get("authorization", "")[7:].strip()
 
     if token:
+        try:
+            u = get_user_from_session(token)
+            if u and u.get("id") is not None:
+                document_optimization_service.release_user_sessions(u["id"])
+        except Exception:
+            pass
         destroy_session(token)
 
     response.delete_cookie(
@@ -1907,18 +1916,51 @@ def retrieve_book(book_id: str, request: Request):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
+@app.get("/api/books/{book_id}/reader-representation")
+def get_reader_representation(
+    book_id: str,
+    request: Request,
+    response: Response,
+    representation: Literal["auto", "original"] = Query("auto"),
+):
+    """
+    Resolve e fixa a representação de leitura (original ou derivado otimizado validado)
+    para toda a sessão do PDF.js, retornando URL pinada (`?rep=...`) e `content_length` exato.
+    """
+    user = require_user(request)
+    try:
+        file_path, stat_result, _ = resolve_book_file_for_user(book_id, user_id=user["id"])
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    document_optimization_service.mark_reading_activity()
+    pinned = document_optimization_service.pin_reader_representation(
+        book_id=book_id,
+        user_id=user["id"],
+        original_path=file_path,
+        original_stat=stat_result,
+        preferred=representation,
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Vary"] = "Cookie"
+    return pinned
+
+
 @app.get("/api/books/{book_id}/file")
 @app.head("/api/books/{book_id}/file")
 def stream_book_file(
     book_id: str,
     request: Request,
     representation: Literal["auto", "original"] = Query("auto"),
+    rep: Optional[str] = Query(None),
 ):
     """
     Disponibiliza o arquivo PDF/EPUB com suporte a HTTP Range requests (206 Partial Content),
     inspeção de cabeçalhos (HEAD), validação condicional com ETag e políticas seguras de cache.
-    Quando otimização está habilitada e há derivado PDF validado e atualizado, entrega-o
-    com ETag vinculado à representação para evitar mistura em sessões Range.
+    Quando `?rep=<rep_id>` é fornecido, fixa estritamente a representação da sessão de leitura
+    (nunca misturando bytes de original e derivado).
     """
     user = require_user(request)
     try:
@@ -1930,11 +1972,32 @@ def stream_book_file(
 
     document_optimization_service.mark_reading_activity()
 
-    served_path, served_stat, served_rep = (
-        document_optimization_service.resolve_pdf_for_reader(book_id, file_path, stat_result)
-        if representation == "auto"
-        else (file_path, stat_result, "original")
-    )
+    if rep:
+        try:
+            served_path, served_stat, served_rep = document_optimization_service.resolve_pinned_representation(
+                rep_id=rep,
+                book_id=book_id,
+                user_id=user["id"],
+                original_path=file_path,
+                original_stat=stat_result,
+            )
+        except document_optimization_service.RepresentationForbiddenError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except document_optimization_service.RepresentationStaleError as e:
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content={"code": e.code, "detail": str(e)},
+                headers={
+                    "Cache-Control": "private, no-store",
+                    "X-Document-Representation-Stale": "1",
+                },
+            )
+    else:
+        served_path, served_stat, served_rep = (
+            document_optimization_service.resolve_pdf_for_reader(book_id, file_path, stat_result)
+            if representation == "auto"
+            else (file_path, stat_result, "original")
+        )
 
     etag_base = f"{served_rep}-{served_stat.st_mtime_ns}-{served_stat.st_size}-{served_stat.st_ino}"
     etag = f'"{hashlib.sha256(etag_base.encode()).hexdigest()[:24]}"'
@@ -1948,6 +2011,8 @@ def stream_book_file(
         "Last-Modified": last_modified,
         "X-Document-Representation": served_rep,
     }
+    if rep:
+        cache_headers["X-Document-Representation-Id"] = rep
 
     # Validação condicional If-None-Match (somente após require_user + resolve_book_file_for_user, sem Range)
     if_none_match = request.headers.get("if-none-match")
@@ -2135,6 +2200,7 @@ def trigger_scan(request: Request):
     """
     require_admin(request)
     stats = scan_library()
+    document_optimization_service.notify_scan_completed()
     return {"status": "success", "stats": stats}
 
 

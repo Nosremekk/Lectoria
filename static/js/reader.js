@@ -5097,16 +5097,34 @@ document.addEventListener("DOMContentLoaded", async () => {
     const loadingStatusEl = viewportEl ? viewportEl.querySelector("p") : null;
     const formatBytesMB = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 
+    // Fixa representação imutável antes de abrir o PDF.js (evita mistura de bytes e garante length exato)
+    let pdfUrl = `/api/books/${bookId}/file`;
+    let pdfLength = (bookData && bookData.filesize) || undefined;
+    try {
+      const repRes = await fetch(`/api/books/${bookId}/reader-representation`, { cache: "no-store" });
+      if (repRes.ok) {
+        const repData = await repRes.json();
+        if (repData && repData.file_url) {
+          pdfUrl = repData.file_url;
+        }
+        if (repData && typeof repData.content_length === "number" && repData.content_length > 0) {
+          pdfLength = repData.content_length;
+        }
+      }
+    } catch (_) {
+      // Fallback seguro para URL padrão caso o endpoint de pinagem falhe
+    }
+
     // Configuração de alto desempenho para PDF.js:
     // 1. disableStream: true evita streaming concorrente de 100% do arquivo
     // 2. rangeChunkSize: 524288 (512 KiB) validado experimentalmente
-    // 3. length antecipa a dimensão exata do documento sem handshake extra
+    // 3. length antecipa a dimensão exata da representação pinada sem handshake extra
     const loadingTask = pdfjsLib.getDocument({
-      url: `/api/books/${bookId}/file`,
+      url: pdfUrl,
       rangeChunkSize: 524288,
       disableAutoFetch: true,
       disableStream: true,
-      length: (bookData && bookData.filesize) || undefined,
+      length: pdfLength,
     });
     loadingTask.onProgress = (progressData) => {
       if (!loadingStatusEl || !progressData || typeof progressData.loaded !== "number") return;
