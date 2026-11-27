@@ -1981,33 +1981,70 @@ def download_book_file(book_id: str, request: Request):
 
 
 @app.get("/api/books/{book_id}/cover")
-def get_book_cover_endpoint(book_id: str, request: Request):
+@app.head("/api/books/{book_id}/cover")
+def get_book_cover_endpoint(
+    book_id: str,
+    request: Request,
+    variant: Literal["original", "card", "detail"] = Query("original"),
+):
     """
-    Entrega a capa do livro (capa personalizada, capa extraída em cache ou capa editorial SVG).
+    Entrega a capa do livro (original ou thumbnail derivado `card`/`detail`, ou capa editorial SVG).
+    Valida autenticação e acesso antes de qualquer resposta condicional 304.
     """
     require_user(request)
     try:
-        cover = get_or_create_book_cover(book_id)
+        cover = get_or_create_book_cover(book_id, variant=variant)
     except SecurityError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except BookNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    headers = {
-        "X-Content-Type-Options": "nosniff",
-        "Cache-Control": "private, max-age=3600",
-        "X-Cover-Type": cover["type"],
-    }
-    if cover["file_path"] is not None:
+    resolved_variant = cover.get("variant") or variant
+    file_path = cover.get("file_path")
+
+    if file_path is not None:
+        st = file_path.stat()
+        etag_base = f"{st.st_mtime_ns}-{st.st_size}-{st.st_ino}-{resolved_variant}"
+        etag = f'"{hashlib.sha256(etag_base.encode()).hexdigest()[:24]}"'
+        headers = {
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-cache",
+            "Vary": "Cookie",
+            "ETag": etag,
+            "Last-Modified": formatdate(st.st_mtime, usegmt=True),
+            "X-Cover-Type": cover["type"],
+            "X-Cover-Variant": resolved_variant,
+        }
+        if etag_matches_if_none_match(request.headers.get("if-none-match"), etag):
+            return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+        if request.method.upper() == "HEAD":
+            headers["Content-Length"] = str(st.st_size)
+            return Response(content=b"", media_type=cover["media_type"], headers=headers)
         return FileResponse(
-            path=cover["file_path"],
+            path=file_path,
             media_type=cover["media_type"],
+            stat_result=st,
             headers=headers,
         )
 
-    headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'"
+    svg_bytes = cover["content"]
+    etag = f'"{hashlib.sha256(svg_bytes).hexdigest()[:24]}"'
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-cache",
+        "Vary": "Cookie",
+        "ETag": etag,
+        "X-Cover-Type": cover["type"],
+        "X-Cover-Variant": resolved_variant,
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+    }
+    if etag_matches_if_none_match(request.headers.get("if-none-match"), etag):
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    if request.method.upper() == "HEAD":
+        headers["Content-Length"] = str(len(svg_bytes))
+        return Response(content=b"", media_type=cover["media_type"], headers=headers)
     return Response(
-        content=cover["content"],
+        content=svg_bytes,
         media_type=cover["media_type"],
         headers=headers,
     )
