@@ -34,8 +34,23 @@ window.fetch = function(url, options = {}) {
   return _nativeFetch.call(this, url, options);
 };
 
+function resolveLectoriaAssetUrl(assetPath) {
+  try {
+    const meta = document.querySelector('meta[name="lectoria-asset-manifest"]');
+    if (meta && meta.content) {
+      const manifest = JSON.parse(meta.content);
+      if (manifest && typeof manifest[assetPath] === "string" && manifest[assetPath]) {
+        return manifest[assetPath];
+      }
+    }
+  } catch (e) {
+    // Fallback silencioso para o caminho original
+  }
+  return assetPath;
+}
+
 if (window.pdfjsLib) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "/static/vendor/pdfjs/pdf.worker.min.js";
+  pdfjsLib.GlobalWorkerOptions.workerSrc = resolveLectoriaAssetUrl("/static/vendor/pdfjs/pdf.worker.min.js");
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -4700,8 +4715,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (typeof ePub !== "undefined" && typeof JSZip !== "undefined") {
       return;
     }
-    await loadScript("/static/vendor/epubjs/jszip.min.js");
-    await loadScript("/static/vendor/epubjs/epub.min.js");
+    await loadScript(resolveLectoriaAssetUrl("/static/vendor/epubjs/jszip.min.js"));
+    await loadScript(resolveLectoriaAssetUrl("/static/vendor/epubjs/epub.min.js"));
   }
 
   async function initEpubReader(bookData, progData) {

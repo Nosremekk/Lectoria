@@ -70,6 +70,12 @@ from covers_service import (
     save_rendered_cover_cache,
     validate_cover_image,
 )
+from http_cache_service import (
+    AssetManifest,
+    HashedStaticFiles,
+    SelectiveGZipMiddleware,
+    etag_matches_if_none_match,
+)
 from library import (
     BookNotFoundError,
     SecurityError,
@@ -408,9 +414,13 @@ async def csrf_and_security_middleware(request: Request, call_next):
 
     return response
 
-# Monta arquivos estáticos (CSS, JS, assets do PDF.js)
+# Compressão HTTP seletiva (gzip nível 5 para HTML, CSS, JS e JSON elegíveis)
+app.add_middleware(SelectiveGZipMiddleware, minimum_size=500, compresslevel=5)
+
+# Manifesto em memória baseado em hash SHA-256 de conteúdo + StaticFiles com immutable estrito
 static_path = config.BASE_DIR / "static"
-app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
+asset_manifest = AssetManifest(static_path)
+app.mount("/static", HashedStaticFiles(directory=str(static_path), manifest=asset_manifest), name="static")
 
 
 # =========================================================================
@@ -1264,16 +1274,28 @@ def require_admin(request: Request) -> dict:
 # ROTAS DA INTERFACE DO USUÁRIO
 # =========================================================================
 
-@app.api_route("/", methods=["GET", "HEAD"], response_class=FileResponse)
-def serve_library_page():
+def _build_rendered_html_response(html_file: Path, request: Request) -> Response:
+    """Entrega página HTML com URLs de assets versionadas por hash de conteúdo e revalidação via ETag."""
+    rendered_bytes, etag = asset_manifest.render_html(html_file, config.APP_VERSION)
+    headers = {
+        "Cache-Control": "no-cache",
+        "ETag": etag,
+    }
+    if etag_matches_if_none_match(request.headers.get("if-none-match"), etag):
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    if request.method.upper() == "HEAD":
+        headers["Content-Length"] = str(len(rendered_bytes))
+        return Response(content=b"", media_type="text/html; charset=utf-8", headers=headers)
+    return Response(content=rendered_bytes, media_type="text/html; charset=utf-8", headers=headers)
+
+
+@app.api_route("/", methods=["GET", "HEAD"])
+def serve_library_page(request: Request):
     """Entrega a página principal da biblioteca."""
-    return FileResponse(
-        static_path / "index.html",
-        headers={"Cache-Control": "no-cache"},
-    )
+    return _build_rendered_html_response(static_path / "index.html", request)
 
 
-@app.api_route("/reader/{book_id}", methods=["GET", "HEAD"], response_class=FileResponse)
+@app.api_route("/reader/{book_id}", methods=["GET", "HEAD"])
 def serve_reader_page(book_id: str, request: Request):
     """Valida o livro e entrega a página do leitor."""
     user = get_current_user(request)
@@ -1287,15 +1309,15 @@ def serve_reader_page(book_id: str, request: Request):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Livro não encontrado ou arquivo indisponível.",
         )
-    return FileResponse(static_path / "reader.html")
+    return _build_rendered_html_response(static_path / "reader.html", request)
 
 
-@app.get("/reader.html")
+@app.api_route("/reader.html", methods=["GET", "HEAD"])
 def serve_reader_page_html_alias(request: Request, id: Optional[str] = None):
     """Redireciona links com parâmetro ?id=... para o caminho oficial /reader/{id}."""
     if id:
         return RedirectResponse(url=f"/reader/{id}", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
-    return FileResponse(static_path / "reader.html")
+    return _build_rendered_html_response(static_path / "reader.html", request)
 
 
 # =========================================================================
@@ -1402,6 +1424,8 @@ def logout(request: Request, response: Response):
         samesite="lax",
         secure=should_use_secure_cookies(request),
     )
+    response.headers["Clear-Site-Data"] = '"cache"'
+    response.headers["Cache-Control"] = "private, no-store"
     return {"status": "success", "message": "Sessão finalizada com sucesso."}
 
 
@@ -1896,20 +1920,21 @@ def stream_book_file(book_id: str, request: Request):
     except BookNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    etag_base = f"{stat_result.st_mtime}-{stat_result.st_size}"
-    etag = f'"{hashlib.md5(etag_base.encode(), usedforsecurity=False).hexdigest()}"'
+    etag_base = f"{stat_result.st_mtime_ns}-{stat_result.st_size}-{stat_result.st_ino}"
+    etag = f'"{hashlib.sha256(etag_base.encode()).hexdigest()[:24]}"'
     last_modified = formatdate(stat_result.st_mtime, usegmt=True)
 
     cache_headers = {
         "Cache-Control": "private, no-cache",
+        "Vary": "Cookie",
         "Accept-Ranges": "bytes",
         "ETag": etag,
         "Last-Modified": last_modified,
     }
 
-    # Validação condicional If-None-Match (para requisições completas ou revalidações sem Range)
+    # Validação condicional If-None-Match (somente após require_user + resolve_book_file_for_user, sem Range)
     if_none_match = request.headers.get("if-none-match")
-    if not request.headers.get("range") and if_none_match and if_none_match == etag:
+    if not request.headers.get("range") and etag_matches_if_none_match(if_none_match, etag):
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=cache_headers)
 
     return FileResponse(
