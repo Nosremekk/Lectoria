@@ -10,6 +10,7 @@ starlette==1.10.0
 pydantic==2.14.2
 uvicorn==0.54.0
 pypdf==6.21.4
+Pillow==12.3.0
 anyio==4.15.1
 click==8.5.0
 h11==0.16.0

@@ -34,8 +34,46 @@ window.fetch = function(url, options = {}) {
   return _nativeFetch.call(this, url, options);
 };
 
-if (window.pdfjsLib) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "/static/vendor/pdfjs/pdf.worker.min.js";
+function resolveLectoriaAssetUrl(assetPath) {
+  try {
+    const meta = document.querySelector('meta[name="lectoria-asset-manifest"]');
+    if (meta && meta.content) {
+      const manifest = JSON.parse(meta.content);
+      if (manifest && typeof manifest[assetPath] === "string" && manifest[assetPath]) {
+        return manifest[assetPath];
+      }
+    }
+  } catch (e) {
+    // Fallback silencioso para o caminho original
+  }
+  return assetPath;
+}
+
+let _pdfJsLoadPromise = null;
+
+function ensurePdfJsLoaded() {
+  if (window.pdfjsLib) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = resolveLectoriaAssetUrl("/static/vendor/pdfjs/pdf.worker.min.js");
+    return Promise.resolve();
+  }
+  if (_pdfJsLoadPromise) return _pdfJsLoadPromise;
+  _pdfJsLoadPromise = new Promise((resolve, reject) => {
+    const src = resolveLectoriaAssetUrl("/static/vendor/pdfjs/pdf.min.js");
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = () => {
+      if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = resolveLectoriaAssetUrl("/static/vendor/pdfjs/pdf.worker.min.js");
+      }
+      resolve();
+    };
+    s.onerror = () => {
+      _pdfJsLoadPromise = null;
+      reject(new Error("Falha ao carregar motor PDF.js."));
+    };
+    document.body.appendChild(s);
+  });
+  return _pdfJsLoadPromise;
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -4700,8 +4738,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (typeof ePub !== "undefined" && typeof JSZip !== "undefined") {
       return;
     }
-    await loadScript("/static/vendor/epubjs/jszip.min.js");
-    await loadScript("/static/vendor/epubjs/epub.min.js");
+    await loadScript(resolveLectoriaAssetUrl("/static/vendor/epubjs/jszip.min.js"));
+    await loadScript(resolveLectoriaAssetUrl("/static/vendor/epubjs/epub.min.js"));
   }
 
   async function initEpubReader(bookData, progData) {
@@ -5023,15 +5061,18 @@ document.addEventListener("DOMContentLoaded", async () => {
         loadDrawerAnnotations({ append: false });
       }
     } catch (_) {}
-    loadEligibleCollectiveReads();
-
     bookFormat = (bookData.format || (bookData.filename && bookData.filename.toLowerCase().endsWith(".epub") ? "epub" : "pdf")).toLowerCase();
 
     const bookCoverMini = document.getElementById("reader-book-cover");
-    if (bookCoverMini) {
-      bookCoverMini.src = bookData.cover_url || `/api/books/${encodeURIComponent(bookId)}/cover`;
-      bookCoverMini.style.display = "block";
-    }
+    const hydrateDeferredReaderExtras = () => {
+      if (bookCoverMini && !bookCoverMini.getAttribute("src")) {
+        const rawCoverUrl = bookData.cover_url || `/api/books/${encodeURIComponent(bookId)}/cover`;
+        bookCoverMini.decoding = "async";
+        bookCoverMini.src = rawCoverUrl + (rawCoverUrl.includes("?") ? "&" : "?") + "variant=card";
+        bookCoverMini.style.display = "block";
+      }
+      loadEligibleCollectiveReads();
+    };
 
     let progData = null;
     let initialPage = 1;
@@ -5042,23 +5083,58 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     }
 
-    // Se o formato for EPUB, inicializa o motor de renderização dedicado
+    // Se o formato for EPUB, inicializa o motor dedicado SEM carregar PDF.js
     if (bookFormat === "epub") {
       await initEpubReader(bookData, progData);
+      hydrateDeferredReaderExtras();
       return;
     }
 
-    // Configuração de alto desempenho para PDF.js (v1.6.1):
-    // 1. disableStream: true evita o streaming concorrente não intencional de 100% do arquivo
-    // 2. rangeChunkSize: 524288 (512 KB) reduz drasticamente as viagens de ida e volta (RTT)
-    // 3. length antecipa a dimensão exata do documento sem esperar handshake extra
+    // Carrega PDF.js + worker sob demanda apenas para documentos PDF
+    await ensurePdfJsLoaded();
+
+    // Feedback real de transferência durante abertura de PDFs (nunca exibe % fictício)
+    const loadingStatusEl = viewportEl ? viewportEl.querySelector("p") : null;
+    const formatBytesMB = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+    // Fixa representação imutável antes de abrir o PDF.js (evita mistura de bytes e garante length exato)
+    let pdfUrl = `/api/books/${bookId}/file`;
+    let pdfLength = (bookData && bookData.filesize) || undefined;
+    try {
+      const repRes = await fetch(`/api/books/${bookId}/reader-representation`, { cache: "no-store" });
+      if (repRes.ok) {
+        const repData = await repRes.json();
+        if (repData && repData.file_url) {
+          pdfUrl = repData.file_url;
+        }
+        if (repData && typeof repData.content_length === "number" && repData.content_length > 0) {
+          pdfLength = repData.content_length;
+        }
+      }
+    } catch (_) {
+      // Fallback seguro para URL padrão caso o endpoint de pinagem falhe
+    }
+
+    // Configuração de alto desempenho para PDF.js:
+    // 1. disableStream: true evita streaming concorrente de 100% do arquivo
+    // 2. rangeChunkSize: 524288 (512 KiB) validado experimentalmente
+    // 3. length antecipa a dimensão exata da representação pinada sem handshake extra
     const loadingTask = pdfjsLib.getDocument({
-      url: `/api/books/${bookId}/file`,
+      url: pdfUrl,
       rangeChunkSize: 524288,
       disableAutoFetch: true,
       disableStream: true,
-      length: (bookData && bookData.filesize) || undefined,
+      length: pdfLength,
     });
+    loadingTask.onProgress = (progressData) => {
+      if (!loadingStatusEl || !progressData || typeof progressData.loaded !== "number") return;
+      if (progressData.total && progressData.total > 0) {
+        const pct = Math.min(100, Math.round((progressData.loaded / progressData.total) * 100));
+        loadingStatusEl.textContent = `Carregando documento... ${formatBytesMB(progressData.loaded)} / ${formatBytesMB(progressData.total)} (${pct}%)`;
+      } else if (progressData.loaded > 0) {
+        loadingStatusEl.textContent = `Carregando documento... ${formatBytesMB(progressData.loaded)}`;
+      }
+    };
 
     pdfDoc = await loadingTask.promise;
     totalPages = pdfDoc.numPages;
@@ -5133,6 +5209,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     updateMobilePageControls();
     updateTabletControls();
     setViewMode(viewMode);
+    hydrateDeferredReaderExtras();
     setTimeout(() => {
       isRestoringProgress = false;
     }, 600);

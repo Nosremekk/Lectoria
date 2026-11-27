@@ -49,9 +49,9 @@ ENV PATH="/opt/venv/bin:$PATH" \
     LECTORIA_CSP_MODE="report-only" \
     LECTORIA_HSTS_ENABLED="false"
 
-# Instala sqlite3 CLI para inspeção e rotinas de backup/integridade
+# Instala sqlite3 CLI e qpdf (linearização opcional segura de PDFs sem alteração dos originais)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends sqlite3 \
+    && apt-get install -y --no-install-recommends sqlite3 qpdf \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -70,9 +70,9 @@ COPY requirements.txt constraints.txt .env.example LICENSE README.md CHANGELOG.m
 RUN groupadd --gid "${LECTORIA_GID}" lectoria \
     && useradd --uid "${LECTORIA_UID}" --gid "${LECTORIA_GID}" --home-dir /app --shell /usr/sbin/nologin --no-create-home lectoria \
     && python -m compileall -q /app \
-    && mkdir -p /app/data /app/data/covers /app/books /app/backups \
+    && mkdir -p /app/data /app/data/covers /app/data/covers/thumbs /app/data/optimized /app/data/optimized/pdf /app/books /app/backups \
     && chmod +x /app/scripts/*.py /app/deployment/*.sh \
-    && chown lectoria:lectoria /app/data /app/data/covers /app/backups
+    && chown lectoria:lectoria /app/data /app/data/covers /app/backups /app/data/covers/thumbs /app/data/optimized /app/data/optimized/pdf
 
 VOLUME ["/app/data", "/app/books", "/app/backups"]
 

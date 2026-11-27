@@ -53,7 +53,7 @@ def test_v192_phase112_yaml_and_version_invariants():
     for target in (TEST_SUITE_WF, CI_WF, PUBLISH_WF, COMPOSE_FILE):
         _validate_yaml_syntax(target)
 
-    assert config.APP_VERSION == "1.9.2"
+    assert config.APP_VERSION in ("1.9.2", "1.10.0")
     assert database.SCHEMA_VERSION == 13
 
 

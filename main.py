@@ -70,6 +70,13 @@ from covers_service import (
     save_rendered_cover_cache,
     validate_cover_image,
 )
+from http_cache_service import (
+    AssetManifest,
+    HashedStaticFiles,
+    SelectiveGZipMiddleware,
+    etag_matches_if_none_match,
+)
+import document_optimization_service
 from library import (
     BookNotFoundError,
     SecurityError,
@@ -226,13 +233,16 @@ async def lifespan(app: FastAPI):
     init_db()
     # Recupera tarefas em segundo plano que foram interrompidas por reinício anterior
     automation_service.recover_interrupted_jobs_on_startup()
+    document_optimization_service.recover_on_startup()
     # Executa uma varredura inicial rápida para registrar arquivos existentes
     scan_library()
-    # Inicia loop leve do agendador e monitor de diretórios
+    # Inicia loop leve do agendador e worker cooperativo de otimização de documentos
     automation_service.scheduler_loop.start()
+    document_optimization_service.start_background_worker()
     try:
         yield
     finally:
+        document_optimization_service.stop_background_worker()
         automation_service.scheduler_loop.stop()
 
 
@@ -408,9 +418,13 @@ async def csrf_and_security_middleware(request: Request, call_next):
 
     return response
 
-# Monta arquivos estáticos (CSS, JS, assets do PDF.js)
+# Compressão HTTP seletiva (gzip nível 5 para HTML, CSS, JS e JSON elegíveis)
+app.add_middleware(SelectiveGZipMiddleware, minimum_size=500, compresslevel=5)
+
+# Manifesto em memória baseado em hash SHA-256 de conteúdo + StaticFiles com immutable estrito
 static_path = config.BASE_DIR / "static"
-app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
+asset_manifest = AssetManifest(static_path)
+app.mount("/static", HashedStaticFiles(directory=str(static_path), manifest=asset_manifest), name="static")
 
 
 # =========================================================================
@@ -1264,16 +1278,28 @@ def require_admin(request: Request) -> dict:
 # ROTAS DA INTERFACE DO USUÁRIO
 # =========================================================================
 
-@app.api_route("/", methods=["GET", "HEAD"], response_class=FileResponse)
-def serve_library_page():
+def _build_rendered_html_response(html_file: Path, request: Request) -> Response:
+    """Entrega página HTML com URLs de assets versionadas por hash de conteúdo e revalidação via ETag."""
+    rendered_bytes, etag = asset_manifest.render_html(html_file, config.APP_VERSION)
+    headers = {
+        "Cache-Control": "no-cache",
+        "ETag": etag,
+    }
+    if etag_matches_if_none_match(request.headers.get("if-none-match"), etag):
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    if request.method.upper() == "HEAD":
+        headers["Content-Length"] = str(len(rendered_bytes))
+        return Response(content=b"", media_type="text/html; charset=utf-8", headers=headers)
+    return Response(content=rendered_bytes, media_type="text/html; charset=utf-8", headers=headers)
+
+
+@app.api_route("/", methods=["GET", "HEAD"])
+def serve_library_page(request: Request):
     """Entrega a página principal da biblioteca."""
-    return FileResponse(
-        static_path / "index.html",
-        headers={"Cache-Control": "no-cache"},
-    )
+    return _build_rendered_html_response(static_path / "index.html", request)
 
 
-@app.api_route("/reader/{book_id}", methods=["GET", "HEAD"], response_class=FileResponse)
+@app.api_route("/reader/{book_id}", methods=["GET", "HEAD"])
 def serve_reader_page(book_id: str, request: Request):
     """Valida o livro e entrega a página do leitor."""
     user = get_current_user(request)
@@ -1287,15 +1313,15 @@ def serve_reader_page(book_id: str, request: Request):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Livro não encontrado ou arquivo indisponível.",
         )
-    return FileResponse(static_path / "reader.html")
+    return _build_rendered_html_response(static_path / "reader.html", request)
 
 
-@app.get("/reader.html")
+@app.api_route("/reader.html", methods=["GET", "HEAD"])
 def serve_reader_page_html_alias(request: Request, id: Optional[str] = None):
     """Redireciona links com parâmetro ?id=... para o caminho oficial /reader/{id}."""
     if id:
         return RedirectResponse(url=f"/reader/{id}", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
-    return FileResponse(static_path / "reader.html")
+    return _build_rendered_html_response(static_path / "reader.html", request)
 
 
 # =========================================================================
@@ -1393,6 +1419,12 @@ def logout(request: Request, response: Response):
         token = request.headers.get("authorization", "")[7:].strip()
 
     if token:
+        try:
+            u = get_user_from_session(token)
+            if u and u.get("id") is not None:
+                document_optimization_service.release_user_sessions(u["id"])
+        except Exception:
+            pass
         destroy_session(token)
 
     response.delete_cookie(
@@ -1402,6 +1434,8 @@ def logout(request: Request, response: Response):
         samesite="lax",
         secure=should_use_secure_cookies(request),
     )
+    response.headers["Clear-Site-Data"] = '"cache"'
+    response.headers["Cache-Control"] = "private, no-store"
     return {"status": "success", "message": "Sessão finalizada com sucesso."}
 
 
@@ -1619,6 +1653,7 @@ def list_books(
     want_to_read_only: bool = False,
     uncategorized: bool = False,
     collective_read_only: bool = False,
+    compact: bool = False,
 ):
     """Lista todos os livros disponíveis com filtros multidimensionais, coleções e ordenação."""
     user = require_user(request)
@@ -1644,6 +1679,7 @@ def list_books(
         uncategorized=uncategorized,
         collective_read_only=collective_read_only,
         user_id=user["id"],
+        compact=compact,
     )
     return {"books": books, "count": len(books)}
 
@@ -1880,13 +1916,51 @@ def retrieve_book(book_id: str, request: Request):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
+@app.get("/api/books/{book_id}/reader-representation")
+def get_reader_representation(
+    book_id: str,
+    request: Request,
+    response: Response,
+    representation: Literal["auto", "original"] = Query("auto"),
+):
+    """
+    Resolve e fixa a representação de leitura (original ou derivado otimizado validado)
+    para toda a sessão do PDF.js, retornando URL pinada (`?rep=...`) e `content_length` exato.
+    """
+    user = require_user(request)
+    try:
+        file_path, stat_result, _ = resolve_book_file_for_user(book_id, user_id=user["id"])
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    document_optimization_service.mark_reading_activity()
+    pinned = document_optimization_service.pin_reader_representation(
+        book_id=book_id,
+        user_id=user["id"],
+        original_path=file_path,
+        original_stat=stat_result,
+        preferred=representation,
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Vary"] = "Cookie"
+    return pinned
+
+
 @app.get("/api/books/{book_id}/file")
 @app.head("/api/books/{book_id}/file")
-def stream_book_file(book_id: str, request: Request):
+def stream_book_file(
+    book_id: str,
+    request: Request,
+    representation: Literal["auto", "original"] = Query("auto"),
+    rep: Optional[str] = Query(None),
+):
     """
     Disponibiliza o arquivo PDF/EPUB com suporte a HTTP Range requests (206 Partial Content),
     inspeção de cabeçalhos (HEAD), validação condicional com ETag e políticas seguras de cache.
-    Utiliza consulta otimizada de caminho sem carregar tabelas acessórias da biblioteca.
+    Quando `?rep=<rep_id>` é fornecido, fixa estritamente a representação da sessão de leitura
+    (nunca misturando bytes de original e derivado).
     """
     user = require_user(request)
     try:
@@ -1896,27 +1970,60 @@ def stream_book_file(book_id: str, request: Request):
     except BookNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    etag_base = f"{stat_result.st_mtime}-{stat_result.st_size}"
-    etag = f'"{hashlib.md5(etag_base.encode(), usedforsecurity=False).hexdigest()}"'
-    last_modified = formatdate(stat_result.st_mtime, usegmt=True)
+    document_optimization_service.mark_reading_activity()
+
+    if rep:
+        try:
+            served_path, served_stat, served_rep = document_optimization_service.resolve_pinned_representation(
+                rep_id=rep,
+                book_id=book_id,
+                user_id=user["id"],
+                original_path=file_path,
+                original_stat=stat_result,
+            )
+        except document_optimization_service.RepresentationForbiddenError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except document_optimization_service.RepresentationStaleError as e:
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content={"code": e.code, "detail": str(e)},
+                headers={
+                    "Cache-Control": "private, no-store",
+                    "X-Document-Representation-Stale": "1",
+                },
+            )
+    else:
+        served_path, served_stat, served_rep = (
+            document_optimization_service.resolve_pdf_for_reader(book_id, file_path, stat_result)
+            if representation == "auto"
+            else (file_path, stat_result, "original")
+        )
+
+    etag_base = f"{served_rep}-{served_stat.st_mtime_ns}-{served_stat.st_size}-{served_stat.st_ino}"
+    etag = f'"{hashlib.sha256(etag_base.encode()).hexdigest()[:24]}"'
+    last_modified = formatdate(served_stat.st_mtime, usegmt=True)
 
     cache_headers = {
         "Cache-Control": "private, no-cache",
+        "Vary": "Cookie",
         "Accept-Ranges": "bytes",
         "ETag": etag,
         "Last-Modified": last_modified,
+        "X-Document-Representation": served_rep,
     }
+    if rep:
+        cache_headers["X-Document-Representation-Id"] = rep
 
-    # Validação condicional If-None-Match (para requisições completas ou revalidações sem Range)
+    # Validação condicional If-None-Match (somente após require_user + resolve_book_file_for_user, sem Range)
     if_none_match = request.headers.get("if-none-match")
-    if not request.headers.get("range") and if_none_match and if_none_match == etag:
+    if not request.headers.get("range") and etag_matches_if_none_match(if_none_match, etag):
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=cache_headers)
 
     return FileResponse(
-        path=file_path,
+        path=served_path,
         media_type=media_type,
         filename=file_path.name,
-        stat_result=stat_result,
+        stat_result=served_stat,
         headers=cache_headers,
     )
 
@@ -1956,33 +2063,70 @@ def download_book_file(book_id: str, request: Request):
 
 
 @app.get("/api/books/{book_id}/cover")
-def get_book_cover_endpoint(book_id: str, request: Request):
+@app.head("/api/books/{book_id}/cover")
+def get_book_cover_endpoint(
+    book_id: str,
+    request: Request,
+    variant: Literal["original", "card", "detail"] = Query("original"),
+):
     """
-    Entrega a capa do livro (capa personalizada, capa extraída em cache ou capa editorial SVG).
+    Entrega a capa do livro (original ou thumbnail derivado `card`/`detail`, ou capa editorial SVG).
+    Valida autenticação e acesso antes de qualquer resposta condicional 304.
     """
     require_user(request)
     try:
-        cover = get_or_create_book_cover(book_id)
+        cover = get_or_create_book_cover(book_id, variant=variant)
     except SecurityError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except BookNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    headers = {
-        "X-Content-Type-Options": "nosniff",
-        "Cache-Control": "private, max-age=3600",
-        "X-Cover-Type": cover["type"],
-    }
-    if cover["file_path"] is not None:
+    resolved_variant = cover.get("variant") or variant
+    file_path = cover.get("file_path")
+
+    if file_path is not None:
+        st = file_path.stat()
+        etag_base = f"{st.st_mtime_ns}-{st.st_size}-{st.st_ino}-{resolved_variant}"
+        etag = f'"{hashlib.sha256(etag_base.encode()).hexdigest()[:24]}"'
+        headers = {
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-cache",
+            "Vary": "Cookie",
+            "ETag": etag,
+            "Last-Modified": formatdate(st.st_mtime, usegmt=True),
+            "X-Cover-Type": cover["type"],
+            "X-Cover-Variant": resolved_variant,
+        }
+        if etag_matches_if_none_match(request.headers.get("if-none-match"), etag):
+            return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+        if request.method.upper() == "HEAD":
+            headers["Content-Length"] = str(st.st_size)
+            return Response(content=b"", media_type=cover["media_type"], headers=headers)
         return FileResponse(
-            path=cover["file_path"],
+            path=file_path,
             media_type=cover["media_type"],
+            stat_result=st,
             headers=headers,
         )
 
-    headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'"
+    svg_bytes = cover["content"]
+    etag = f'"{hashlib.sha256(svg_bytes).hexdigest()[:24]}"'
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-cache",
+        "Vary": "Cookie",
+        "ETag": etag,
+        "X-Cover-Type": cover["type"],
+        "X-Cover-Variant": resolved_variant,
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+    }
+    if etag_matches_if_none_match(request.headers.get("if-none-match"), etag):
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    if request.method.upper() == "HEAD":
+        headers["Content-Length"] = str(len(svg_bytes))
+        return Response(content=b"", media_type=cover["media_type"], headers=headers)
     return Response(
-        content=cover["content"],
+        content=svg_bytes,
         media_type=cover["media_type"],
         headers=headers,
     )
@@ -2056,6 +2200,7 @@ def trigger_scan(request: Request):
     """
     require_admin(request)
     stats = scan_library()
+    document_optimization_service.notify_scan_completed()
     return {"status": "success", "stats": stats}
 
 
@@ -5333,6 +5478,114 @@ def export_knowledge_atlas_endpoint(
         background=BackgroundTask(_cleanup_temp_export_file, file_path),
     )
 
+
+
+# =========================================================================
+# OTIMIZAÇÃO AUTOMÁTICA DE DOCUMENTOS EM SEGUNDO PLANO (FASE 12.4.1)
+# =========================================================================
+
+class DocOptimizationConfigPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: Optional[bool] = None
+    mode: Optional[Literal["disabled", "immediate", "scheduled", "adaptive"]] = None
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
+    timezone: Optional[str] = None
+    weekdays: Optional[List[int]] = None
+    adaptive_use_window: Optional[bool] = None
+    reading_idle_seconds: Optional[int] = None
+    max_storage_mb: Optional[int] = None
+    min_free_disk_mb: Optional[int] = None
+    min_document_mb: Optional[float] = None
+    max_document_mb: Optional[float] = None
+    timeout_seconds: Optional[int] = None
+    max_retries: Optional[int] = None
+    subprocess_mem_limit_mb: Optional[int] = None
+
+
+class DocOptimizationEnqueuePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(default=50, ge=1, le=500)
+
+
+@app.get("/api/admin/optimization/status")
+def admin_optimization_status(request: Request, response: Response):
+    """Retorna configuração, disponibilidade do QPDF, contadores e uso de disco dos derivados."""
+    require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    return document_optimization_service.get_status()
+
+
+@app.put("/api/admin/optimization/config")
+def admin_optimization_update_config(payload: DocOptimizationConfigPayload, request: Request, response: Response):
+    """Atualiza política de otimização automática de documentos (somente administrador)."""
+    admin = require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        updated = document_optimization_service.update_config(payload.model_dump(exclude_none=True))
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    log_admin_action(admin["id"], "update_doc_optimization_config", json.dumps(updated))
+    return {"status": "success", "config": updated}
+
+
+@app.post("/api/admin/optimization/enqueue")
+def admin_optimization_enqueue(payload: DocOptimizationEnqueuePayload, request: Request, response: Response):
+    """Analisa livros ativos e enfileira candidatos pendentes sem bloquear a leitura."""
+    admin = require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    stats = document_optimization_service.enqueue_pending_books(limit=payload.limit)
+    log_admin_action(admin["id"], "enqueue_doc_optimization", json.dumps(stats))
+    return {"status": "success", **stats}
+
+
+@app.post("/api/admin/optimization/books/{book_id}")
+def admin_optimization_single_book(book_id: str, request: Request, response: Response, force: bool = Query(False)):
+    """Analisa/otimiza manualmente um documento específico preservando o original."""
+    admin = require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        orig_path = resolve_book_path(book_id)
+    except SecurityError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except BookNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    res = document_optimization_service.optimize_single_book(book_id, orig_path, force=force)
+    log_admin_action(admin["id"], "optimize_single_book", f"{book_id}:{res.get('state')}")
+    return {"status": "success", "result": res}
+
+
+@app.post("/api/admin/optimization/pause")
+def admin_optimization_pause(request: Request, response: Response):
+    require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    return document_optimization_service.pause_processing()
+
+
+@app.post("/api/admin/optimization/resume")
+def admin_optimization_resume(request: Request, response: Response):
+    require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    return document_optimization_service.resume_processing()
+
+
+@app.post("/api/admin/optimization/cancel")
+def admin_optimization_cancel(request: Request, response: Response):
+    require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    return document_optimization_service.cancel_processing()
+
+
+@app.post("/api/admin/optimization/cleanup")
+def admin_optimization_cleanup(request: Request, response: Response):
+    """Remove todos os derivados regeneráveis sem tocar nos arquivos originais."""
+    admin = require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    res = document_optimization_service.cleanup_all_derivatives()
+    log_admin_action(admin["id"], "cleanup_doc_derivatives", json.dumps(res))
+    return {"status": "success", **res}
 
 
 if __name__ == "__main__":

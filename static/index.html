@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="pt-BR" data-theme="dark" data-app-version="1.9.2">
+<html lang="pt-BR" data-theme="dark" data-app-version="1.10.0">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lectoria — Biblioteca Pessoal</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=1.9.2">
+  <link rel="stylesheet" href="/static/css/style.css?v=1.10.0">
 </head>
 <body>
   <header class="app-header">
@@ -741,6 +741,38 @@
             <div id="admin-audit-logs-list" class="admin-audit-list">
               <!-- Logs administrativos -->
             </div>
+          </div>
+        </div>
+
+        <!-- Otimização Automática de Documentos (Fase 12.4.1) -->
+        <div class="admin-card" id="admin-doc-optimization-card" style="margin-top: 1.25rem;">
+          <h3>Otimização Automática de Documentos (PDF / QPDF)</h3>
+          <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+            Gera derivados linearizados regeneráveis em <code>data/optimized/pdf/</code> sem alterar os arquivos originais.
+          </p>
+          <div id="admin-opt-summary" class="admin-stat-list" style="margin-bottom: 0.85rem;"></div>
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.75rem;">
+            <select id="admin-opt-mode-select" class="form-input" style="max-width: 210px;" title="Modo de execução">
+              <option value="disabled">Desativado (padrão seguro)</option>
+              <option value="adaptive">Adaptativo (ociosidade)</option>
+              <option value="scheduled">Agendado (janela noturna)</option>
+              <option value="immediate">Imediato</option>
+            </select>
+            <input id="admin-opt-window-start" type="text" class="form-input" value="02:00" maxlength="5" style="max-width: 82px;" title="Início da janela (HH:MM)">
+            <input id="admin-opt-window-end" type="text" class="form-input" value="05:00" maxlength="5" style="max-width: 82px;" title="Fim da janela (HH:MM)">
+            <input id="admin-opt-timezone" type="text" class="form-input" value="America/Sao_Paulo" style="max-width: 170px;" title="Fuso horário IANA">
+            <input id="admin-opt-max-mb" type="number" class="form-input" value="1024" min="64" max="50000" style="max-width: 110px;" title="Limite de cache (MB)">
+            <label style="display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; color: var(--text-muted);">
+              <input id="admin-opt-adaptive-window" type="checkbox">
+              <span>Restringir adaptativo à janela</span>
+            </label>
+            <button id="btn-admin-opt-save" type="button" class="btn btn-primary">Salvar Política</button>
+          </div>
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button id="btn-admin-opt-enqueue" type="button" class="btn">Analisar &amp; Enfileirar</button>
+            <button id="btn-admin-opt-pause" type="button" class="btn">Pausar</button>
+            <button id="btn-admin-opt-resume" type="button" class="btn">Retomar</button>
+            <button id="btn-admin-opt-cleanup" type="button" class="btn btn-danger">Limpar Derivados</button>
           </div>
         </div>
       </div>
@@ -1781,10 +1813,6 @@
     </div>
   </div>
 
-  <script src="/static/js/knowledge-api.js?v=1.9.2"></script>
-  <script src="/static/js/book-knowledge.js?v=1.9.2"></script>
-  <script src="/static/js/knowledge.js?v=1.9.2"></script>
-  <script src="/static/js/app.js?v=1.9.2"></script>
-  <script src="/static/js/shared_reading.js?v=1.9.2"></script>
+  <script src="/static/js/app.js?v=1.10.0"></script>
 </body>
 </html>

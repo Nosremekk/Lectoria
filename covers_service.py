@@ -22,6 +22,11 @@ import pypdf
 import config
 from database import get_db
 from library import BookNotFoundError, SecurityError, resolve_book_path
+from thumbnail_service import (
+    get_or_create_thumbnail,
+    invalidate_book_thumbnails,
+    pregenerate_book_thumbnails,
+)
 
 # Limite máximo de 5 MB para upload de capas personalizadas
 MAX_COVER_SIZE_BYTES = 5 * 1024 * 1024
@@ -533,15 +538,39 @@ def invalidate_extracted_cover_if_needed(book_id: str) -> None:
     _remove_cached_files_for_book(book_id, prefix_filter="extracted")
 
 
-def get_or_create_book_cover(book_id: str) -> Dict[str, Any]:
+def _apply_cover_variant(book_id: str, cover: Dict[str, Any], variant: str) -> Dict[str, Any]:
+    """Resolve variante de thumbnail (`card` ou `detail`) a partir de uma capa original em disco."""
+    if variant not in ("card", "detail") or cover.get("file_path") is None:
+        cover["variant"] = "original" if cover.get("file_path") is not None else "fallback"
+        return cover
+
+    thumb = get_or_create_thumbnail(book_id, cover["file_path"], variant=variant)
+    if thumb is not None and thumb.get("file_path") is not None:
+        return {
+            "type": cover["type"],
+            "file_path": thumb["file_path"],
+            "media_type": thumb["media_type"],
+            "content": None,
+            "variant": variant,
+        }
+    # Fallback seguro: entrega original sem derrubar a requisição
+    cover["variant"] = "original"
+    return cover
+
+
+def get_or_create_book_cover(book_id: str, variant: str = "original") -> Dict[str, Any]:
     """
     Resolve a capa de um livro seguindo a hierarquia:
     1. Capa personalizada ('custom') válida no disco.
-    2. Capa extraída/renderizada ('extracted') em cache cujo cover_source_hash coincide com file_hash atual.
-    3. Extração sob demanda a partir da primeira página do PDF (se o PDF possuir imagem incorporada).
+    2. Capa extraída/renderizada ('extracted') em cache cujo cover_source_hash coincide com file_hash atual
+       (fast-path sem leitura integral em RAM nem descompressão zlib por requisição).
+    3. Extração sob demanda a partir da primeira página do PDF/EPUB.
     4. Capa substituta editorial determinística em SVG ('fallback').
+
+    Quando `variant` é `'card'` ou `'detail'`, entrega o thumbnail derivado correspondente
+    em `<COVERS_DIR>/thumbs/` preservando integralmente a capa original.
     """
-    # Primeiro valida se o livro existe, se a fonte está ativa e se o PDF está acessível no disco
+    # Primeiro valida se o livro existe, se a fonte está ativa e se o arquivo está acessível no disco
     pdf_path = resolve_book_path(book_id)
 
     with get_db() as conn:
@@ -559,48 +588,58 @@ def get_or_create_book_cover(book_id: str) -> Dict[str, Any]:
             raise BookNotFoundError(f"Livro '{book_id}' não encontrado.")
         book = dict(row)
 
-    config.COVERS_DIR.mkdir(parents=True, exist_ok=True)
     cover_type = book.get("cover_type") or "none"
     cover_filename = Path(book["cover_path"]).name if book.get("cover_path") else None
     current_file_hash = book.get("file_hash") or ""
     primary_category = book.get("primary_category")
+    covers_root = config.COVERS_DIR.resolve()
 
-    # 1. Prioridade máxima: Capa personalizada definida pelo usuário/admin
+    # 1. Prioridade máxima: Capa personalizada definida pelo usuário/admin (fast-path)
     if cover_type == "custom" and cover_filename:
         custom_path = (config.COVERS_DIR / cover_filename).resolve()
-        if custom_path.is_relative_to(config.COVERS_DIR.resolve()) and custom_path.is_file():
+        if (
+            custom_path.is_relative_to(covers_root)
+            and custom_path.is_file()
+            and custom_path.stat().st_size >= MIN_COVER_SIZE_BYTES
+        ):
             ext = custom_path.suffix.lower().lstrip(".")
             mime = "image/png" if ext == "png" else "image/webp" if ext == "webp" else "image/jpeg"
-            return {
-                "type": "custom",
-                "file_path": custom_path,
-                "media_type": mime,
-                "content": None,
-            }
+            return _apply_cover_variant(
+                book_id,
+                {
+                    "type": "custom",
+                    "file_path": custom_path,
+                    "media_type": mime,
+                    "content": None,
+                },
+                variant,
+            )
 
-    # 2. Capa extraída em cache (desde que o PDF não tenha sido modificado e a imagem seja visualmente válida)
+    # 2. Capa extraída em cache (fast-path: validação visual já ocorreu na extração/cache,
+    #    eliminando read_bytes() + zlib.decompress() em toda requisição GET)
     if (
         cover_type == "extracted"
         and cover_filename
         and (not book.get("cover_source_hash") or book.get("cover_source_hash") == current_file_hash)
     ):
         cached_path = (config.COVERS_DIR / cover_filename).resolve()
-        if cached_path.is_relative_to(config.COVERS_DIR.resolve()) and cached_path.is_file():
-            try:
-                cached_bytes = cached_path.read_bytes()
-                if is_extracted_cover_visually_valid(cached_bytes):
-                    ext = cached_path.suffix.lower().lstrip(".")
-                    mime = "image/png" if ext == "png" else "image/webp" if ext == "webp" else "image/jpeg"
-                    return {
-                        "type": "extracted",
-                        "file_path": cached_path,
-                        "media_type": mime,
-                        "content": None,
-                    }
-                else:
-                    cached_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+        if (
+            cached_path.is_relative_to(covers_root)
+            and cached_path.is_file()
+            and cached_path.stat().st_size >= MIN_COVER_SIZE_BYTES
+        ):
+            ext = cached_path.suffix.lower().lstrip(".")
+            mime = "image/png" if ext == "png" else "image/webp" if ext == "webp" else "image/jpeg"
+            return _apply_cover_variant(
+                book_id,
+                {
+                    "type": "extracted",
+                    "file_path": cached_path,
+                    "media_type": mime,
+                    "content": None,
+                },
+                variant,
+            )
 
     # Se já foi avaliado para este mesmo file_hash e resultou em fallback, evita reabrir o PDF a cada requisição
     if cover_type == "fallback" and book.get("cover_source_hash") == current_file_hash:
@@ -610,9 +649,11 @@ def get_or_create_book_cover(book_id: str) -> Dict[str, Any]:
             "file_path": None,
             "media_type": "image/svg+xml",
             "content": svg_str.encode("utf-8"),
+            "variant": "fallback",
         }
 
     # 3. Tenta extrair imagem real de capa (PDF ou EPUB) sob demanda
+    config.COVERS_DIR.mkdir(parents=True, exist_ok=True)
     if pdf_path.suffix.lower() == ".epub":
         from epub_service import extract_epub_cover_bytes
         extracted = extract_epub_cover_bytes(pdf_path)
@@ -626,7 +667,9 @@ def get_or_create_book_cover(book_id: str) -> Dict[str, Any]:
             target_filename = f"{book_id}_extracted.{ext}"
             target_path = config.COVERS_DIR / target_filename
             _remove_cached_files_for_book(book_id, prefix_filter="extracted")
+            invalidate_book_thumbnails(book_id)
             target_path.write_bytes(img_bytes)
+            pregenerate_book_thumbnails(book_id, target_path)
 
             with get_db() as conn:
                 conn.execute(
@@ -638,12 +681,16 @@ def get_or_create_book_cover(book_id: str) -> Dict[str, Any]:
                     (target_filename, current_file_hash, now_iso, book_id),
                 )
 
-            return {
-                "type": "extracted",
-                "file_path": target_path,
-                "media_type": mime,
-                "content": None,
-            }
+            return _apply_cover_variant(
+                book_id,
+                {
+                    "type": "extracted",
+                    "file_path": target_path,
+                    "media_type": mime,
+                    "content": None,
+                },
+                variant,
+            )
 
     # 4. Nenhuma imagem de capa identificável no PDF -> registra estado 'fallback' para o hash atual
     with get_db() as conn:
@@ -676,12 +723,14 @@ def save_custom_cover(book_id: str, raw_image_bytes: bytes) -> Dict[str, Any]:
     ext, mime, width, height = validate_cover_image(raw_image_bytes)
     config.COVERS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Remove capa personalizada anterior se existir
+    # Remove capa personalizada anterior e invalida thumbnails derivados
     _remove_cached_files_for_book(book_id, prefix_filter="custom")
+    invalidate_book_thumbnails(book_id)
 
     target_filename = f"{book_id}_custom.{ext}"
     target_path = config.COVERS_DIR / target_filename
     target_path.write_bytes(raw_image_bytes)
+    pregenerate_book_thumbnails(book_id, target_path)
 
     now_iso = datetime.now().isoformat()
     with get_db() as conn:
@@ -724,9 +773,11 @@ def save_rendered_cover_cache(book_id: str, raw_image_bytes: bytes) -> Dict[str,
         file_hash = row["file_hash"] or ""
 
     _remove_cached_files_for_book(book_id, prefix_filter="extracted")
+    invalidate_book_thumbnails(book_id)
     target_filename = f"{book_id}_extracted.{ext}"
     target_path = config.COVERS_DIR / target_filename
     target_path.write_bytes(raw_image_bytes)
+    pregenerate_book_thumbnails(book_id, target_path)
 
     now_iso = datetime.now().isoformat()
     with get_db() as conn:
@@ -756,6 +807,7 @@ def delete_custom_cover(book_id: str) -> Dict[str, Any]:
     """
     resolve_book_path(book_id)
     _remove_cached_files_for_book(book_id, prefix_filter="custom")
+    invalidate_book_thumbnails(book_id)
 
     now_iso = datetime.now().isoformat()
     with get_db() as conn:
