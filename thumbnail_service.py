@@ -32,8 +32,9 @@ import config
 
 logger = logging.getLogger("lectoria.thumbnails")
 
-# Proteção rigorosa contra decompression bombs (40 megapixels máx.)
-MAX_THUMB_SOURCE_PIXELS = 40_000_000
+# Proteção rigorosa contra decompression bombs (25 megapixels máx. ≈ 100 MiB RGBA)
+# Ajustado na Fase 12.4 para orçamento seguro em container de 768 MiB / 1 vCPU
+MAX_THUMB_SOURCE_PIXELS = 25_000_000
 MAX_THUMB_SOURCE_DIM = 12_000
 Image.MAX_IMAGE_PIXELS = MAX_THUMB_SOURCE_PIXELS
 
@@ -50,8 +51,8 @@ WEBP_QUALITY = 80
 WEBP_METHOD = 4
 JPEG_QUALITY = 82
 
-# Limite global de gerações simultâneas para preservar CPU/RAM em VPS de 1 vCPU
-_GENERATION_SEMAPHORE = threading.BoundedSemaphore(2)
+# Limite global de 1 geração simultânea para evitar contenção de CPU e picos de RAM em VPS de 1 vCPU / 768 MiB
+_GENERATION_SEMAPHORE = threading.BoundedSemaphore(1)
 _KEY_LOCKS_GUARD = threading.Lock()
 _KEY_LOCKS: Dict[str, threading.Lock] = {}
 
