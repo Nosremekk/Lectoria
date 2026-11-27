@@ -1351,7 +1351,11 @@
     }
   }
 
-  document.addEventListener("DOMContentLoaded", bindEvents);
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bindEvents);
+  } else {
+    bindEvents();
+  }
 
   window.LectoriaSharedReading = {
     open,

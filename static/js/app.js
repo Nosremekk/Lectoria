@@ -58,6 +58,71 @@ window.fetch = function(url, options = {}) {
   return _nativeFetch.call(this, url, options);
 };
 
+const _lectoriaModulePromises = new Map();
+
+function resolveLectoriaAssetUrl(assetPath) {
+  try {
+    const meta = document.querySelector('meta[name="lectoria-asset-manifest"]');
+    if (meta && meta.content) {
+      const manifest = JSON.parse(meta.content);
+      if (manifest && typeof manifest[assetPath] === "string" && manifest[assetPath]) {
+        return manifest[assetPath];
+      }
+    }
+  } catch (e) {
+    // Fallback silencioso para o caminho original
+  }
+  return assetPath;
+}
+
+function loadLectoriaModule(assetPath) {
+  if (_lectoriaModulePromises.has(assetPath)) {
+    return _lectoriaModulePromises.get(assetPath);
+  }
+  const resolvedUrl = resolveLectoriaAssetUrl(assetPath);
+  const existing = document.querySelector(`script[data-lectoria-module="${assetPath}"], script[src="${resolvedUrl}"]`);
+  if (existing && existing.dataset.loaded === "1") {
+    const done = Promise.resolve();
+    _lectoriaModulePromises.set(assetPath, done);
+    return done;
+  }
+  const promise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = resolvedUrl;
+    s.dataset.lectoriaModule = assetPath;
+    s.onload = () => {
+      s.dataset.loaded = "1";
+      resolve();
+    };
+    s.onerror = () => {
+      _lectoriaModulePromises.delete(assetPath);
+      reject(new Error(`Falha ao carregar módulo ${assetPath}`));
+    };
+    document.body.appendChild(s);
+  });
+  _lectoriaModulePromises.set(assetPath, promise);
+  return promise;
+}
+
+function ensureAtlasModules() {
+  if (window.LectoriaAtlas) return Promise.resolve();
+  return loadLectoriaModule("/static/js/knowledge-api.js").then(() =>
+    loadLectoriaModule("/static/js/knowledge.js")
+  );
+}
+
+function ensureBookKnowledgeModules() {
+  if (window.LectoriaBookKnowledge) return Promise.resolve();
+  return loadLectoriaModule("/static/js/knowledge-api.js").then(() =>
+    loadLectoriaModule("/static/js/book-knowledge.js")
+  );
+}
+
+function ensureSharedReadingModule() {
+  if (window.LectoriaSharedReading) return Promise.resolve();
+  return loadLectoriaModule("/static/js/shared_reading.js");
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   // Elementos do DOM
   const booksContainer = document.getElementById("books-container");
@@ -620,7 +685,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       try {
         booksCountEl.textContent = "Carregando acervo...";
-        const res = await fetch("/api/books?sort_by=title&order=asc", { signal });
+        const res = await fetch("/api/books?sort_by=title&order=asc&compact=1", { signal });
         if (!res.ok) throw new Error("Erro ao buscar livros");
 
         const data = await res.json();
@@ -674,6 +739,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function generateBookCardHtml(book) {
+    const cardIndex = arguments.length > 1 ? arguments[1] : 99;
     const percentage = book.progress_percentage || 0;
     const isCompleted = isBookCompleted(book);
     const hasProgress = book.current_page && book.current_page > 1 && !isCompleted;
@@ -681,6 +747,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const page = book.current_page || 1;
     const coverUrl = book.cover_url || `/api/books/${encodeURIComponent(book.id)}/cover`;
     const cardCoverUrl = appendCoverVariant(coverUrl, "card");
+    const isPriorityCard = cardIndex < 8;
     const bookFormat = (book.format || (book.filename && book.filename.toLowerCase().endsWith(".epub") ? "epub" : "pdf")).toUpperCase();
 
     const collectionsChipsHtml = (book.collections || []).map(c => `
@@ -709,7 +776,8 @@ document.addEventListener("DOMContentLoaded", () => {
               class="book-cover-img"
               src="${escapeHtml(cardCoverUrl)}"
               alt="Capa de ${escapeHtml(book.title)}"
-              loading="lazy"
+              loading="${isPriorityCard ? "eager" : "lazy"}"
+              ${isPriorityCard ? 'fetchpriority="high"' : ""}
               decoding="async"
               width="180"
               height="255"
@@ -785,13 +853,14 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    const chunkStart = currentRenderedIndex;
     const nextChunk = currentFilteredBooks.slice(
       currentRenderedIndex,
       currentRenderedIndex + BOOKS_CHUNK_SIZE
     );
     currentRenderedIndex += nextChunk.length;
 
-    const chunkHtml = nextChunk.map(book => generateBookCardHtml(book)).join("");
+    const chunkHtml = nextChunk.map((book, idx) => generateBookCardHtml(book, chunkStart + idx)).join("");
 
     const oldSentinel = document.getElementById("books-scroll-sentinel");
     if (oldSentinel) {
@@ -1131,8 +1200,15 @@ document.addEventListener("DOMContentLoaded", () => {
     else if (currentMainTab === "clubs") {
       loadClubs();
       loadClubInvites();
-    } else if (currentMainTab === "atlas" && window.LectoriaAtlas) {
-      window.LectoriaAtlas.activate(tabOpts || {});
+      ensureSharedReadingModule().catch(() => {});
+    } else if (currentMainTab === "atlas") {
+      ensureAtlasModules()
+        .then(() => {
+          if (currentMainTab === "atlas" && window.LectoriaAtlas) {
+            window.LectoriaAtlas.activate(tabOpts || {});
+          }
+        })
+        .catch((e) => console.error("Erro ao carregar módulo Atlas:", e));
     } else if (currentMainTab === "admin" && currentUser && currentUser.role === "admin") {
       loadAdminPanel();
     }
@@ -1174,8 +1250,9 @@ document.addEventListener("DOMContentLoaded", () => {
           tabNavAdmin.style.display = currentUser.role === "admin" ? "inline-flex" : "none";
         }
         modalAuth.classList.remove("active");
-        await Promise.all([loadCollections(), loadTaxonomyTree()]);
+        // Paraleliza aba ativa com taxonomia e coleções (elimina cascata bloqueante)
         loadActiveTabInitialData(initialTabOpts);
+        Promise.all([loadCollections(), loadTaxonomyTree()]).catch(() => {});
       } else {
         if (currentUser) {
           clearUserSessionCache();
@@ -1199,15 +1276,15 @@ document.addEventListener("DOMContentLoaded", () => {
         if (urlParams.get("login") === "1") {
           modalAuth.classList.add("active");
         }
-        await Promise.all([loadCollections(), loadTaxonomyTree()]);
         loadActiveTabInitialData(initialTabOpts);
+        Promise.all([loadCollections(), loadTaxonomyTree()]).catch(() => {});
       }
     } catch (err) {
       console.warn("Falha ao inicializar autenticação:", err);
       invalidateLibraryCache();
-      await Promise.all([loadCollections(), loadTaxonomyTree()]);
       if (currentMainTab === "library") loadBooks({ forceRefresh: true });
       else loadActiveTabInitialData(initialTabOpts);
+      Promise.all([loadCollections(), loadTaxonomyTree()]).catch(() => {});
     }
   }
 
@@ -1999,6 +2076,15 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    if (tab !== "discovery" && shelvesAbortController) {
+      shelvesAbortController.abort();
+      shelvesAbortController = null;
+    }
+    if (tab !== "library" && libraryCache.abortController) {
+      libraryCache.abortController.abort();
+      libraryCache.abortController = null;
+    }
+
     if (tab === "discovery") {
       loadShelves();
     } else if (tab === "library") {
@@ -2008,9 +2094,16 @@ document.addEventListener("DOMContentLoaded", () => {
     } else if (tab === "clubs") {
       loadClubs();
       loadClubInvites();
+      ensureSharedReadingModule().catch(() => {});
     } else if (tab === "atlas") {
-      if (!options.skipActivate && window.LectoriaAtlas) {
-        window.LectoriaAtlas.activate(options);
+      if (!options.skipActivate) {
+        ensureAtlasModules()
+          .then(() => {
+            if (currentMainTab === "atlas" && window.LectoriaAtlas) {
+              window.LectoriaAtlas.activate(options);
+            }
+          })
+          .catch((e) => console.error("Erro ao carregar módulo Atlas:", e));
       }
     } else if (tab === "admin") {
       loadAdminPanel();
@@ -2026,13 +2119,33 @@ document.addEventListener("DOMContentLoaded", () => {
   if (tabNavAtlas) tabNavAtlas.addEventListener("click", () => setMainTab("atlas"));
   if (tabNavAdmin) tabNavAdmin.addEventListener("click", () => setMainTab("admin"));
 
-  // --- Prateleiras de Descoberta ---
+  // --- Prateleiras de Descoberta (carregamento orientado à viewport) ---
   let shelvesAbortController = null;
+  let shelfCoverObservers = [];
+  const discoveryBooksById = new Map();
+
+  function disconnectShelfObservers() {
+    shelfCoverObservers.forEach((obs) => {
+      try { obs.disconnect(); } catch (_) {}
+    });
+    shelfCoverObservers = [];
+  }
+
+  function hydrateDeferredCover(imgEl) {
+    if (!imgEl) return;
+    const pending = imgEl.getAttribute("data-src");
+    if (pending) {
+      imgEl.src = pending;
+      imgEl.removeAttribute("data-src");
+    }
+  }
+
   async function loadShelves() {
     if (!shelvesContainer) return;
     if (shelvesAbortController) {
       shelvesAbortController.abort();
     }
+    disconnectShelfObservers();
     shelvesAbortController = new AbortController();
     const signal = shelvesAbortController.signal;
     if (discoveryLoading) discoveryLoading.style.display = "block";
@@ -2041,6 +2154,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const res = await fetch("/api/discovery/shelves", { signal });
       if (!res.ok) throw new Error("Erro ao carregar prateleiras de descoberta.");
       const data = await res.json();
+      if (currentMainTab !== "discovery") return;
       const shelves = data.shelves || [];
 
       if (discoveryLoading) discoveryLoading.style.display = "none";
@@ -2055,15 +2169,23 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      shelvesContainer.innerHTML = shelves.map(shelf => {
-        const booksHtml = (shelf.books || []).map(b => {
+      discoveryBooksById.clear();
+      shelvesContainer.innerHTML = shelves.map((shelf, shelfIdx) => {
+        const isInitialShelf = shelfIdx < 2;
+        const booksHtml = (shelf.books || []).map((b, bookIdx) => {
+          discoveryBooksById.set(String(b.id), b);
           const coverUrl = appendCoverVariant(b.cover_url || `/api/books/${encodeURIComponent(b.id)}/cover`, "card");
           const bookFormat = (b.format || "pdf").toUpperCase();
           const primaryCat = (b.taxonomy && b.taxonomy.categories && b.taxonomy.categories[0]) || "";
+          const loadNow = isInitialShelf && bookIdx < 5;
+          const isHighPriority = shelfIdx === 0 && bookIdx < 4;
+          const imgAttrs = loadNow
+            ? `src="${escapeHtml(coverUrl)}" loading="eager"${isHighPriority ? ' fetchpriority="high"' : ""}`
+            : `data-src="${escapeHtml(coverUrl)}" loading="lazy"`;
           return `
             <div class="shelf-card" data-id="${b.id}" tabindex="0" role="button" aria-label="Abrir detalhes de ${escapeHtml(b.title)}">
               <div class="shelf-cover-wrapper">
-                <img class="shelf-cover-img" src="${escapeHtml(coverUrl)}" alt="Capa de ${escapeHtml(b.title)}" loading="lazy" decoding="async" width="160" height="225">
+                <img class="shelf-cover-img" ${imgAttrs} alt="Capa de ${escapeHtml(b.title)}" decoding="async" width="160" height="225">
                 <div class="book-cover-badges">
                   <span class="tag-badge tag-format tag-format-${bookFormat.toLowerCase()}">${bookFormat}</span>
                 </div>
@@ -2083,7 +2205,7 @@ document.addEventListener("DOMContentLoaded", () => {
           : "";
 
         return `
-          <section class="shelf-wrapper" data-shelf-id="${escapeHtml(shelf.id)}">
+          <section class="shelf-wrapper" data-shelf-id="${escapeHtml(shelf.id)}" data-shelf-idx="${shelfIdx}">
             <div class="shelf-header">
               <div>
                 <h2 class="shelf-title">${escapeHtml(shelf.title)}</h2>
@@ -2101,6 +2223,51 @@ document.addEventListener("DOMContentLoaded", () => {
           </section>
         `;
       }).join("");
+
+      // Observadores de viewport vertical (prateleiras abaixo da dobra) e horizontal (cards fora da tela)
+      if ("IntersectionObserver" in window) {
+        const attachRowObserver = (rowEl) => {
+          const deferredImgs = rowEl.querySelectorAll("img[data-src]");
+          if (!deferredImgs.length) return;
+          const rowObs = new IntersectionObserver((entries, obs) => {
+            entries.forEach((entry) => {
+              if (entry.isIntersecting) {
+                hydrateDeferredCover(entry.target);
+                obs.unobserve(entry.target);
+              }
+            });
+          }, { root: rowEl, rootMargin: "0px 260px 0px 260px", threshold: 0.01 });
+          deferredImgs.forEach((im) => rowObs.observe(im));
+          shelfCoverObservers.push(rowObs);
+        };
+
+        const verticalObs = new IntersectionObserver((entries, obs) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            const sec = entry.target;
+            const rowEl = sec.querySelector(".shelf-row");
+            if (rowEl) {
+              // Hidrata imediatamente os 5 primeiros cards visíveis da prateleira que entrou na viewport
+              Array.from(rowEl.querySelectorAll("img[data-src]")).slice(0, 5).forEach(hydrateDeferredCover);
+              attachRowObserver(rowEl);
+            }
+            obs.unobserve(sec);
+          });
+        }, { rootMargin: "220px 0px 220px 0px", threshold: 0.01 });
+
+        shelvesContainer.querySelectorAll(".shelf-wrapper").forEach((sec) => {
+          const idx = Number(sec.getAttribute("data-shelf-idx") || "0");
+          if (idx < 2) {
+            const rowEl = sec.querySelector(".shelf-row");
+            if (rowEl) attachRowObserver(rowEl);
+          } else {
+            verticalObs.observe(sec);
+          }
+        });
+        shelfCoverObservers.push(verticalObs);
+      } else {
+        shelvesContainer.querySelectorAll("img[data-src]").forEach(hydrateDeferredCover);
+      }
 
       // Vincula ação do botão "Ver todos" para navegar diretamente aos filtros da biblioteca
       shelvesContainer.querySelectorAll(".shelf-see-all-btn").forEach(btn => {
@@ -2310,12 +2477,39 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // --- Modal: Detalhes Ricos da Obra e Reconciliação ---
+  let detailsAbortController = null;
+  let detailsRequestSeq = 0;
+
   async function openBookDetails(bookId) {
     if (!modalBookDetails) return;
+    if (detailsAbortController) {
+      detailsAbortController.abort();
+    }
+    detailsAbortController = new AbortController();
+    const reqSeq = ++detailsRequestSeq;
+
+    // Pré-hidratação imediata com dados já em memória (elimina espera vazia e limpa dados do livro anterior)
+    const cachedBook =
+      (libraryCache.books || []).find((b) => String(b.id) === String(bookId)) ||
+      discoveryBooksById.get(String(bookId)) ||
+      null;
+    if (detailsTitle) detailsTitle.textContent = (cachedBook && cachedBook.title) || "Carregando...";
+    if (detailsAuthor) detailsAuthor.textContent = (cachedBook && cachedBook.author) || "";
+    if (detailsDescription) detailsDescription.textContent = "Carregando detalhes...";
+    if (detailsCoverImg) {
+      detailsCoverImg.decoding = "async";
+      const baseCov = (cachedBook && cachedBook.cover_url) || `/api/books/${encodeURIComponent(bookId)}/cover`;
+      detailsCoverImg.src = appendCoverVariant(baseCov, "detail");
+    }
+    if (btnDetailsRead) btnDetailsRead.href = `/reader/${bookId}`;
+    if (btnDetailsDownload) btnDetailsDownload.href = `/api/books/${encodeURIComponent(bookId)}/download`;
+    modalBookDetails.classList.add("active");
+
     try {
-      const res = await fetch(`/api/books/${bookId}`);
+      const res = await fetch(`/api/books/${bookId}`, { signal: detailsAbortController.signal });
       if (!res.ok) throw new Error("Livro não encontrado");
       const book = await res.json();
+      if (reqSeq !== detailsRequestSeq) return;
       activeBookForDetails = book;
 
       if (detailsCoverImg) {
@@ -2406,9 +2600,13 @@ document.addEventListener("DOMContentLoaded", () => {
       if (lockDesc) lockDesc.checked = locks.has("description");
 
       // Reset para primeira subaba (Visão Geral)
-      if (window.LectoriaBookKnowledge) {
-        window.LectoriaBookKnowledge.setBook(book);
-      }
+      ensureBookKnowledgeModules()
+        .then(() => {
+          if (window.LectoriaBookKnowledge && activeBookForDetails && activeBookForDetails.id === book.id) {
+            window.LectoriaBookKnowledge.setBook(book);
+          }
+        })
+        .catch(() => {});
       switchDetailsSubtab("overview");
       loadBookCandidates(book.id);
       loadBookDetailsSocial(book.id);
@@ -2417,6 +2615,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       modalBookDetails.classList.add("active");
     } catch (e) {
+      if (e && e.name === "AbortError") return;
       alert("Não foi possível carregar os detalhes desta obra.");
     }
   }
@@ -2428,8 +2627,15 @@ document.addEventListener("DOMContentLoaded", () => {
     document.querySelectorAll(".details-subtab-pane").forEach(pane => {
       pane.style.display = pane.id === `details-subtab-${subtabName}` ? "block" : "none";
     });
-    if (subtabName === "knowledge" && window.LectoriaBookKnowledge) {
-      window.LectoriaBookKnowledge.loadIfNeeded();
+    if (subtabName === "knowledge") {
+      ensureBookKnowledgeModules()
+        .then(() => {
+          if (window.LectoriaBookKnowledge) {
+            if (activeBookForDetails) window.LectoriaBookKnowledge.setBook(activeBookForDetails);
+            window.LectoriaBookKnowledge.loadIfNeeded();
+          }
+        })
+        .catch(() => {});
     }
   }
 
@@ -4831,9 +5037,13 @@ document.addEventListener("DOMContentLoaded", () => {
     clubReadsGrid.querySelectorAll(".btn-open-shared-panel").forEach(btn => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (window.LectoriaSharedReading) {
-          window.LectoriaSharedReading.open(btn.getAttribute("data-read-id"), btn.getAttribute("data-club-id"));
-        }
+        ensureSharedReadingModule()
+          .then(() => {
+            if (window.LectoriaSharedReading) {
+              window.LectoriaSharedReading.open(btn.getAttribute("data-read-id"), btn.getAttribute("data-club-id"));
+            }
+          })
+          .catch(() => {});
       });
     });
   }
@@ -5005,9 +5215,13 @@ document.addEventListener("DOMContentLoaded", () => {
         btnReadDetailOpenPanel.onclick = () => {
           modalCollectiveReadDetail.classList.remove("active");
           setMainTab("clubs");
-          if (window.LectoriaSharedReading) {
-            window.LectoriaSharedReading.open(read.id, read.club_id);
-          }
+          ensureSharedReadingModule()
+            .then(() => {
+              if (window.LectoriaSharedReading) {
+                window.LectoriaSharedReading.open(read.id, read.club_id);
+              }
+            })
+            .catch(() => {});
         };
       }
 
